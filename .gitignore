@@ -5,6 +5,7 @@ node_modules/
 dist/
 semirisk-ui/node_modules/
 semirisk-ui/dist/
+semirisk-ui/.vite/
 
 ### STS ###
 .apt_generated
