@@ -1,19 +1,5 @@
 <template>
-  <main v-if="!session" class="login">
-    <section class="panel login-card">
-      <h1>供应链风险智能管理系统</h1>
-      <p class="muted">前后端分离 · Vue · 微服务 API</p>
-      <div class="grid">
-        <input v-model="loginForm.username" class="input" placeholder="账号" />
-        <input v-model="loginForm.password" class="input" placeholder="密码" type="password" />
-        <label class="muted"><input v-model="loginForm.rememberMe" type="checkbox" /> 记住密码</label>
-        <button class="btn" @click="login">进入系统</button>
-        <button class="btn secondary" @click="resetPassword">忘记密码</button>
-      </div>
-    </section>
-  </main>
-
-  <div v-else class="shell">
+  <div class="shell">
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">SR</span><span>SemiRisk</span></div>
       <nav class="nav">
@@ -26,13 +12,38 @@
     <section class="main">
       <header class="topbar">
         <h2 class="page-title">{{ currentTitle }}</h2>
-        <div class="toolbar">
+        <div v-if="session" class="toolbar">
           <span class="muted">当前用户：{{ session.displayName || session.username }} · {{ session.role }} · {{ now }}</span>
           <button class="btn secondary" @click="logout">退出</button>
+        </div>
+        <div v-else class="toolbar">
+          <span class="muted">未登录仅可访问首页风险总览</span>
+          <button class="btn" @click="authMode = 'login'">登录</button>
+          <button class="btn secondary" @click="authMode = 'register'">注册</button>
         </div>
       </header>
 
       <section v-if="view === 'dashboard'" class="grid">
+        <div v-if="!session" class="panel auth-panel">
+          <div>
+            <h3>{{ authMode === 'register' ? '注册账号' : '登录后解锁完整功能' }}</h3>
+            <p class="muted">未登录状态只能查看首页风险总览。登录或注册后可按角色权限访问上传、分析、告警、报告、系统管理等模块。</p>
+          </div>
+          <div v-if="authMode === 'login'" class="toolbar">
+            <input v-model="loginForm.username" class="input" placeholder="账号" />
+            <input v-model="loginForm.password" class="input" placeholder="密码" type="password" />
+            <button class="btn" @click="login">登录</button>
+            <button class="btn secondary" @click="authMode = 'register'">去注册</button>
+            <button class="btn secondary" @click="resetPassword">忘记密码</button>
+          </div>
+          <div v-else class="toolbar">
+            <input v-model="registerForm.username" class="input" placeholder="注册账号" />
+            <input v-model="registerForm.displayName" class="input" placeholder="姓名/昵称" />
+            <input v-model="registerForm.password" class="input" placeholder="密码" type="password" />
+            <button class="btn" @click="register">注册并登录</button>
+            <button class="btn secondary" @click="authMode = 'login'">返回登录</button>
+          </div>
+        </div>
         <div class="grid cols-4">
           <div v-for="kpi in dashboard.kpis || []" :key="kpi.name" class="panel kpi">
             <div><span class="muted">{{ kpi.name }}</span><br /><strong>{{ kpi.value }}</strong></div>
@@ -234,7 +245,9 @@ const view = ref('dashboard');
 const now = ref(new Date().toLocaleString('zh-CN', { hour12: false }));
 const toast = ref('');
 const session = ref(JSON.parse(localStorage.getItem('semiriskUser') || 'null'));
+const authMode = ref('login');
 const loginForm = reactive({ username: 'admin', password: 'password', rememberMe: true });
+const registerForm = reactive({ username: '', password: '', displayName: '' });
 const dashboard = ref({});
 const uploads = ref([]);
 const logs = ref([]);
@@ -257,6 +270,7 @@ const aiConfig = reactive({ model: 'GPT-4o', endpoint: 'https://api.openai.com/v
 
 const currentTitle = computed(() => navItems.find(item => item.key === view.value)?.label || 'SemiRisk');
 const allowedNavItems = computed(() => {
+  if (!session.value) return navItems.filter(item => item.key === 'dashboard');
   const modules = session.value?.modules;
   if (!modules || !Array.isArray(modules)) return navItems;
   return navItems.filter(item => modules.includes(item.key));
@@ -279,6 +293,15 @@ async function login() {
   await loadDashboard();
 }
 
+async function register() {
+  const data = await request('/api/auth/register', { method: 'POST', body: JSON.stringify(registerForm) });
+  localStorage.setItem('semiriskUser', JSON.stringify(data.user));
+  session.value = data.user;
+  authMode.value = 'login';
+  notify('注册成功，已自动登录');
+  await loadDashboard();
+}
+
 async function resetPassword() {
   const data = await request('/api/auth/password-reset/request', { method: 'POST', body: JSON.stringify({ email: 'admin@risk.com' }) });
   notify(`重置 Token 已生成：${data.token.slice(0, 8)}...`);
@@ -292,7 +315,16 @@ async function logout() {
 }
 
 async function loadDashboard() { dashboard.value = await request('/api/dashboard/overview'); }
-async function recalculateRisk() { await request('/api/risk-score/recalculate', { method: 'POST' }); await loadDashboard(); notify('AI 风险测算已刷新'); }
+async function recalculateRisk() {
+  if (!session.value) {
+    authMode.value = 'login';
+    notify('请先登录后再触发重新测算');
+    return;
+  }
+  await request('/api/risk-score/recalculate', { method: 'POST' });
+  await loadDashboard();
+  notify('AI 风险测算已刷新');
+}
 function downloadTemplate() { window.open('/api/data/templates/supplier', '_blank'); }
 async function loadUploads() { uploads.value = await request('/api/data/uploads'); }
 async function uploadFile(event) {
@@ -351,6 +383,10 @@ function badgeClass(level) { return level === '高危' ? 'high' : level === '中
 function formatTime(time) { return new Date(time).toLocaleString('zh-CN', { hour12: false }); }
 
 watch(view, async key => {
+  if (!allowedNavItems.value.some(item => item.key === key)) {
+    view.value = 'dashboard';
+    return;
+  }
   if (key === 'dashboard') await loadDashboard();
   if (key === 'upload') await loadUploads();
   if (key === 'analysis') await loadRiskAnalysis();
@@ -379,11 +415,14 @@ onMounted(async () => {
     } catch {
       localStorage.removeItem('semiriskUser');
       session.value = null;
+      await loadDashboard();
       return;
     }
     if (!allowedNavItems.value.some(item => item.key === view.value)) {
       view.value = allowedNavItems.value[0]?.key || 'dashboard';
     }
+    await loadDashboard();
+  } else {
     await loadDashboard();
   }
 });

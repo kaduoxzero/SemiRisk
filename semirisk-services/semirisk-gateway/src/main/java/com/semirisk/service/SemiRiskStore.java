@@ -71,6 +71,17 @@ public class SemiRiskStore {
         return Optional.of(account);
     }
 
+    public UserAccount register(String username, String password, String displayName) {
+        if (users.containsKey(username)) {
+            throw new IllegalArgumentException("账号已存在");
+        }
+        UserAccount account = new UserAccount(username, password, displayName, SemiriskConstants.ROLE_OPERATOR);
+        users.put(username, account);
+        addSystemUser(username, username + "@risk.com", "运营人员");
+        auditLogs.add("[INFO] public registration completed username=" + username);
+        return account;
+    }
+
     public LoginState loginState(String username) {
         LoginCounter counter = loginCounters.get(username);
         if (counter == null) {

@@ -80,6 +80,22 @@ public class SemiRiskController {
                 });
     }
 
+    @PostMapping("/auth/register")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> register(@Valid @RequestBody RegisterRequest request, HttpSession session) {
+        UserAccount account = store.register(request.username(), request.password(), request.displayName());
+        session.setAttribute("principal", account.username());
+        session.setAttribute("role", account.role());
+        Map<String, Object> body = new HashMap<>();
+        body.put("token", UUID.randomUUID().toString());
+        body.put("user", Map.of(
+                "username", account.username(),
+                "displayName", account.displayName(),
+                "role", account.role(),
+                "modules", RolePermissionPolicy.modules(account.role())
+        ));
+        return ResponseEntity.ok(ApiResponse.ok("注册成功", body));
+    }
+
     @PostMapping("/auth/logout")
     public ApiResponse<Map<String, Object>> logout(HttpSession session) {
         session.invalidate();
@@ -338,6 +354,9 @@ public class SemiRiskController {
     }
 
     public record LoginRequest(@NotBlank String username, @NotBlank String password, boolean rememberMe, String captchaToken) {
+    }
+
+    public record RegisterRequest(@NotBlank String username, @NotBlank String password, @NotBlank String displayName) {
     }
 
     public record PasswordResetRequest(@NotBlank @Email String email) {

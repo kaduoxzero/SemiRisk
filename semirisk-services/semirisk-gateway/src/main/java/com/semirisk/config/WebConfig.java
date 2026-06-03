@@ -43,10 +43,14 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(new HandlerInterceptor() {
                     @Override
                     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-                        if ("OPTIONS".equalsIgnoreCase(request.getMethod()) || request.getRequestURI().startsWith("/api/auth/")) {
+                        String uri = request.getRequestURI();
+                        if ("OPTIONS".equalsIgnoreCase(request.getMethod())
+                                || uri.startsWith("/api/auth/")
+                                || uri.equals("/api/dashboard/overview")
+                                || uri.equals("/api/risk-score/today")) {
                             return true;
                         }
-                        if (request.getRequestURI().startsWith("/api/") && request.getSession(false) == null) {
+                        if (uri.startsWith("/api/") && request.getSession(false) == null) {
                             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                             response.setContentType("application/json;charset=UTF-8");
                             response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail("请先登录")));

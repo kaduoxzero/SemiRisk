@@ -16,10 +16,14 @@
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
 | index.html | POST | `/api/auth/login` | 账号密码登录，失败计数与锁定 |
+| Vue 首页 | POST | `/api/auth/register` | 注册账号，默认运营人员角色 |
+| Vue 应用 | GET | `/api/auth/me` | 查询当前登录态 |
+| Vue 应用 | GET | `/api/auth/permissions/{module}` | 校验模块权限 |
 | index.html | POST | `/api/auth/logout` | 注销 Session |
 | forgot-password.html | POST | `/api/auth/password-reset/request` | 发送重置链接，Token 15 分钟有效 |
 
 Vue 前端默认通过 Vite 代理访问 Gateway：`http://localhost:5173/api -> http://localhost:8080/api`。
+未登录只允许访问 `/api/dashboard/overview` 和 `/api/risk-score/today`。
 
 ## 3. 首页看板
 
