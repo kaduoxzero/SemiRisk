@@ -2,7 +2,7 @@
 
 ## 1. 产品目标
 
-构建一套可以交互运行的供应链风险智能管理系统，覆盖登录准入、风险总览、数据上传、深度分析、风险详情、报告生成、预警中心、GIS 地图、企业画像、知识库和后台系统配置。
+构建一套前后端分离、Vue 驱动、微服务后端支撑的供应链风险智能管理系统，覆盖登录准入、风险总览、数据上传、深度分析、风险详情、报告生成、预警中心、GIS 地图、企业画像、知识库和后台系统配置。
 
 ## 2. 用户角色
 
@@ -13,26 +13,28 @@
 
 ## 3. 页面原型与交互
 
-### 3.1 登录页 `index.html`
+### 3.1 登录视图 `semirisk-ui`
 
 - 输入账号、密码，支持记住密码
 - 登录按钮调用 `/api/auth/login`
 - 5 分钟内失败 5 次锁定 30 分钟
 - 忘记密码跳转 `forgot-password.html`
 
-### 3.2 忘记密码 `forgot-password.html`
+### 3.2 忘记密码
 
 - 输入企业邮箱
 - 调用 `/api/auth/password-reset/request`
 - 返回 15 分钟有效的一次性 Token
 
-### 3.3 首页风险总览 `dashboard.html`
+### 3.3 首页风险总览
 
 - 每 30 秒轮询 `/api/dashboard/overview`
 - 展示 KPI、热点、原材料风险、AI 摘要
 - 高危项可跳转风险详情或企业画像
+- 展示本日爬虫信号与 AI 自动风险测算结果
+- 支持手动触发重新测算
 
-### 3.4 数据上传与清洗 `data-upload.html`
+### 3.4 数据上传与清洗
 
 - 支持点击/拖拽上传 Excel、CSV、PDF、ZIP
 - 单文件大小限制 50MB
@@ -40,6 +42,7 @@
 - 上传调用 `/api/data/uploads`
 - AI 清洗日志通过 `/api/data/uploads/logs` SSE 推送
 - 解析按钮调用 `/api/data/uploads/{id}/parse`
+- 数据服务每天 00:00 刷新本日爬虫记录
 
 ### 3.5 AI 风险深度分析 `risk-analysis.html`
 
@@ -87,20 +90,23 @@
 - 标签点击触发一键检索
 - 预览调用 `/api/knowledge/preview/{id}`
 
-### 3.12 系统管理 `system-management.html`
+### 3.12 系统管理
 
 - 总览调用 `/api/system/overview`
 - 新增用户调用 `/api/system/users`
 - 禁用用户调用 `/api/system/users/{id}/status`
 - 模型 Ping 调用 `/api/system/models/ping`
+- API Key 配置调用 `/api/system/models/config`
 - Agent 手动触发调用 `/api/system/agents/{name}/trigger`
 - 数据源重连调用 `/api/system/datasources/{name}/reconnect`
 
 ## 4. 验收标准
 
 - 页面不是纯静态，用户操作必须产生 API 请求和状态反馈
+- 前端必须以 Vue 应用方式运行
+- 后端必须以 Maven 多模块微服务方式组织
 - `./mvnw test` 通过
-- `./mvnw spring-boot:run` 可启动
+- `./script/start-backend-services.sh` 可启动后端
+- `./script/start-ui.sh` 可启动前端
 - 登录页、上传页、告警页、报告页、系统管理页至少各有一个真实可验证交互
 - 中间件配置默认指向 `192.168.101.128`
-

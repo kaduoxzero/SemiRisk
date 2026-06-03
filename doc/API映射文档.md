@@ -19,6 +19,8 @@
 | index.html | POST | `/api/auth/logout` | 注销 Session |
 | forgot-password.html | POST | `/api/auth/password-reset/request` | 发送重置链接，Token 15 分钟有效 |
 
+Vue 前端默认通过 Vite 代理访问 Gateway：`http://localhost:5173/api -> http://localhost:8080/api`。
+
 ## 3. 首页看板
 
 | 页面 | 方法 | API | 说明 |
@@ -43,6 +45,8 @@
 | risk-detail.html | GET | `/api/risk/events/{id}` | 单一风险事件详情 |
 | risk-detail.html | POST | `/api/risk/events/{id}/assign` | 指派负责人，状态变更为处理中 |
 | risk-detail.html | POST | `/api/risk/events/{id}/dispatch-report` | 下发处置报告 |
+| Vue 首页 | GET | `/api/risk-score/today` | 获取本日 AI 自动测算风险 |
+| Vue 首页 | POST | `/api/risk-score/recalculate` | 手动触发本日风险重算 |
 
 ## 6. 报告生成
 
@@ -80,6 +84,18 @@
 | system-management.html | PUT | `/api/system/users/{id}/status` | 启用/禁用用户并踢下线 |
 | system-management.html | DELETE | `/api/system/users/{id}` | 物理删除用户 |
 | system-management.html | POST | `/api/system/models/ping` | AI 模型连通性测试 |
+| system-management.html | POST | `/api/system/models/config` | 保存 AI 模型 Endpoint 与 API Key |
+| system-management.html | GET | `/api/system/models/config` | 查询已脱敏的模型配置 |
 | system-management.html | POST | `/api/system/agents/{name}/trigger` | Agent 手动单步触发 |
 | system-management.html | POST | `/api/system/datasources/{name}/reconnect` | 数据源修复重连 |
 
+## 10. 微服务直连 API
+
+| 服务 | 方法 | API | 说明 |
+|---|---|---|---|
+| semirisk-data-service:8081 | GET | `/api/crawler/records/today` | 查询本日爬虫记录 |
+| semirisk-data-service:8081 | POST | `/api/crawler/refresh` | 手动刷新爬虫记录 |
+| semirisk-risk-service:8082 | GET | `/api/risk-score/today` | 查询本日风险测算 |
+| semirisk-risk-service:8082 | POST | `/api/risk-score/recalculate` | 手动重算风险 |
+| semirisk-ai-service:8083 | POST | `/api/ai/models/config` | 保存 AI 模型 API Key |
+| semirisk-ai-service:8083 | GET | `/api/ai/reports/latest` | 获取本日 AI 报告占位 |

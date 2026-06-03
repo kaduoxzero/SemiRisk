@@ -1,16 +1,25 @@
 # SemiRisk
 
-面向半导体产业链的 AI 供应链风险智能平台。项目使用 Java 21、Spring Boot 3、Maven Wrapper 管理，前端复用 `123.57.239.56` 的页面视觉并接入真实后端 API。
+面向半导体产业链的 AI 供应链风险智能平台。项目使用 Java 21、Spring Boot 3、Maven Wrapper 多模块微服务管理，前端使用 Vue 3 + Vite 独立运行。
 
 ## 快速启动
 
 ```bash
-./mvnw spring-boot:run
+./script/start-backend-services.sh
+./script/start-ui.sh
+```
+
+单独启动某个后端模块时，先安装公共模块依赖：
+
+```bash
+./mvnw -DskipTests install
+./mvnw -pl semirisk-services/semirisk-gateway spring-boot:run
 ```
 
 访问：
 
-- 登录页：http://localhost:8080/index.html
+- Vue 前端：http://localhost:5173
+- API Gateway：http://localhost:8080
 - 默认账号：admin / password
 - 分析师账号：analyst / risk2026
 
@@ -25,11 +34,19 @@
 - RabbitMQ：`192.168.101.128:5672`
 - Nacos：`192.168.101.128:8848`
 
-当前实现为可运行的 Spring Boot 单体，MySQL/Redis 配置已预留；业务状态默认使用内存，便于无中间件时直接启动演示。
+当前实现为可运行的前后端分离微服务版本，MySQL/Redis 配置已预留；业务状态默认使用内存，便于无中间件时直接启动演示。
+
+## 模块
+
+- `semirisk-ui`：Vue 前端
+- `semirisk-common`：公共响应结构
+- `semirisk-services/semirisk-gateway`：统一 API 入口
+- `semirisk-services/semirisk-data-service`：爬虫和每日记录
+- `semirisk-services/semirisk-risk-service`：AI 风险测算
+- `semirisk-services/semirisk-ai-service`：AI API Key 和报告分析占位
 
 ## 验证
 
 ```bash
 ./mvnw test
 ```
-

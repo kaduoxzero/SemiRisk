@@ -1,6 +1,10 @@
 HELP.md
 target/
 *.log
+node_modules/
+dist/
+semirisk-ui/node_modules/
+semirisk-ui/dist/
 
 ### STS ###
 .apt_generated
