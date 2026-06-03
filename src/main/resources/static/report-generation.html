@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AI 报告生成 - 供应链风险智能管理系统</title>
+<script src="https://modao.cc/agent-py/static/source/js/tailwindcss.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="common.css" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'cyber-bg': '#030712',
+            'cyber-card': '#0f172a',
+            'neon-blue': '#3b82f6',
+            'neon-purple': '#8b5cf6',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-cyber-bg text-foreground h-screen flex overflow-hidden">
+<canvas id="particle-canvas"></canvas>
+<aside class="w-64 border-r border-border bg-card/50 backdrop-blur-xl transition-all duration-300 flex flex-col z-30" id="sidebar">
+<div class="p-6 flex items-center space-x-3">
+<div class="w-8 h-8 rounded bg-primary flex items-center justify-center"><iconify-icon class="text-white text-xl" icon="lucide:shield-check"></iconify-icon></div>
+<span class="font-bold text-lg tracking-tight nav-text">RISK INTEL</span>
+</div>
+<nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+<a class="nav-item" href="dashboard.html"><iconify-icon class="text-xl" icon="lucide:layout-dashboard"></iconify-icon><span class="ml-3 nav-text">首页风险总览</span></a>
+<a class="nav-item" href="data-upload.html"><iconify-icon class="text-xl" icon="lucide:upload-cloud"></iconify-icon><span class="ml-3 nav-text">数据上传</span></a>
+<a class="nav-item" href="risk-analysis.html"><iconify-icon class="text-xl" icon="lucide:bar-chart-3"></iconify-icon><span class="ml-3 nav-text">风险分析</span></a>
+<a class="nav-item" href="risk-detail.html"><iconify-icon class="text-xl" icon="lucide:file-search"></iconify-icon><span class="ml-3 nav-text">风险详情</span></a>
+<a class="nav-item nav-active" href="report-generation.html"><iconify-icon class="text-xl" icon="lucide:file-text"></iconify-icon><span class="ml-3 nav-text">AI报告生成</span></a>
+<a class="nav-item" href="alert-center.html"><iconify-icon class="text-xl" icon="lucide:bell"></iconify-icon><span class="ml-3 nav-text">预警中心</span></a>
+<a class="nav-item" href="gis-map.html"><iconify-icon class="text-xl" icon="lucide:map"></iconify-icon><span class="ml-3 nav-text">GIS风险地图</span></a>
+<a class="nav-item" href="enterprise-profile.html"><iconify-icon class="text-xl" icon="lucide:building-2"></iconify-icon><span class="ml-3 nav-text">企业画像</span></a>
+<a class="nav-item" href="knowledge-base.html"><iconify-icon class="text-xl" icon="lucide:library"></iconify-icon><span class="ml-3 nav-text">知识库检索</span></a>
+<a class="nav-item" href="system-management.html"><iconify-icon class="text-xl" icon="lucide:settings"></iconify-icon><span class="ml-3 nav-text">系统管理</span></a>
+</nav>
+<div class="p-4 border-t border-border">
+<div class="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors">
+<img alt="User Avatar" class="w-8 h-8 rounded-full border border-primary/30" src="https://modao.cc/agent-py/media/generated_images/2026-05-20/c4f740ab0745425db76c1221598a5108.jpg"/>
+<div class="nav-text">
+<p class="text-sm font-medium">管理员</p>
+<p class="text-xs text-slate-500">admin@risk.com</p>
+</div>
+</div>
+</div>
+</aside>
+<main class="flex-1 flex flex-col relative overflow-hidden">
+<header class="h-16 border-b border-border bg-card/30 backdrop-blur-md flex items-center justify-between px-8 z-20">
+<div class="flex items-center space-x-4">
+<button class="p-2 hover:bg-white/5 rounded-lg text-slate-400" id="nav-toggle">
+<iconify-icon class="text-xl" icon="lucide:menu"></iconify-icon>
+</button>
+<h2 class="text-lg font-semibold">AI 智能报告工作流</h2>
+</div>
+</header>
+<div class="flex-1 overflow-y-auto p-8">
+<div class="max-w-4xl mx-auto space-y-12">
+<!-- 步骤条 -->
+<div class="flex items-center justify-between px-4">
+<div class="flex flex-col items-center space-y-2 group">
+<div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold shadow-[0_0_15px_rgba(59,130,246,0.5)]">1</div>
+<span class="text-xs text-primary font-bold">选择模板</span>
+</div>
+<div class="flex-1 h-0.5 bg-primary/20 mx-4"></div>
+<div class="flex flex-col items-center space-y-2">
+<div class="w-10 h-10 rounded-full bg-secondary border border-border flex items-center justify-center text-slate-500 font-bold">2</div>
+<span class="text-xs text-slate-500 font-medium">参数配置</span>
+</div>
+<div class="flex-1 h-0.5 bg-slate-800 mx-4"></div>
+<div class="flex flex-col items-center space-y-2">
+<div class="w-10 h-10 rounded-full bg-secondary border border-border flex items-center justify-center text-slate-500 font-bold">3</div>
+<span class="text-xs text-slate-500 font-medium">AI 生成</span>
+</div>
+<div class="flex-1 h-0.5 bg-slate-800 mx-4"></div>
+<div class="flex flex-col items-center space-y-2">
+<div class="w-10 h-10 rounded-full bg-secondary border border-border flex items-center justify-center text-slate-500 font-bold">4</div>
+<span class="text-xs text-slate-500 font-medium">导出文件</span>
+</div>
+</div>
+<!-- 步骤1: 模板选择 -->
+<div class="space-y-6">
+<h3 class="text-lg font-bold flex items-center">
+<span class="w-1 h-6 bg-primary mr-3 rounded-full"></span>
+            第一步：选择报告模板
+          </h3>
+<div class="grid grid-cols-3 gap-6">
+<div class="hud-card p-6 cursor-pointer border-primary/50 bg-primary/10 shadow-[0_0_20px_rgba(59,130,246,0.1)]">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="w-12 h-12 rounded-lg bg-primary/20 flex items-center justify-center mb-4">
+<iconify-icon class="text-primary text-2xl" icon="lucide:file-warning"></iconify-icon>
+</div>
+<h4 class="font-bold mb-2">风险评估报告</h4>
+<p class="text-[10px] text-slate-500 leading-relaxed">针对特定风险事件的深度剖析，包含影响分析、传播路径及专家级处置建议。</p>
+</div>
+<div class="hud-card p-6 cursor-pointer hover:border-primary/30 transition-all">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="w-12 h-12 rounded-lg bg-accent/20 flex items-center justify-center mb-4">
+<iconify-icon class="text-accent text-2xl" icon="lucide:network"></iconify-icon>
+</div>
+<h4 class="font-bold mb-2">供应链分析报告</h4>
+<p class="text-[10px] text-slate-500 leading-relaxed">全方位的供应链健康度扫描，识别瓶颈环节与二级供应商隐性风险。</p>
+</div>
+<div class="hud-card p-6 cursor-pointer hover:border-primary/30 transition-all">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="w-12 h-12 rounded-lg bg-success/20 flex items-center justify-center mb-4">
+<iconify-icon class="text-success text-2xl" icon="lucide:building"></iconify-icon>
+</div>
+<h4 class="font-bold mb-2">企业尽调报告</h4>
+<p class="text-[10px] text-slate-500 leading-relaxed">基于工商、财务、舆情等多维数据的企业画像深度扫描报告。</p>
+</div>
+</div>
+</div>
+<!-- 步骤2: 参数配置 -->
+<div class="hud-card p-8 space-y-8">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-lg font-bold flex items-center">
+<span class="w-1 h-6 bg-primary mr-3 rounded-full"></span>
+            第二步：配置报告参数
+          </h3>
+<div class="grid grid-cols-2 gap-8">
+<div class="space-y-4">
+<div class="space-y-2">
+<label class="text-xs font-medium text-slate-400">时间范围</label>
+<div class="flex space-x-2">
+<input class="cyber-input flex-1 p-2 rounded text-xs" type="date" value="2026-05-01"/>
+<span class="flex items-center text-slate-600">至</span>
+<input class="cyber-input flex-1 p-2 rounded text-xs" type="date" value="2026-05-20"/>
+</div>
+</div>
+<div class="space-y-2">
+<label class="text-xs font-medium text-slate-400">风险等级筛选</label>
+<div class="flex flex-wrap gap-2">
+<label class="flex items-center px-3 py-1 bg-danger/20 border border-danger/40 rounded-full cursor-pointer">
+<input checked="" class="hidden" type="checkbox"/>
+<span class="text-[10px] text-danger font-bold">高危</span>
+</label>
+<label class="flex items-center px-3 py-1 bg-warning/20 border border-warning/40 rounded-full cursor-pointer">
+<input checked="" class="hidden" type="checkbox"/>
+<span class="text-[10px] text-warning font-bold">中危</span>
+</label>
+<label class="flex items-center px-3 py-1 bg-primary/20 border border-primary/40 rounded-full cursor-pointer">
+<input class="hidden" type="checkbox"/>
+<span class="text-[10px] text-primary font-bold">低危</span>
+</label>
+</div>
+</div>
+</div>
+<div class="space-y-4">
+<div class="space-y-2">
+<label class="text-xs font-medium text-slate-400">输出语言</label>
+<select class="cyber-input w-full p-2 rounded text-xs">
+<option>中文 (简体)</option>
+<option>English (US)</option>
+<option>日本語</option>
+</select>
+</div>
+<div class="space-y-2">
+<label class="text-xs font-medium text-slate-400">输出格式</label>
+<div class="grid grid-cols-3 gap-2">
+<button class="py-2 bg-primary/20 border border-primary/50 text-white rounded text-xs font-bold">PDF</button>
+<button class="py-2 bg-secondary border border-border text-slate-400 rounded text-xs hover:border-primary/50 hover:text-white transition-all">Word</button>
+<button class="py-2 bg-secondary border border-border text-slate-400 rounded text-xs hover:border-primary/50 hover:text-white transition-all">PPT</button>
+</div>
+</div>
+</div>
+</div>
+<div class="pt-4 border-t border-border flex justify-between items-center">
+<p class="text-[10px] text-slate-500">预计生成时间: 45 秒 (基于 GPT-4o 引擎)</p>
+<button class="bg-primary hover:bg-blue-600 px-8 py-3 rounded-lg text-white font-bold shadow-lg shadow-primary/20 flex items-center space-x-3 transition-all" onclick="startGeneration()">
+<iconify-icon icon="lucide:sparkles"></iconify-icon>
+<span>立即开始生成报告</span>
+</button>
+</div>
+</div>
+<!-- 模拟生成进度 (默认隐藏) -->
+<div class="hidden hud-card p-12 flex-col items-center justify-center space-y-6" id="gen-progress">
+<div class="w-24 h-24 relative">
+<div class="absolute inset-0 border-4 border-primary/20 rounded-full"></div>
+<div class="absolute inset-0 border-4 border-primary rounded-full border-t-transparent animate-spin"></div>
+<div class="absolute inset-0 flex items-center justify-center">
+<iconify-icon class="text-3xl text-primary animate-pulse" icon="lucide:brain-circuit"></iconify-icon>
+</div>
+</div>
+<div class="text-center">
+<h4 class="text-lg font-bold mb-2">AI 正在深度分析中...</h4>
+<p class="text-xs text-slate-500 font-mono" id="progress-text">正在提取 24 家供应商的财务指标 [15%]</p>
+</div>
+<div class="w-full max-w-md h-2 bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-primary shadow-[0_0_10px_rgba(59,130,246,0.5)] transition-all duration-500" id="progress-bar" style="width: 15%"></div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<script src="app.js"></script>
+<script>
+    function startGeneration() {
+      const progress = document.getElementById('gen-progress');
+      progress.classList.remove('hidden');
+      progress.classList.add('flex');
+      progress.scrollIntoView({ behavior: 'smooth' });
+      
+      let p = 15;
+      const texts = [
+        "正在提取 24 家供应商的财务指标...",
+        "正在通过 GIS 引擎计算物流延迟概率...",
+        "正在生成风险传播拓扑图...",
+        "正在调用专家系统生成处置建议...",
+        "正在进行报告排版与图表优化...",
+        "生成完成！"
+      ];
+      
+      const interval = setInterval(() => {
+        p += 17;
+        if (p >= 100) {
+          p = 100;
+          clearInterval(interval);
+          showToast('报告生成成功！', 'success');
+          setTimeout(() => {
+            window.location.href = 'alert-center.html';
+          }, 1000);
+        }
+        document.getElementById('progress-bar').style.width = p + '%';
+        document.getElementById('progress-text').innerText = texts[Math.min(Math.floor(p/20), texts.length - 1)] + ` [${p}%]`;
+      }, 800);
+    }
+  </script>
+<script src="semirisk-api.js"></script>
+</body>
+</html>

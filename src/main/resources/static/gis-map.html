@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>GIS 风险地图 - 供应链风险智能管理系统</title>
+<script src="https://modao.cc/agent-py/static/source/js/tailwindcss.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/echarts.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="common.css" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'cyber-bg': '#030712',
+            'cyber-card': '#0f172a',
+            'neon-blue': '#3b82f6',
+            'neon-purple': '#8b5cf6',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-cyber-bg text-foreground h-screen flex overflow-hidden">
+<canvas id="particle-canvas"></canvas>
+<aside class="w-64 border-r border-border bg-card/50 backdrop-blur-xl transition-all duration-300 flex flex-col z-30" id="sidebar">
+<div class="p-6 flex items-center space-x-3">
+<div class="w-8 h-8 rounded bg-primary flex items-center justify-center"><iconify-icon class="text-white text-xl" icon="lucide:shield-check"></iconify-icon></div>
+<span class="font-bold text-lg tracking-tight nav-text">RISK INTEL</span>
+</div>
+<nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+<a class="nav-item" href="dashboard.html"><iconify-icon class="text-xl" icon="lucide:layout-dashboard"></iconify-icon><span class="ml-3 nav-text">首页风险总览</span></a>
+<a class="nav-item" href="data-upload.html"><iconify-icon class="text-xl" icon="lucide:upload-cloud"></iconify-icon><span class="ml-3 nav-text">数据上传</span></a>
+<a class="nav-item" href="risk-analysis.html"><iconify-icon class="text-xl" icon="lucide:bar-chart-3"></iconify-icon><span class="ml-3 nav-text">风险分析</span></a>
+<a class="nav-item" href="risk-detail.html"><iconify-icon class="text-xl" icon="lucide:file-search"></iconify-icon><span class="ml-3 nav-text">风险详情</span></a>
+<a class="nav-item" href="report-generation.html"><iconify-icon class="text-xl" icon="lucide:file-text"></iconify-icon><span class="ml-3 nav-text">AI报告生成</span></a>
+<a class="nav-item" href="alert-center.html"><iconify-icon class="text-xl" icon="lucide:bell"></iconify-icon><span class="ml-3 nav-text">预警中心</span></a>
+<a class="nav-item nav-active" href="gis-map.html"><iconify-icon class="text-xl" icon="lucide:map"></iconify-icon><span class="ml-3 nav-text">GIS风险地图</span></a>
+<a class="nav-item" href="enterprise-profile.html"><iconify-icon class="text-xl" icon="lucide:building-2"></iconify-icon><span class="ml-3 nav-text">企业画像</span></a>
+<a class="nav-item" href="knowledge-base.html"><iconify-icon class="text-xl" icon="lucide:library"></iconify-icon><span class="ml-3 nav-text">知识库检索</span></a>
+<a class="nav-item" href="system-management.html"><iconify-icon class="text-xl" icon="lucide:settings"></iconify-icon><span class="ml-3 nav-text">系统管理</span></a>
+</nav>
+<div class="p-4 border-t border-border">
+<div class="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors">
+<img alt="User Avatar" class="w-8 h-8 rounded-full border border-primary/30" src="https://modao.cc/agent-py/media/generated_images/2026-05-20/c4f740ab0745425db76c1221598a5108.jpg"/>
+<div class="nav-text">
+<p class="text-sm font-medium">管理员</p>
+<p class="text-xs text-slate-500">admin@risk.com</p>
+</div>
+</div>
+</div>
+</aside>
+<main class="flex-1 flex flex-col relative overflow-hidden">
+<!-- 地图容器 -->
+<div class="absolute inset-0 z-0" id="gis-container"></div>
+<!-- 浮动 UI -->
+<header class="h-16 border-b border-border bg-card/30 backdrop-blur-md flex items-center justify-between px-8 z-20 relative">
+<div class="flex items-center space-x-4">
+<button class="p-2 hover:bg-white/5 rounded-lg text-slate-400" id="nav-toggle">
+<iconify-icon class="text-xl" icon="lucide:menu"></iconify-icon>
+</button>
+<h2 class="text-lg font-semibold">全球 GIS 风险实时地图</h2>
+</div>
+<div class="flex items-center space-x-4">
+<div class="flex bg-secondary rounded-lg p-1 border border-border">
+<input class="bg-transparent border-none text-xs px-3 focus:ring-0 w-48 text-white placeholder-slate-500" placeholder="搜索区域或港口..." type="text"/>
+<button class="bg-primary px-3 py-1 rounded-md text-white text-xs hover:bg-blue-600" onclick="showToast('检索区域中...', 'info')">搜索</button>
+</div>
+</div>
+</header>
+<!-- 左侧筛选面板 -->
+<div class="absolute left-6 top-24 z-10 w-64 space-y-4">
+<div class="hud-card p-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-xs font-bold mb-3">图层筛选</h3>
+<div class="space-y-2">
+<label class="flex items-center justify-between cursor-pointer group">
+<span class="text-[10px] text-slate-400 group-hover:text-white transition-colors">风险热力图</span>
+<input checked="" class="accent-primary" type="checkbox"/>
+</label>
+<label class="flex items-center justify-between cursor-pointer group">
+<span class="text-[10px] text-slate-400 group-hover:text-white transition-colors">供应商位置</span>
+<input checked="" class="accent-primary" type="checkbox"/>
+</label>
+<label class="flex items-center justify-between cursor-pointer group">
+<span class="text-[10px] text-slate-400 group-hover:text-white transition-colors">港口/航道</span>
+<input class="accent-primary" type="checkbox"/>
+</label>
+<label class="flex items-center justify-between cursor-pointer group">
+<span class="text-[10px] text-slate-400 group-hover:text-white transition-colors">物流实时路径</span>
+<input class="accent-primary" type="checkbox"/>
+</label>
+</div>
+</div>
+<div class="hud-card p-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-xs font-bold mb-3">当前区域摘要</h3>
+<div class="space-y-3">
+<div class="p-2 bg-danger/10 border border-danger/20 rounded">
+<p class="text-[10px] font-bold text-danger mb-1">东南亚区域 (Critical)</p>
+<p class="text-[9px] text-slate-400 leading-tight">检测到 3 处港口拥堵，涉及 12 家核心供应商，预计平均延迟 4.5 天。</p>
+</div>
+<div class="p-2 bg-warning/10 border border-warning/20 rounded">
+<p class="text-[10px] font-bold text-warning mb-1">北美区域 (Warning)</p>
+<p class="text-[9px] text-slate-400 leading-tight">内陆运输受气候影响，部分路线限流。</p>
+</div>
+</div>
+</div>
+</div>
+<!-- 右侧详情面板 (模拟点击后显示) -->
+<div class="absolute right-6 top-24 z-10 w-80 hud-card p-6 hidden" id="marker-detail">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="flex justify-between items-start mb-4">
+<div>
+<h3 class="text-sm font-bold text-white" id="detail-title">新加坡港 (Singapore Port)</h3>
+<p class="text-[10px] text-slate-500">坐标: 1.3521° N, 103.8198° E</p>
+</div>
+<button class="text-slate-500 hover:text-white" onclick="closeDetail()"><iconify-icon icon="lucide:x"></iconify-icon></button>
+</div>
+<div class="space-y-4">
+<div class="flex items-center justify-between p-3 bg-danger/10 border border-danger/20 rounded">
+<span class="text-xs font-bold">风险指数</span>
+<span class="text-lg font-mono font-bold text-danger">88.5</span>
+</div>
+<div class="space-y-2">
+<p class="text-[10px] font-bold uppercase text-slate-500">影响分析</p>
+<ul class="text-[10px] text-slate-300 space-y-1 list-disc pl-4">
+<li>锚地平均等待时间增加 72 小时</li>
+<li>关联一级供应商延迟风险: 高</li>
+<li>关联二级供应商延迟风险: 极高</li>
+</ul>
+</div>
+<button class="w-full py-2 bg-primary text-white text-xs font-bold rounded shadow-lg shadow-primary/20 hover:bg-blue-600" onclick="window.location.href='risk-detail.html'">查看深度分析报告</button>
+</div>
+</div>
+<!-- 底部图例 -->
+<div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex space-x-8 bg-card/80 backdrop-blur-md px-6 py-2 rounded-full border border-border">
+<div class="flex items-center space-x-2">
+<span class="w-3 h-3 rounded-full bg-danger shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
+<span class="text-[10px] text-slate-300">高危区域</span>
+</div>
+<div class="flex items-center space-x-2">
+<span class="w-3 h-3 rounded-full bg-warning"></span>
+<span class="text-[10px] text-slate-300">中危区域</span>
+</div>
+<div class="flex items-center space-x-2">
+<span class="w-3 h-3 rounded-full bg-primary"></span>
+<span class="text-[10px] text-slate-300">低危区域</span>
+</div>
+<div class="flex items-center space-x-2">
+<iconify-icon class="text-primary" icon="lucide:anchor"></iconify-icon>
+<span class="text-[10px] text-slate-300">核心港口</span>
+</div>
+</div>
+</main>
+<script src="app.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const gisChart = echarts.init(document.getElementById('gis-container'), 'dark');
+      
+      const option = {
+        backgroundColor: 'transparent',
+        xAxis: { show: false, min: 0, max: 1000 },
+        yAxis: { show: false, min: 0, max: 600 },
+        series: [
+          {
+            type: 'scatter',
+            symbolSize: 1,
+            itemStyle: { color: 'rgba(59, 130, 246, 0.05)' },
+            data: Array.from({length: 200}, () => [Math.random()*1000, Math.random()*600])
+          },
+          {
+            type: 'effectScatter',
+            coordinateSystem: 'cartesian2d',
+            data: [
+              { value: [750, 280, 90], name: '东南亚区域' },
+              { value: [200, 450, 70], name: '北美区域' },
+              { value: [500, 480, 60], name: '西欧区域' },
+              { value: [820, 420, 85], name: '东亚区域' }
+            ],
+            symbolSize: (val) => val[2] / 2,
+            showEffectOn: 'render',
+            rippleEffect: { brushType: 'stroke', scale: 4 },
+            itemStyle: {
+              color: (params) => params.data.value[2] > 80 ? '#ef4444' : '#eab308',
+              shadowBlur: 10,
+              shadowColor: '#333'
+            }
+          }
+        ]
+      };
+
+      gisChart.setOption(option);
+      
+      gisChart.on('click', (params) => {
+        const detail = document.getElementById('marker-detail');
+        document.getElementById('detail-title').innerText = params.name + ' 风险概览';
+        detail.classList.remove('hidden');
+      });
+
+      window.addEventListener('resize', () => gisChart.resize());
+    });
+
+    function closeDetail() {
+      document.getElementById('marker-detail').classList.add('hidden');
+    }
+  </script>
+<script src="semirisk-api.js"></script>
+</body>
+</html>

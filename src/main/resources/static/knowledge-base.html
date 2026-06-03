@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>知识库检索 - 供应链风险智能管理系统</title>
+<script src="https://modao.cc/agent-py/static/source/js/tailwindcss.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="common.css" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'cyber-bg': '#030712',
+            'cyber-card': '#0f172a',
+            'neon-blue': '#3b82f6',
+            'neon-purple': '#8b5cf6',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-cyber-bg text-foreground h-screen flex overflow-hidden">
+<canvas id="particle-canvas"></canvas>
+<aside class="w-64 border-r border-border bg-card/50 backdrop-blur-xl transition-all duration-300 flex flex-col z-30" id="sidebar">
+<div class="p-6 flex items-center space-x-3">
+<div class="w-8 h-8 rounded bg-primary flex items-center justify-center"><iconify-icon class="text-white text-xl" icon="lucide:shield-check"></iconify-icon></div>
+<span class="font-bold text-lg tracking-tight nav-text">RISK INTEL</span>
+</div>
+<nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+<a class="nav-item" href="dashboard.html"><iconify-icon class="text-xl" icon="lucide:layout-dashboard"></iconify-icon><span class="ml-3 nav-text">首页风险总览</span></a>
+<a class="nav-item" href="data-upload.html"><iconify-icon class="text-xl" icon="lucide:upload-cloud"></iconify-icon><span class="ml-3 nav-text">数据上传</span></a>
+<a class="nav-item" href="risk-analysis.html"><iconify-icon class="text-xl" icon="lucide:bar-chart-3"></iconify-icon><span class="ml-3 nav-text">风险分析</span></a>
+<a class="nav-item" href="risk-detail.html"><iconify-icon class="text-xl" icon="lucide:file-search"></iconify-icon><span class="ml-3 nav-text">风险详情</span></a>
+<a class="nav-item" href="report-generation.html"><iconify-icon class="text-xl" icon="lucide:file-text"></iconify-icon><span class="ml-3 nav-text">AI报告生成</span></a>
+<a class="nav-item" href="alert-center.html"><iconify-icon class="text-xl" icon="lucide:bell"></iconify-icon><span class="ml-3 nav-text">预警中心</span></a>
+<a class="nav-item" href="gis-map.html"><iconify-icon class="text-xl" icon="lucide:map"></iconify-icon><span class="ml-3 nav-text">GIS风险地图</span></a>
+<a class="nav-item" href="enterprise-profile.html"><iconify-icon class="text-xl" icon="lucide:building-2"></iconify-icon><span class="ml-3 nav-text">企业画像</span></a>
+<a class="nav-item nav-active" href="knowledge-base.html"><iconify-icon class="text-xl" icon="lucide:library"></iconify-icon><span class="ml-3 nav-text">知识库检索</span></a>
+<a class="nav-item" href="system-management.html"><iconify-icon class="text-xl" icon="lucide:settings"></iconify-icon><span class="ml-3 nav-text">系统管理</span></a>
+</nav>
+<div class="p-4 border-t border-border">
+<div class="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors">
+<img alt="User Avatar" class="w-8 h-8 rounded-full border border-primary/30" src="https://modao.cc/agent-py/media/generated_images/2026-05-20/c4f740ab0745425db76c1221598a5108.jpg"/>
+<div class="nav-text">
+<p class="text-sm font-medium">管理员</p>
+<p class="text-xs text-slate-500">admin@risk.com</p>
+</div>
+</div>
+</div>
+</aside>
+<main class="flex-1 flex flex-col relative overflow-hidden">
+<header class="h-16 border-b border-border bg-card/30 backdrop-blur-md flex items-center justify-between px-8 z-20">
+<div class="flex items-center space-x-4">
+<button class="p-2 hover:bg-white/5 rounded-lg text-slate-400" id="nav-toggle">
+<iconify-icon class="text-xl" icon="lucide:menu"></iconify-icon>
+</button>
+<h2 class="text-lg font-semibold">行业风险知识库</h2>
+</div>
+</header>
+<div class="flex-1 flex flex-col p-8 overflow-hidden">
+<!-- 大型搜索区 -->
+<div class="max-w-4xl mx-auto w-full mb-8">
+<div class="relative group">
+<div class="absolute -inset-1 bg-gradient-to-r from-primary to-accent rounded-2xl blur opacity-25 group-focus-within:opacity-50 transition-all"></div>
+<div class="relative hud-card flex items-center p-2">
+<iconify-icon class="ml-4 text-2xl text-slate-500" icon="lucide:search"></iconify-icon>
+<input class="bg-transparent border-none text-lg px-4 py-3 focus:ring-0 w-full text-white placeholder-slate-500" placeholder="输入关键词、行业、或风险类型... (Ctrl + K)" type="text" value="半导体行业物流中断应对策略"/>
+<div class="flex items-center space-x-2 mr-2">
+<span class="text-[10px] text-slate-600 bg-secondary px-2 py-1 rounded border border-border">Vector Search</span>
+<button class="bg-primary hover:bg-blue-600 px-6 py-2.5 rounded-xl text-white font-bold shadow-lg transition-all" onclick="showToast('正在执行语义检索...', 'info')">检索</button>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-center mt-4 space-x-6">
+<label class="flex items-center space-x-2 cursor-pointer text-xs text-slate-400 hover:text-white">
+<input checked="" class="accent-primary" type="checkbox"/><span>混合检索 (Hybrid)</span>
+</label>
+<label class="flex items-center space-x-2 cursor-pointer text-xs text-slate-400 hover:text-white">
+<input checked="" class="accent-primary" type="checkbox"/><span>语义增强 (RAG)</span>
+</label>
+<label class="flex items-center space-x-2 cursor-pointer text-xs text-slate-400 hover:text-white">
+<input class="accent-primary" type="checkbox"/><span>仅搜索 PDF</span>
+</label>
+</div>
+</div>
+<!-- 结果区域 -->
+<div class="flex-1 grid grid-cols-12 gap-8 overflow-hidden">
+<!-- 左侧筛选 -->
+<div class="col-span-3 space-y-6 overflow-y-auto pr-2">
+<div class="hud-card p-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-xs font-bold mb-4">知识分类</h3>
+<div class="space-y-2">
+<div class="flex items-center justify-between p-2 rounded bg-primary/10 text-primary border border-primary/20 text-[10px] font-bold">
+<span>行业标准与规范</span>
+<span>(124)</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded hover:bg-white/5 text-[10px] text-slate-400 cursor-pointer">
+<span>历史风险案例</span>
+<span>(85)</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded hover:bg-white/5 text-[10px] text-slate-400 cursor-pointer">
+<span>政策法规库</span>
+<span>(210)</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded hover:bg-white/5 text-[10px] text-slate-400 cursor-pointer">
+<span>AI 生成建议</span>
+<span>(42)</span>
+</div>
+</div>
+</div>
+<div class="hud-card p-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-xs font-bold mb-4">热门标签</h3>
+<div class="flex flex-wrap gap-2">
+<span class="px-2 py-1 bg-secondary border border-border rounded text-[9px] hover:border-primary transition-all cursor-pointer">#半导体</span>
+<span class="px-2 py-1 bg-secondary border border-border rounded text-[9px] hover:border-primary transition-all cursor-pointer">#物流中断</span>
+<span class="px-2 py-1 bg-secondary border border-border rounded text-[9px] hover:border-primary transition-all cursor-pointer">#财务合规</span>
+<span class="px-2 py-1 bg-secondary border border-border rounded text-[9px] hover:border-primary transition-all cursor-pointer">#东南亚</span>
+<span class="px-2 py-1 bg-secondary border border-border rounded text-[9px] hover:border-primary transition-all cursor-pointer">#ESG评分</span>
+<span class="px-2 py-1 bg-secondary border border-border rounded text-[9px] hover:border-primary transition-all cursor-pointer">#贸易限制</span>
+</div>
+</div>
+</div>
+<!-- 结果列表 -->
+<div class="col-span-9 overflow-y-auto space-y-4 pr-4">
+<div class="hud-card p-6 group hover:border-primary/50 transition-all">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="flex justify-between items-start mb-2">
+<h4 class="text-sm font-bold text-white group-hover:text-primary transition-colors">《全球半导体供应链物流风险白皮书 2026》</h4>
+<span class="text-[10px] text-success font-mono">Similarity: 0.98</span>
+</div>
+<p class="text-xs text-slate-400 leading-relaxed mb-4">
+              摘要: 本文档深度分析了后全球化时代<span class="text-primary font-bold">半导体行业</span>面临的物流挑战，特别指出了在<span class="text-primary font-bold">东南亚</span>区域发生罢工或气候灾害时的紧急切换机制。文档提出了“双线并行”物流策略...
+            </p>
+<div class="flex items-center justify-between border-t border-white/5 pt-4">
+<div class="flex items-center space-x-4">
+<span class="flex items-center text-[10px] text-slate-500"><iconify-icon class="mr-1" icon="lucide:file-text"></iconify-icon>PDF (4.2MB)</span>
+<span class="flex items-center text-[10px] text-slate-500"><iconify-icon class="mr-1" icon="lucide:calendar"></iconify-icon>2026-03-15</span>
+</div>
+<button class="text-xs text-primary font-bold flex items-center hover:underline" onclick="showToast('正在打开文档预览...', 'info')">预览文档 <iconify-icon class="ml-1" icon="lucide:external-link"></iconify-icon></button>
+</div>
+</div>
+<div class="hud-card p-6 group hover:border-primary/50 transition-all">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="flex justify-between items-start mb-2">
+<h4 class="text-sm font-bold text-white group-hover:text-primary transition-colors">案例研究: 2024 年苏伊士运河拥堵对电子行业的影响</h4>
+<span class="text-[10px] text-success font-mono">Similarity: 0.85</span>
+</div>
+<p class="text-xs text-slate-400 leading-relaxed mb-4">
+              摘要: 详细记录了某知名电子品牌在运河中断期间，如何通过跨欧亚铁路(CRE)实现 12 天内恢复 80% 供应能力的实战过程。包含成本对比与时间线复盘...
+            </p>
+<div class="flex items-center justify-between border-t border-white/5 pt-4">
+<div class="flex items-center space-x-4">
+<span class="flex items-center text-[10px] text-slate-500"><iconify-icon class="mr-1" icon="lucide:file-text"></iconify-icon>DOCX (1.8MB)</span>
+<span class="flex items-center text-[10px] text-slate-500"><iconify-icon class="mr-1" icon="lucide:calendar"></iconify-icon>2025-11-20</span>
+</div>
+<button class="text-xs text-primary font-bold flex items-center hover:underline" onclick="showToast('正在打开文档预览...', 'info')">预览文档 <iconify-icon class="ml-1" icon="lucide:external-link"></iconify-icon></button>
+</div>
+</div>
+<div class="hud-card p-6 group hover:border-primary/50 transition-all">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="flex justify-between items-start mb-2">
+<h4 class="text-sm font-bold text-white group-hover:text-primary transition-colors">AI 自动生成建议: 东南亚罢工风险应对 SOP</h4>
+<span class="text-[10px] text-accent font-mono">AI Generated</span>
+</div>
+<p class="text-xs text-slate-400 leading-relaxed mb-4">
+              建议: 1. 立即锁定马来西亚巴生港备选仓位；2. 启动二级供应商 A 的库存预警；3. 调整物流预算至 120% 应对空运溢价...
+            </p>
+<div class="flex items-center justify-between border-t border-white/5 pt-4">
+<div class="flex items-center space-x-4">
+<span class="flex items-center text-[10px] text-slate-500"><iconify-icon class="mr-1 text-accent" icon="lucide:sparkles"></iconify-icon>动态生成</span>
+<span class="flex items-center text-[10px] text-slate-500"><iconify-icon class="mr-1" icon="lucide:calendar"></iconify-icon>2026-05-20</span>
+</div>
+<button class="text-xs text-primary font-bold flex items-center hover:underline" onclick="window.location.href='report-generation.html'">查看完整建议</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<script src="app.js"></script>
+<script src="semirisk-api.js"></script>
+</body>
+</html>

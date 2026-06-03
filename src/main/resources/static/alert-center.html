@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>预警中心 - 供应链风险智能管理系统</title>
+<script src="https://modao.cc/agent-py/static/source/js/tailwindcss.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="common.css" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'cyber-bg': '#030712',
+            'cyber-card': '#0f172a',
+            'neon-blue': '#3b82f6',
+            'neon-purple': '#8b5cf6',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-cyber-bg text-foreground h-screen flex overflow-hidden">
+<canvas id="particle-canvas"></canvas>
+<aside class="w-64 border-r border-border bg-card/50 backdrop-blur-xl transition-all duration-300 flex flex-col z-30" id="sidebar">
+<div class="p-6 flex items-center space-x-3">
+<div class="w-8 h-8 rounded bg-primary flex items-center justify-center"><iconify-icon class="text-white text-xl" icon="lucide:shield-check"></iconify-icon></div>
+<span class="font-bold text-lg tracking-tight nav-text">RISK INTEL</span>
+</div>
+<nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+<a class="nav-item" href="dashboard.html"><iconify-icon class="text-xl" icon="lucide:layout-dashboard"></iconify-icon><span class="ml-3 nav-text">首页风险总览</span></a>
+<a class="nav-item" href="data-upload.html"><iconify-icon class="text-xl" icon="lucide:upload-cloud"></iconify-icon><span class="ml-3 nav-text">数据上传</span></a>
+<a class="nav-item" href="risk-analysis.html"><iconify-icon class="text-xl" icon="lucide:bar-chart-3"></iconify-icon><span class="ml-3 nav-text">风险分析</span></a>
+<a class="nav-item" href="risk-detail.html"><iconify-icon class="text-xl" icon="lucide:file-search"></iconify-icon><span class="ml-3 nav-text">风险详情</span></a>
+<a class="nav-item" href="report-generation.html"><iconify-icon class="text-xl" icon="lucide:file-text"></iconify-icon><span class="ml-3 nav-text">AI报告生成</span></a>
+<a class="nav-item nav-active" href="alert-center.html"><iconify-icon class="text-xl" icon="lucide:bell"></iconify-icon><span class="ml-3 nav-text">预警中心</span></a>
+<a class="nav-item" href="gis-map.html"><iconify-icon class="text-xl" icon="lucide:map"></iconify-icon><span class="ml-3 nav-text">GIS风险地图</span></a>
+<a class="nav-item" href="enterprise-profile.html"><iconify-icon class="text-xl" icon="lucide:building-2"></iconify-icon><span class="ml-3 nav-text">企业画像</span></a>
+<a class="nav-item" href="knowledge-base.html"><iconify-icon class="text-xl" icon="lucide:library"></iconify-icon><span class="ml-3 nav-text">知识库检索</span></a>
+<a class="nav-item" href="system-management.html"><iconify-icon class="text-xl" icon="lucide:settings"></iconify-icon><span class="ml-3 nav-text">系统管理</span></a>
+</nav>
+<div class="p-4 border-t border-border">
+<div class="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors">
+<img alt="User Avatar" class="w-8 h-8 rounded-full border border-primary/30" src="https://modao.cc/agent-py/media/generated_images/2026-05-20/c4f740ab0745425db76c1221598a5108.jpg"/>
+<div class="nav-text">
+<p class="text-sm font-medium">管理员</p>
+<p class="text-xs text-slate-500">admin@risk.com</p>
+</div>
+</div>
+</div>
+</aside>
+<main class="flex-1 flex flex-col relative overflow-hidden">
+<header class="h-16 border-b border-border bg-card/30 backdrop-blur-md flex items-center justify-between px-8 z-20">
+<div class="flex items-center space-x-4">
+<button class="p-2 hover:bg-white/5 rounded-lg text-slate-400" id="nav-toggle">
+<iconify-icon class="text-xl" icon="lucide:menu"></iconify-icon>
+</button>
+<h2 class="text-lg font-semibold">风险预警中心</h2>
+</div>
+<div class="flex items-center space-x-4">
+<div class="flex space-x-2 text-xs">
+<span class="flex items-center space-x-1"><span class="w-2 h-2 rounded-full bg-danger"></span><span class="text-slate-400">高危 (12)</span></span>
+<span class="flex items-center space-x-1"><span class="w-2 h-2 rounded-full bg-warning"></span><span class="text-slate-400">中危 (28)</span></span>
+<span class="flex items-center space-x-1"><span class="w-2 h-2 rounded-full bg-primary"></span><span class="text-slate-400">低危 (45)</span></span>
+</div>
+<button class="bg-primary px-4 py-1.5 rounded-lg text-sm text-white font-bold hover:bg-blue-600 transition-all" onclick="showToast('批量处理指令下发成功！', 'success')">批量处理</button>
+</div>
+</header>
+<div class="flex-1 overflow-y-auto p-6">
+<div class="hud-card h-full flex flex-col overflow-hidden">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<!-- 筛选栏 -->
+<div class="p-4 border-b border-border flex items-center justify-between bg-white/5">
+<div class="flex items-center space-x-4">
+<div class="relative">
+<iconify-icon class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" icon="lucide:search"></iconify-icon>
+<input class="cyber-input pl-9 pr-4 py-1.5 rounded-md text-sm w-64" placeholder="搜索告警标题或来源..." type="text"/>
+</div>
+<select class="cyber-input px-3 py-1.5 rounded-md text-sm">
+<option>所有等级</option>
+<option>高危</option>
+<option>中危</option>
+<option>低危</option>
+</select>
+<select class="cyber-input px-3 py-1.5 rounded-md text-sm">
+<option>所有状态</option>
+<option>未处理</option>
+<option>处理中</option>
+<option>已忽略</option>
+</select>
+</div>
+<div class="text-xs text-slate-500 font-mono">实时更新中... (每 30s)</div>
+</div>
+<!-- 列表内容 -->
+<div class="flex-1 overflow-y-auto">
+<table class="w-full text-left border-collapse">
+<thead class="sticky top-0 bg-card z-10">
+<tr class="text-[10px] uppercase text-slate-500 border-b border-border">
+<th class="px-6 py-4 font-bold">告警时间</th>
+<th class="px-6 py-4 font-bold">等级</th>
+<th class="px-6 py-4 font-bold">告警标题</th>
+<th class="px-6 py-4 font-bold">告警来源</th>
+<th class="px-6 py-4 font-bold">状态</th>
+<th class="px-6 py-4 text-right font-bold">操作</th>
+</tr>
+</thead>
+<tbody class="text-xs divide-y divide-white/5">
+<tr class="hover:bg-white/5 transition-colors border-l-4 border-l-danger">
+<td class="px-6 py-4 font-mono text-slate-400">15:30:12</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 rounded bg-danger/20 text-danger font-bold uppercase text-[9px]">Critical</span>
+</td>
+<td class="px-6 py-4 font-bold">东南亚物流中断指数突破 85%</td>
+<td class="px-6 py-4">GIS 实时监控系统</td>
+<td class="px-6 py-4">
+<span class="flex items-center space-x-1"><span class="w-1.5 h-1.5 rounded-full bg-danger animate-pulse"></span><span>未处理</span></span>
+</td>
+<td class="px-6 py-4 text-right space-x-2">
+<button class="text-primary hover:underline" onclick="window.location.href='risk-detail.html'">详情</button>
+<button class="text-slate-400 hover:text-white" onclick="showToast('告警已忽略', 'info')">忽略</button>
+</td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors border-l-4 border-l-danger">
+<td class="px-6 py-4 font-mono text-slate-400">15:12:45</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 rounded bg-danger/20 text-danger font-bold uppercase text-[9px]">Critical</span>
+</td>
+<td class="px-6 py-4 font-bold">供应商 A 财务评级下调至 CCC</td>
+<td class="px-6 py-4">AI 财务分析引擎</td>
+<td class="px-6 py-4">
+<span class="flex items-center space-x-1"><span class="w-1.5 h-1.5 rounded-full bg-danger animate-pulse"></span><span>未处理</span></span>
+</td>
+<td class="px-6 py-4 text-right space-x-2">
+<button class="text-primary hover:underline" onclick="window.location.href='risk-detail.html'">详情</button>
+<button class="text-slate-400 hover:text-white" onclick="showToast('告警已忽略', 'info')">忽略</button>
+</td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors border-l-4 border-l-warning">
+<td class="px-6 py-4 font-mono text-slate-400">14:55:20</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 rounded bg-warning/20 text-warning font-bold uppercase text-[9px]">Warning</span>
+</td>
+<td class="px-6 py-4 font-bold">锂矿价格 24 小时波动率 &gt; 5%</td>
+<td class="px-6 py-4">大宗商品行情源</td>
+<td class="px-6 py-4">
+<span class="text-warning">处理中</span>
+</td>
+<td class="px-6 py-4 text-right space-x-2">
+<button class="text-primary hover:underline" onclick="window.location.href='risk-detail.html'">详情</button>
+<button class="text-slate-400 hover:text-white" onclick="showToast('告警已忽略', 'info')">忽略</button>
+</td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors border-l-4 border-l-primary">
+<td class="px-6 py-4 font-mono text-slate-400">14:20:05</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 rounded bg-primary/20 text-primary font-bold uppercase text-[9px]">Info</span>
+</td>
+<td class="px-6 py-4 font-bold">检测到华南区域新政策出台</td>
+<td class="px-6 py-4">AI 舆情监控</td>
+<td class="px-6 py-4">
+<span class="text-success">已处理</span>
+</td>
+<td class="px-6 py-4 text-right space-x-2">
+<button class="text-primary hover:underline" onclick="window.location.href='risk-detail.html'">详情</button>
+<button class="text-slate-400 hover:text-white" onclick="showToast('告警已忽略', 'info')">忽略</button>
+</td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors border-l-4 border-l-warning">
+<td class="px-6 py-4 font-mono text-slate-400">13:45:00</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 rounded bg-warning/20 text-warning font-bold uppercase text-[9px]">Warning</span>
+</td>
+<td class="px-6 py-4 font-bold">二级供应商 B 核心组件库存低位</td>
+<td class="px-6 py-4">库存同步接口</td>
+<td class="px-6 py-4">
+<span class="flex items-center space-x-1"><span class="w-1.5 h-1.5 rounded-full bg-warning animate-pulse"></span><span>未处理</span></span>
+</td>
+<td class="px-6 py-4 text-right space-x-2">
+<button class="text-primary hover:underline" onclick="window.location.href='risk-detail.html'">详情</button>
+<button class="text-slate-400 hover:text-white" onclick="showToast('告警已忽略', 'info')">忽略</button>
+</td>
+</tr>
+<!-- 补全追加的行数据 -->
+<tr class="hover:bg-white/5 transition-colors border-l-4 border-l-danger">
+<td class="px-6 py-4 font-mono text-slate-400">13:10:44</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 rounded bg-danger/20 text-danger font-bold uppercase text-[9px]">Critical</span>
+</td>
+<td class="px-6 py-4 font-bold">欧洲航线主要航段集装箱运费上涨 40%</td>
+<td class="px-6 py-4">海运运价指数 API</td>
+<td class="px-6 py-4">
+<span class="flex items-center space-x-1"><span class="w-1.5 h-1.5 rounded-full bg-danger animate-pulse"></span><span>未处理</span></span>
+</td>
+<td class="px-6 py-4 text-right space-x-2">
+<button class="text-primary hover:underline" onclick="window.location.href='risk-detail.html'">详情</button>
+<button class="text-slate-400 hover:text-white" onclick="showToast('告警已忽略', 'info')">忽略</button>
+</td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors border-l-4 border-l-warning">
+<td class="px-6 py-4 font-mono text-slate-400">12:01:15</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 rounded bg-warning/20 text-warning font-bold uppercase text-[9px]">Warning</span>
+</td>
+<td class="px-6 py-4 font-bold">苏州某精密模具厂二级供电限制影响产能</td>
+<td class="px-6 py-4">地方电力监测系统</td>
+<td class="px-6 py-4">
+<span class="text-warning">处理中</span>
+</td>
+<td class="px-6 py-4 text-right space-x-2">
+<button class="text-primary hover:underline" onclick="window.location.href='risk-detail.html'">详情</button>
+<button class="text-slate-400 hover:text-white" onclick="showToast('告警已忽略', 'info')">忽略</button>
+</td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors border-l-4 border-l-primary">
+<td class="px-6 py-4 font-mono text-slate-400">11:30:22</td>
+<td class="px-6 py-4">
+<span class="px-2 py-0.5 rounded bg-primary/20 text-primary font-bold uppercase text-[9px]">Info</span>
+</td>
+<td class="px-6 py-4 font-bold">供应商 C 通过 ISO 28000 供应链安全认证</td>
+<td class="px-6 py-4">企业资质数据库</td>
+<td class="px-6 py-4">
+<span class="text-success">已处理</span>
+</td>
+<td class="px-6 py-4 text-right space-x-2">
+<button class="text-primary hover:underline" onclick="window.location.href='enterprise-profile.html'">详情</button>
+<button class="text-slate-400 hover:text-white" onclick="showToast('告警已忽略', 'info')">忽略</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- 分页 -->
+<div class="p-4 border-t border-border flex items-center justify-between bg-white/5">
+<p class="text-[10px] text-slate-500">显示第 1 至 8 条，共 85 条记录</p>
+<div class="flex space-x-2">
+<button class="px-2 py-1 rounded bg-secondary border border-border text-slate-400 hover:text-white disabled:opacity-50" disabled="">上一页</button>
+<button class="px-3 py-1 rounded bg-primary text-white font-bold">1</button>
+<button class="px-3 py-1 rounded bg-secondary border border-border text-slate-400 hover:text-white">2</button>
+<button class="px-3 py-1 rounded bg-secondary border border-border text-slate-400 hover:text-white">3</button>
+<button class="px-2 py-1 rounded bg-secondary border border-border text-slate-400 hover:text-white">下一页</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+<script src="app.js"></script>
+<script src="semirisk-api.js"></script>
+</body>
+</html>

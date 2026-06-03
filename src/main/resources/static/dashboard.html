@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>首页 - 供应链风险智能管理系统</title>
+<script src="https://modao.cc/agent-py/static/source/js/tailwindcss.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/echarts.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="common.css" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'cyber-bg': '#030712',
+            'cyber-card': '#0f172a',
+            'neon-blue': '#3b82f6',
+            'neon-purple': '#8b5cf6',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-cyber-bg text-foreground h-screen flex overflow-hidden">
+<canvas id="particle-canvas"></canvas>
+<!-- 左侧导航 -->
+<aside class="w-64 border-r border-border bg-card/50 backdrop-blur-xl transition-all duration-300 flex flex-col z-30" id="sidebar">
+<div class="p-6 flex items-center space-x-3">
+<div class="w-8 h-8 rounded bg-primary flex items-center justify-center shadow-[0_0_10px_rgba(59,130,246,0.5)]">
+<iconify-icon class="text-white text-xl" icon="lucide:shield-check"></iconify-icon>
+</div>
+<span class="font-bold text-lg tracking-tight nav-text">RISK INTEL</span>
+</div>
+<nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+<a class="nav-item nav-active" href="dashboard.html">
+<iconify-icon class="text-xl" icon="lucide:layout-dashboard"></iconify-icon>
+<span class="ml-3 nav-text">首页风险总览</span>
+</a>
+<a class="nav-item" href="data-upload.html">
+<iconify-icon class="text-xl" icon="lucide:upload-cloud"></iconify-icon>
+<span class="ml-3 nav-text">数据上传</span>
+</a>
+<a class="nav-item" href="risk-analysis.html">
+<iconify-icon class="text-xl" icon="lucide:bar-chart-3"></iconify-icon>
+<span class="ml-3 nav-text">风险分析</span>
+</a>
+<a class="nav-item" href="risk-detail.html">
+<iconify-icon class="text-xl" icon="lucide:file-search"></iconify-icon>
+<span class="ml-3 nav-text">风险详情</span>
+</a>
+<a class="nav-item" href="report-generation.html">
+<iconify-icon class="text-xl" icon="lucide:file-text"></iconify-icon>
+<span class="ml-3 nav-text">AI报告生成</span>
+</a>
+<a class="nav-item" href="alert-center.html">
+<iconify-icon class="text-xl" icon="lucide:bell"></iconify-icon>
+<span class="ml-3 nav-text">预警中心</span>
+</a>
+<a class="nav-item" href="gis-map.html">
+<iconify-icon class="text-xl" icon="lucide:map"></iconify-icon>
+<span class="ml-3 nav-text">GIS风险地图</span>
+</a>
+<a class="nav-item" href="enterprise-profile.html">
+<iconify-icon class="text-xl" icon="lucide:building-2"></iconify-icon>
+<span class="ml-3 nav-text">企业画像</span>
+</a>
+<a class="nav-item" href="knowledge-base.html">
+<iconify-icon class="text-xl" icon="lucide:library"></iconify-icon>
+<span class="ml-3 nav-text">知识库检索</span>
+</a>
+<a class="nav-item" href="system-management.html">
+<iconify-icon class="text-xl" icon="lucide:settings"></iconify-icon>
+<span class="ml-3 nav-text">系统管理</span>
+</a>
+</nav>
+<div class="p-4 border-t border-border">
+<div class="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors">
+<img alt="User Avatar" class="w-8 h-8 rounded-full border border-primary/30" src="https://modao.cc/agent-py/media/generated_images/2026-05-20/c4f740ab0745425db76c1221598a5108.jpg"/>
+<div class="nav-text">
+<p class="text-sm font-medium">管理员</p>
+<p class="text-xs text-slate-500">admin@risk.com</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- 主内容区 -->
+<main class="flex-1 flex flex-col relative overflow-hidden">
+<!-- 顶部状态栏 -->
+<header class="h-16 border-b border-border bg-card/30 backdrop-blur-md flex items-center justify-between px-8 z-20">
+<div class="flex items-center space-x-4">
+<button class="p-2 hover:bg-white/5 rounded-lg text-slate-400" id="nav-toggle">
+<iconify-icon class="text-xl" icon="lucide:menu"></iconify-icon>
+</button>
+<h2 class="text-lg font-semibold">供应链风险智能管理系统</h2>
+</div>
+<div class="flex items-center space-x-6">
+<div class="flex flex-col items-end">
+<div class="flex items-center space-x-2">
+<span class="text-xs text-slate-500 uppercase font-mono tracking-tighter">Current Risk Index</span>
+<span class="text-danger font-mono font-bold animate-pulse">78.4</span>
+</div>
+<div class="text-xs text-slate-400 font-mono" id="current-time">2026-05-20 15:30:00</div>
+</div>
+<div class="flex space-x-2">
+<button class="p-2 hover:bg-white/5 rounded-full text-slate-400 relative" onclick="window.location.href='alert-center.html'">
+<iconify-icon class="text-xl" icon="lucide:bell"></iconify-icon>
+<span class="absolute top-2 right-2 w-2 h-2 bg-danger rounded-full animate-ping"></span>
+</button>
+<button class="p-2 hover:bg-white/5 rounded-full text-slate-400" onclick="window.location.href='knowledge-base.html'">
+<iconify-icon class="text-xl" icon="lucide:search"></iconify-icon>
+</button>
+</div>
+</div>
+</header>
+<!-- 滚动内容区 -->
+<div class="flex-1 overflow-y-auto p-6 space-y-6">
+<!-- 顶部 KPI -->
+<div class="grid grid-cols-4 gap-6">
+<div class="hud-card p-4 flex items-center space-x-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="w-12 h-12 rounded-lg bg-danger/10 border border-danger/30 flex items-center justify-center">
+<iconify-icon class="text-danger text-2xl" icon="lucide:alert-triangle"></iconify-icon>
+</div>
+<div>
+<p class="text-xs text-slate-500 font-medium">总风险事件</p>
+<p class="text-2xl font-bold font-mono text-white">1,284</p>
+</div>
+</div>
+<div class="hud-card p-4 flex items-center space-x-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="w-12 h-12 rounded-lg bg-warning/10 border border-warning/30 flex items-center justify-center">
+<iconify-icon class="text-warning text-2xl" icon="lucide:plus-circle"></iconify-icon>
+</div>
+<div>
+<p class="text-xs text-slate-500 font-medium">今日新增</p>
+<p class="text-2xl font-bold font-mono text-white">42</p>
+</div>
+</div>
+<div class="hud-card p-4 flex items-center space-x-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="w-12 h-12 rounded-lg bg-success/10 border border-success/30 flex items-center justify-center">
+<iconify-icon class="text-success text-2xl" icon="lucide:check-circle"></iconify-icon>
+</div>
+<div>
+<p class="text-xs text-slate-500 font-medium">已处理</p>
+<p class="text-2xl font-bold font-mono text-white">956</p>
+</div>
+</div>
+<div class="hud-card p-4 flex items-center space-x-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="w-12 h-12 rounded-lg bg-primary/10 border border-primary/30 flex items-center justify-center">
+<iconify-icon class="text-primary text-2xl" icon="lucide:activity"></iconify-icon>
+</div>
+<div>
+<p class="text-xs text-slate-500 font-medium">处理率</p>
+<p class="text-2xl font-bold font-mono text-white">74.5%</p>
+</div>
+</div>
+</div>
+<!-- 中间大屏布局 -->
+<div class="grid grid-cols-12 gap-6 h-[500px]">
+<!-- 左侧列 -->
+<div class="col-span-3 flex flex-col gap-6 min-h-0">
+<div class="hud-card flex-1 p-4 overflow-hidden flex flex-col min-h-0">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold border-b border-border pb-2 mb-4 flex items-center">
+<iconify-icon class="mr-2 text-primary" icon="lucide:list-ordered"></iconify-icon>
+              风险排行榜
+            </h3>
+<div class="flex-1 space-y-3 overflow-y-auto pr-2">
+<div class="flex items-center justify-between p-2 rounded bg-white/5 border border-white/5">
+<span class="w-6 h-6 flex items-center justify-center bg-danger/20 text-danger text-xs font-bold rounded">01</span>
+<span class="flex-1 ml-3 text-xs truncate">东南亚物流中断风险</span>
+<span class="px-2 py-0.5 rounded bg-danger/20 text-danger text-[10px] font-bold">高危</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded bg-white/5 border border-white/5">
+<span class="w-6 h-6 flex items-center justify-center bg-warning/20 text-warning text-xs font-bold rounded">02</span>
+<span class="flex-1 ml-3 text-xs truncate">芯片半导体供应短缺</span>
+<span class="px-2 py-0.5 rounded bg-warning/20 text-warning text-[10px] font-bold">中危</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded bg-white/5 border border-white/5">
+<span class="w-6 h-6 flex items-center justify-center bg-warning/20 text-warning text-xs font-bold rounded">03</span>
+<span class="flex-1 ml-3 text-xs truncate">原材料价格波动预警</span>
+<span class="px-2 py-0.5 rounded bg-warning/20 text-warning text-[10px] font-bold">中危</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded bg-white/5 border border-white/5">
+<span class="w-6 h-6 flex items-center justify-center bg-primary/20 text-primary text-xs font-bold rounded">04</span>
+<span class="flex-1 ml-3 text-xs truncate">合规性审查异常</span>
+<span class="px-2 py-0.5 rounded bg-primary/20 text-primary text-[10px] font-bold">低危</span>
+</div>
+<div class="flex items-center justify-between p-2 rounded bg-white/5 border border-white/5">
+<span class="w-6 h-6 flex items-center justify-center bg-primary/20 text-primary text-xs font-bold rounded">05</span>
+<span class="flex-1 ml-3 text-xs truncate">供应商财务波动风险</span>
+<span class="px-2 py-0.5 rounded bg-primary/20 text-primary text-[10px] font-bold">低危</span>
+</div>
+</div>
+</div>
+<div class="hud-card h-48 p-4 flex flex-col justify-between">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-2">原材料风险指数</h3>
+<div class="space-y-3 flex-1 flex flex-col justify-center">
+<div>
+<div class="flex justify-between text-[10px] mb-1">
+<span>锂电池原材料</span>
+<span class="text-danger">88%</span>
+</div>
+<div class="h-1.5 bg-white/10 rounded-full overflow-hidden">
+<div class="h-full bg-danger" style="width: 88%"></div>
+</div>
+</div>
+<div>
+<div class="flex justify-between text-[10px] mb-1">
+<span>稀有金属</span>
+<span class="text-warning">62%</span>
+</div>
+<div class="h-1.5 bg-white/10 rounded-full overflow-hidden">
+<div class="h-full bg-warning" style="width: 62%"></div>
+</div>
+</div>
+<div>
+<div class="flex justify-between text-[10px] mb-1">
+<span>高分子材料</span>
+<span class="text-primary">34%</span>
+</div>
+<div class="h-1.5 bg-white/10 rounded-full overflow-hidden">
+<div class="h-full bg-primary" style="width: 34%"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- 中间地图 -->
+<div class="col-span-6 hud-card relative overflow-hidden flex flex-col">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="scanline"></div>
+<h3 class="text-sm font-bold p-4 pb-0 z-10">全球风险热点分布</h3>
+<div class="flex-1 w-full min-h-0" id="main-map"></div>
+</div>
+<!-- 右侧列 -->
+<div class="col-span-3 flex flex-col gap-6 min-h-0">
+<div class="hud-card flex-1 p-4 flex flex-col overflow-hidden min-h-0">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-3 flex items-center">
+<iconify-icon class="mr-2 text-accent" icon="lucide:sparkles"></iconify-icon>
+              AI 风险摘要
+            </h3>
+<div class="bg-accent/5 border border-accent/20 rounded-lg p-3 text-xs leading-relaxed text-slate-300 italic mb-3 flex-shrink-0">
+              "根据过去24小时数据分析，东南亚地区的台风路径可能对二级供应商物流造成 48-72 小时的延迟。建议立即启动华南备选仓储计划，并关注锂矿价格波动..."
+            </div>
+<h3 class="text-xs font-bold mb-2 text-slate-400 flex-shrink-0">实时动态</h3>
+<div class="flex-1 space-y-3 overflow-y-auto text-[10px] pr-1">
+<div class="border-l-2 border-primary pl-3 py-1">
+<p class="text-slate-400">14:20 - 来源: 路透社</p>
+<p class="text-white font-medium">苏伊士运河出现短暂拥堵，影响欧洲线航运...</p>
+</div>
+<div class="border-l-2 border-danger pl-3 py-1">
+<p class="text-slate-400">12:05 - 来源: 系统监控</p>
+<p class="text-white font-medium">检测到核心供应商 A 财务评级下调风险告警</p>
+</div>
+<div class="border-l-2 border-warning pl-3 py-1">
+<p class="text-slate-400">09:45 - 来源: 行业协会</p>
+<p class="text-white font-medium">新一轮环保政策出台，部分原材料工厂面临停产</p>
+</div>
+</div>
+</div>
+<div class="hud-card h-48 p-4 flex flex-col">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-2">近30天风险趋势</h3>
+<div class="flex-1 w-full min-h-0" id="trend-chart"></div>
+</div>
+</div>
+</div>
+<!-- 底部状态栏 -->
+<div class="grid grid-cols-6 gap-6">
+<div class="col-span-4 hud-card p-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-4">供应链环节状态监测</h3>
+<div class="flex items-center justify-between px-4">
+<div class="flex flex-col items-center space-y-2 flex-shrink-0">
+<div class="w-12 h-12 rounded-full border-2 border-success flex items-center justify-center">
+<iconify-icon class="text-success text-xl" icon="lucide:package"></iconify-icon>
+</div>
+<span class="text-xs">原材料采集</span>
+<span class="px-2 py-0.5 rounded bg-success/20 text-success text-[10px]">正常</span>
+</div>
+<div class="flex-1 h-px bg-slate-700 mx-2 min-w-[8px] max-w-[80px] self-center mb-6"></div>
+<div class="flex flex-col items-center space-y-2 flex-shrink-0">
+<div class="w-12 h-12 rounded-full border-2 border-warning flex items-center justify-center">
+<iconify-icon class="text-warning text-xl font-bold" icon="lucide:factory"></iconify-icon>
+</div>
+<span class="text-xs">生产制造</span>
+<span class="px-2 py-0.5 rounded bg-warning/20 text-warning text-[10px]">警告</span>
+</div>
+<div class="flex-1 h-px bg-slate-700 mx-2 min-w-[8px] max-w-[80px] self-center mb-6"></div>
+<div class="flex flex-col items-center space-y-2 flex-shrink-0">
+<div class="w-12 h-12 rounded-full border-2 border-danger flex items-center justify-center animate-pulse-red">
+<iconify-icon class="text-danger text-xl" icon="lucide:truck"></iconify-icon>
+</div>
+<span class="text-xs">仓储物流</span>
+<span class="px-2 py-0.5 rounded bg-danger/20 text-danger text-[10px]">异常</span>
+</div>
+<div class="flex-1 h-px bg-slate-700 mx-2 min-w-[8px] max-w-[80px] self-center mb-6"></div>
+<div class="flex flex-col items-center space-y-2 flex-shrink-0">
+<div class="w-12 h-12 rounded-full border-2 border-success flex items-center justify-center">
+<iconify-icon class="text-success text-xl" icon="lucide:shopping-cart"></iconify-icon>
+</div>
+<span class="text-xs">终端销售</span>
+<span class="px-2 py-0.5 rounded bg-success/20 text-success text-[10px]">正常</span>
+</div>
+</div>
+</div>
+<div class="col-span-2 hud-card p-4">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-2">高危企业关注</h3>
+<div class="space-y-2">
+<div class="flex items-center justify-between text-xs p-2 bg-white/5 rounded cursor-pointer" onclick="window.location.href='enterprise-profile.html'">
+<span class="truncate pr-2">深圳市某半导体有限公司</span>
+<button class="text-primary hover:underline flex-shrink-0">详情</button>
+</div>
+<div class="flex items-center justify-between text-xs p-2 bg-white/5 rounded cursor-pointer" onclick="window.location.href='enterprise-profile.html'">
+<span class="truncate pr-2">苏州某物流国际货运代理</span>
+<button class="text-primary hover:underline flex-shrink-0">详情</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<script src="app.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // ECharts 地图模拟
+      const mapChart = echarts.init(document.getElementById('main-map'), 'dark');
+      
+      // 使用一个带有安全网格防遮挡的配置
+      mapChart.setOption({
+        backgroundColor: 'transparent',
+        grid: { top: '15%', bottom: '8%', left: '8%', right: '8%' },
+        xAxis: { show: false, min: 0, max: 100 },
+        yAxis: { show: false, min: 0, max: 100 },
+        series: [{
+          type: 'scatter',
+          data: [
+            [20, 30, 10], [40, 60, 20], [70, 40, 15], [85, 80, 25], [30, 80, 12]
+          ],
+          symbolSize: function (data) { return data[2] * 2; },
+          itemStyle: {
+            color: function(params) {
+              const colors = ['#ef4444', '#eab308', '#3b82f6'];
+              return colors[params.dataIndex % 3];
+            },
+            shadowBlur: 10,
+            shadowColor: 'rgba(59, 130, 246, 0.5)'
+          },
+          emphasis: {
+            itemStyle: { shadowBlur: 20 }
+          }
+        }]
+      });
+
+      // 趋势图
+      const trendChart = echarts.init(document.getElementById('trend-chart'), 'dark');
+      trendChart.setOption({
+        backgroundColor: 'transparent',
+        grid: { top: 15, bottom: 20, left: 30, right: 10 },
+        xAxis: { type: 'category', data: ['5.1', '5.5', '5.10', '5.15', '5.20'], axisLine: { show: false } },
+        yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
+        series: [{
+          data: [45, 52, 48, 65, 78],
+          type: 'line',
+          smooth: true,
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(59, 130, 246, 0.4)' },
+              { offset: 1, color: 'rgba(59, 130, 246, 0)' }
+            ])
+          },
+          lineStyle: { color: '#3b82f6', width: 3 }
+        }]
+      });
+
+      window.addEventListener('resize', () => {
+        mapChart.resize();
+        trendChart.resize();
+      });
+    });
+  </script>
+<script src="semirisk-api.js"></script>
+</body>
+</html>

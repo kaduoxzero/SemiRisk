@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>供应链风险智能管理系统 - 登录</title>
+  <script src="https://modao.cc/agent-py/static/source/js/tailwindcss.js"></script>
+  <script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link href="common.css" rel="stylesheet"/>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'cyber-bg': '#030712',
+            'cyber-card': '#0f172a',
+            'neon-blue': '#3b82f6',
+            'neon-purple': '#8b5cf6',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-cyber-bg text-foreground min-h-screen flex items-center justify-center overflow-hidden">
+<canvas id="particle-canvas"></canvas>
+<!-- 背景装饰 -->
+<div class="fixed inset-0 pointer-events-none opacity-20">
+<svg height="100%" width="100%" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<pattern height="100" id="grid" patternunits="userSpaceOnUse" width="100">
+<path d="M 100 0 L 0 0 0 100" fill="none" stroke="#3b82f6" stroke-width="0.5"></path>
+</pattern>
+</defs>
+<rect fill="url(#grid)" height="100%" width="100%"></rect>
+</svg>
+</div>
+<div class="relative z-10 w-full max-w-md px-6">
+<div class="hud-card p-8 space-y-8">
+<div class="corner-br"></div>
+<div class="corner-bl"></div>
+<div class="text-center space-y-2">
+<div class="flex justify-center">
+<div class="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center border border-primary/50 shadow-[0_0_20px_rgba(59,130,246,0.5)]">
+<iconify-icon class="text-4xl text-primary" icon="lucide:shield-check"></iconify-icon>
+</div>
+</div>
+<h1 class="text-2xl font-bold tracking-tight text-white mt-4">供应链风险智能管理系统</h1>
+<p class="text-sm text-secondary-foreground font-medium tracking-widest uppercase">智能感知 · 精准预警 · 全局掌控</p>
+</div>
+<form class="space-y-6" onsubmit="event.preventDefault(); window.location.href='dashboard.html'">
+<div class="space-y-4">
+<div class="space-y-2">
+<label class="text-sm font-medium text-slate-300 ml-1">用户名</label>
+<div class="relative">
+<iconify-icon class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" icon="lucide:user"></iconify-icon>
+<input class="cyber-input w-full pl-10 pr-4 py-3 rounded-lg" placeholder="请输入账号" required="" type="text" value="admin"/>
+</div>
+</div>
+<div class="space-y-2">
+<label class="text-sm font-medium text-slate-300 ml-1">密码</label>
+<div class="relative">
+<iconify-icon class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" icon="lucide:lock"></iconify-icon>
+<input class="cyber-input w-full pl-10 pr-4 py-3 rounded-lg" placeholder="请输入密码" required="" type="password" value="password"/>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between text-sm">
+<label class="flex items-center space-x-2 cursor-pointer group">
+<input class="w-4 h-4 rounded border-slate-700 bg-slate-800 text-primary focus:ring-primary focus:ring-offset-0" type="checkbox" checked/>
+<span class="text-slate-400 group-hover:text-slate-300 transition-colors">记住密码</span>
+</label>
+<a class="text-primary hover:text-blue-400 transition-colors" href="forgot-password.html">忘记密码？</a>
+</div>
+<button class="w-full bg-primary hover:bg-blue-600 text-white font-bold py-3 rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.4)] transition-all transform active:scale-[0.98] flex items-center justify-center space-x-2" type="submit">
+<span>进入系统</span>
+<iconify-icon icon="lucide:arrow-right"></iconify-icon>
+</button>
+</form>
+<div class="pt-4 text-center">
+<p class="text-xs text-slate-500 font-mono">v2.0.0 © 2026 RISK INTELLIGENCE CORE</p>
+</div>
+</div>
+</div>
+<script src="app.js"></script>
+<script src="semirisk-api.js"></script>
+</body>
+</html>

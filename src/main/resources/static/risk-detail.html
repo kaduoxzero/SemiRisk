@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>风险详情 - 供应链风险智能管理系统</title>
+<script src="https://modao.cc/agent-py/static/source/js/tailwindcss.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
+<script src="https://modao.cc/agent-py/static/source/js/echarts.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="common.css" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'cyber-bg': '#030712',
+            'cyber-card': '#0f172a',
+            'neon-blue': '#3b82f6',
+            'neon-purple': '#8b5cf6',
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-cyber-bg text-foreground h-screen flex overflow-hidden">
+<canvas id="particle-canvas"></canvas>
+<aside class="w-64 border-r border-border bg-card/50 backdrop-blur-xl transition-all duration-300 flex flex-col z-30" id="sidebar">
+<div class="p-6 flex items-center space-x-3">
+<div class="w-8 h-8 rounded bg-primary flex items-center justify-center"><iconify-icon class="text-white text-xl" icon="lucide:shield-check"></iconify-icon></div>
+<span class="font-bold text-lg tracking-tight nav-text">RISK INTEL</span>
+</div>
+<nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+<a class="nav-item" href="dashboard.html"><iconify-icon class="text-xl" icon="lucide:layout-dashboard"></iconify-icon><span class="ml-3 nav-text">首页风险总览</span></a>
+<a class="nav-item" href="data-upload.html"><iconify-icon class="text-xl" icon="lucide:upload-cloud"></iconify-icon><span class="ml-3 nav-text">数据上传</span></a>
+<a class="nav-item" href="risk-analysis.html"><iconify-icon class="text-xl" icon="lucide:bar-chart-3"></iconify-icon><span class="ml-3 nav-text">风险分析</span></a>
+<a class="nav-item nav-active" href="risk-detail.html"><iconify-icon class="text-xl" icon="lucide:file-search"></iconify-icon><span class="ml-3 nav-text">风险详情</span></a>
+<a class="nav-item" href="report-generation.html"><iconify-icon class="text-xl" icon="lucide:file-text"></iconify-icon><span class="ml-3 nav-text">AI报告生成</span></a>
+<a class="nav-item" href="alert-center.html"><iconify-icon class="text-xl" icon="lucide:bell"></iconify-icon><span class="ml-3 nav-text">预警中心</span></a>
+<a class="nav-item" href="gis-map.html"><iconify-icon class="text-xl" icon="lucide:map"></iconify-icon><span class="ml-3 nav-text">GIS风险地图</span></a>
+<a class="nav-item" href="enterprise-profile.html"><iconify-icon class="text-xl" icon="lucide:building-2"></iconify-icon><span class="ml-3 nav-text">企业画像</span></a>
+<a class="nav-item" href="knowledge-base.html"><iconify-icon class="text-xl" icon="lucide:library"></iconify-icon><span class="ml-3 nav-text">知识库检索</span></a>
+<a class="nav-item" href="system-management.html"><iconify-icon class="text-xl" icon="lucide:settings"></iconify-icon><span class="ml-3 nav-text">系统管理</span></a>
+</nav>
+<div class="p-4 border-t border-border">
+<div class="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer transition-colors">
+<img alt="User Avatar" class="w-8 h-8 rounded-full border border-primary/30" src="https://modao.cc/agent-py/media/generated_images/2026-05-20/c4f740ab0745425db76c1221598a5108.jpg"/>
+<div class="nav-text">
+<p class="text-sm font-medium">管理员</p>
+<p class="text-xs text-slate-500">admin@risk.com</p>
+</div>
+</div>
+</div>
+</aside>
+<main class="flex-1 flex flex-col relative overflow-hidden">
+<header class="h-16 border-b border-border bg-card/30 backdrop-blur-md flex items-center justify-between px-8 z-20">
+<div class="flex items-center space-x-4">
+<button class="p-2 hover:bg-white/5 rounded-lg text-slate-400" id="nav-toggle">
+<iconify-icon class="text-xl" icon="lucide:menu"></iconify-icon>
+</button>
+<a class="p-2 hover:bg-white/5 rounded-lg text-slate-400" href="risk-analysis.html">
+<iconify-icon class="text-xl" icon="lucide:arrow-left"></iconify-icon>
+</a>
+<div class="flex items-center space-x-3">
+<h2 class="text-lg font-semibold">风险详情: 东南亚区域物流中断风险 (R-2026-0520)</h2>
+<span class="px-2 py-0.5 rounded bg-danger/20 text-danger text-xs font-bold border border-danger/30 uppercase">High Risk</span>
+</div>
+</div>
+<div class="flex items-center space-x-3">
+<button class="bg-secondary border border-border px-4 py-1.5 rounded-lg text-sm hover:bg-white/5 transition-all text-slate-300 hover:text-white" onclick="showToast('已下发负责人指派工单。', 'info')">指派负责人</button>
+<button class="bg-primary px-4 py-1.5 rounded-lg text-sm text-white font-bold shadow-lg hover:shadow-primary/20 transition-all" onclick="window.location.href='report-generation.html'">生成处置报告</button>
+</div>
+</header>
+<div class="flex-1 overflow-y-auto p-6 space-y-6">
+<div class="grid grid-cols-12 gap-6">
+<!-- 左侧详细信息 -->
+<div class="col-span-8 space-y-6">
+<!-- 基础信息卡片 -->
+<div class="hud-card p-6">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-4 border-b border-border pb-2">基础信息</h3>
+<div class="grid grid-cols-2 gap-y-4 gap-x-8">
+<div class="flex justify-between border-b border-white/5 pb-1">
+<span class="text-xs text-slate-500">风险编号</span>
+<span class="text-xs font-mono text-white">EV-LOG-20260520-001</span>
+</div>
+<div class="flex justify-between border-b border-white/5 pb-1">
+<span class="text-xs text-slate-500">风险类型</span>
+<span class="text-xs text-white">物流中断 / 地缘政治</span>
+</div>
+<div class="flex justify-between border-b border-white/5 pb-1">
+<span class="text-xs text-slate-500">发现时间</span>
+<span class="text-xs text-white">2026-05-20 08:30</span>
+</div>
+<div class="flex justify-between border-b border-white/5 pb-1">
+<span class="text-xs text-slate-500">风险状态</span>
+<span class="text-xs text-warning">处理中 (AI监控)</span>
+</div>
+<div class="flex justify-between border-b border-white/5 pb-1">
+<span class="text-xs text-slate-500">影响范围</span>
+<span class="text-xs text-white">二级/三级供应商网络 (24家)</span>
+</div>
+<div class="flex justify-between border-b border-white/5 pb-1">
+<span class="text-xs text-slate-500">预计损失</span>
+<span class="text-xs text-danger font-bold">￥12,500,000 / 周</span>
+</div>
+</div>
+</div>
+<!-- 时间线 -->
+<div class="hud-card p-6">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-6">事件发展历程</h3>
+<div class="relative pl-8 space-y-8 before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-800">
+<div class="relative">
+<div class="absolute -left-[25px] top-1 w-4 h-4 rounded-full bg-danger border-4 border-cyber-bg shadow-[0_0_10px_rgba(239,68,68,0.5)]"></div>
+<div class="flex justify-between mb-1">
+<span class="text-xs font-bold text-white">风险等级上调至"高危"</span>
+<span class="text-[10px] text-slate-500">今天 14:20</span>
+</div>
+<p class="text-[10px] text-slate-400">AI 引擎检测到新加坡港口拥堵指数突破预警阈值，且关联供应商 B 确认交付延迟。</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[25px] top-1 w-4 h-4 rounded-full bg-warning border-4 border-cyber-bg"></div>
+<div class="flex justify-between mb-1">
+<span class="text-xs font-bold text-white">检测到异常信号</span>
+<span class="text-[10px] text-slate-500">今天 09:45</span>
+</div>
+<p class="text-[10px] text-slate-400">系统自动爬虫发现东南亚区域性罢工新闻，并识别出关键关键词"Logistics Halt"。</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[25px] top-1 w-4 h-4 rounded-full bg-primary border-4 border-cyber-bg"></div>
+<div class="flex justify-between mb-1">
+<span class="text-xs font-bold text-white">建立基准监控</span>
+<span class="text-[10px] text-slate-500">昨天 18:00</span>
+</div>
+<p class="text-[10px] text-slate-400">根据月度报告，将该区域列入中长期监控名单。</p>
+</div>
+</div>
+</div>
+<!-- 传播链图 -->
+<div class="hud-card p-6 h-[400px]">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-4">风险传播图谱</h3>
+<div class="w-full h-full" id="relation-chart"></div>
+</div>
+</div>
+<!-- 右侧分析与建议 -->
+<div class="col-span-4 space-y-6">
+<div class="hud-card p-6 bg-accent/5 border-accent/20">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<div class="flex items-center space-x-2 mb-4">
+<iconify-icon class="text-accent text-xl" icon="lucide:sparkles"></iconify-icon>
+<h3 class="text-sm font-bold text-accent">AI 风险深度总结</h3>
+</div>
+<div class="space-y-4 text-xs leading-relaxed text-slate-300">
+<p>本次风险的核心触发点为<span class="text-white font-bold underline">新加坡港口劳资纠纷</span>导致的连带效应。由于贵司 35% 的核心原材料通过该路径运输，预计受损严重。</p>
+<div class="p-3 bg-black/30 rounded border border-accent/10">
+<p class="font-bold text-white mb-1">核心影响路径:</p>
+<p>新加坡港口 → 一级供应商 A → 核心组件 → 贵司总装线</p>
+</div>
+<p>建议在 24 小时内完成备选供应商资质审核，并启动空运紧急调拨。</p>
+</div>
+</div>
+<div class="hud-card p-6">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-4">处置建议步骤</h3>
+<div class="space-y-4">
+<div class="flex items-start space-x-3">
+<div class="w-5 h-5 rounded bg-primary/20 text-primary flex items-center justify-center text-[10px] font-bold mt-0.5">01</div>
+<div class="flex-1">
+<p class="text-xs font-bold">启动库存核查</p>
+<p class="text-[10px] text-slate-500">核实受影响组件的现有库存量，预计可支撑 14 天。</p>
+</div>
+</div>
+<div class="flex items-start space-x-3">
+<div class="w-5 h-5 rounded bg-primary/20 text-primary flex items-center justify-center text-[10px] font-bold mt-0.5">02</div>
+<div class="flex-1">
+<p class="text-xs font-bold">激活备选供应商 C</p>
+<p class="text-[10px] text-slate-500">已自动发送询价单，等待确认产能分配。</p>
+</div>
+</div>
+<div class="flex items-start space-x-3">
+<div class="w-5 h-5 rounded bg-primary/20 text-primary flex items-center justify-center text-[10px] font-bold mt-0.5">03</div>
+<div class="flex-1">
+<p class="text-xs font-bold">物流路径重定向</p>
+<p class="text-[10px] text-slate-500">将后续 3 批次货物转运至马来西亚巴生港。</p>
+</div>
+</div>
+</div>
+</div>
+<div class="hud-card p-6">
+<div class="corner-br"></div><div class="corner-bl"></div>
+<h3 class="text-sm font-bold mb-4">受影响企业</h3>
+<div class="space-y-3">
+<div class="flex items-center justify-between p-2 bg-white/5 rounded cursor-pointer" onclick="window.location.href='enterprise-profile.html'">
+<div class="flex items-center space-x-2">
+<div class="w-6 h-6 rounded bg-danger/20 flex items-center justify-center text-[10px] text-danger font-bold">!</div>
+<span class="text-[10px]">深圳市某光电有限公司</span>
+</div>
+<span class="text-[10px] text-danger font-bold">严重影响</span>
+</div>
+<div class="flex items-center justify-between p-2 bg-white/5 rounded cursor-pointer" onclick="window.location.href='enterprise-profile.html'">
+<div class="flex items-center space-x-2">
+<div class="w-6 h-6 rounded bg-warning/20 flex items-center justify-center text-[10px] text-warning font-bold">?</div>
+<span class="text-[10px]">苏州某精密模具厂</span>
+</div>
+<span class="text-[10px] text-warning font-bold">中度影响</span>
+</div>
+<div class="flex items-center justify-between p-2 bg-white/5 rounded cursor-pointer" onclick="window.location.href='enterprise-profile.html'">
+<div class="flex items-center space-x-2">
+<div class="w-6 h-6 rounded bg-primary/20 flex items-center justify-center text-[10px] text-primary font-bold">i</div>
+<span class="text-[10px]">无锡某物流仓储中心</span>
+</div>
+<span class="text-[10px] text-primary font-bold">监控中</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<script src="app.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const relationChart = echarts.init(document.getElementById('relation-chart'), 'dark');
+      const data = {
+        nodes: [
+          { name: '风险源', symbolSize: 50, itemStyle: { color: '#ef4444' } },
+          { name: '新加坡港口', symbolSize: 30, itemStyle: { color: '#eab308' } },
+          { name: '供应商A', symbolSize: 35, itemStyle: { color: '#3b82f6' } },
+          { name: '供应商B', symbolSize: 35, itemStyle: { color: '#3b82f6' } },
+          { name: '核心组件厂', symbolSize: 25, itemStyle: { color: '#8b5cf6' } },
+          { name: '贵司总装', symbolSize: 40, itemStyle: { color: '#22c55e' } }
+        ],
+        links: [
+          { source: '风险源', target: '新加坡港口' },
+          { source: '新加坡港口', target: '供应商A' },
+          { source: '新加坡港口', target: '供应商B' },
+          { source: '供应商A', target: '核心组件厂' },
+          { source: '供应商B', target: '核心组件厂' },
+          { source: '核心组件厂', target: '贵司总装' }
+        ]
+      };
+
+      relationChart.setOption({
+        backgroundColor: 'transparent',
+        series: [{
+          type: 'graph',
+          layout: 'force',
+          data: data.nodes,
+          links: data.links,
+          roam: true,
+          label: { show: true, fontSize: 10, position: 'bottom' },
+          force: { repulsion: 200, edgeLength: 100 },
+          lineStyle: { color: 'rgba(255,255,255,0.1)', width: 2, curveness: 0.1 },
+          emphasis: { focus: 'adjacency', lineStyle: { width: 4, color: '#3b82f6' } }
+        }]
+      });
+
+      window.addEventListener('resize', () => relationChart.resize());
+    });
+  </script>
+<script src="semirisk-api.js"></script>
+</body>
+</html>
