@@ -3,6 +3,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 export async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' },
+    credentials: 'include',
     ...options
   });
   const contentType = response.headers.get('content-type') || '';
@@ -12,4 +13,3 @@ export async function request(path, options = {}) {
   }
   return body.data === undefined ? body : body.data;
 }
-

@@ -17,7 +17,7 @@
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">SR</span><span>SemiRisk</span></div>
       <nav class="nav">
-        <button v-for="item in navItems" :key="item.key" :class="{ active: view === item.key }" @click="view = item.key">
+        <button v-for="item in allowedNavItems" :key="item.key" :class="{ active: view === item.key }" @click="view = item.key">
           {{ item.label }}
         </button>
       </nav>
@@ -26,7 +26,10 @@
     <section class="main">
       <header class="topbar">
         <h2 class="page-title">{{ currentTitle }}</h2>
-        <div class="muted">当前用户：{{ session.displayName }} · {{ now }}</div>
+        <div class="toolbar">
+          <span class="muted">当前用户：{{ session.displayName || session.username }} · {{ session.role }} · {{ now }}</span>
+          <button class="btn secondary" @click="logout">退出</button>
+        </div>
       </header>
 
       <section v-if="view === 'dashboard'" class="grid">
@@ -253,6 +256,11 @@ const system = ref({});
 const aiConfig = reactive({ model: 'GPT-4o', endpoint: 'https://api.openai.com/v1', apiKey: '' });
 
 const currentTitle = computed(() => navItems.find(item => item.key === view.value)?.label || 'SemiRisk');
+const allowedNavItems = computed(() => {
+  const modules = session.value?.modules;
+  if (!modules || !Array.isArray(modules)) return navItems;
+  return navItems.filter(item => modules.includes(item.key));
+});
 let clock;
 
 function notify(message) {
@@ -264,6 +272,9 @@ async function login() {
   const data = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ ...loginForm, captchaToken: 'vue-slider-ok' }) });
   localStorage.setItem('semiriskUser', JSON.stringify(data.user));
   session.value = data.user;
+  if (!allowedNavItems.value.some(item => item.key === view.value)) {
+    view.value = allowedNavItems.value[0]?.key || 'dashboard';
+  }
   notify('登录成功');
   await loadDashboard();
 }
@@ -271,6 +282,13 @@ async function login() {
 async function resetPassword() {
   const data = await request('/api/auth/password-reset/request', { method: 'POST', body: JSON.stringify({ email: 'admin@risk.com' }) });
   notify(`重置 Token 已生成：${data.token.slice(0, 8)}...`);
+}
+
+async function logout() {
+  await request('/api/auth/logout', { method: 'POST' });
+  localStorage.removeItem('semiriskUser');
+  session.value = null;
+  view.value = 'dashboard';
 }
 
 async function loadDashboard() { dashboard.value = await request('/api/dashboard/overview'); }
@@ -353,7 +371,21 @@ onMounted(async () => {
       view.value = 'knowledge';
     }
   });
-  if (session.value) await loadDashboard();
+  if (session.value) {
+    try {
+      const me = await request('/api/auth/me');
+      session.value = { ...session.value, ...me };
+      localStorage.setItem('semiriskUser', JSON.stringify(session.value));
+    } catch {
+      localStorage.removeItem('semiriskUser');
+      session.value = null;
+      return;
+    }
+    if (!allowedNavItems.value.some(item => item.key === view.value)) {
+      view.value = allowedNavItems.value[0]?.key || 'dashboard';
+    }
+    await loadDashboard();
+  }
 });
 
 onUnmounted(() => clearInterval(clock));

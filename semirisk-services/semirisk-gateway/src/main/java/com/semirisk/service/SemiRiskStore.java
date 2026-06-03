@@ -1,5 +1,6 @@
 package com.semirisk.service;
 
+import com.semirisk.common.SemiriskConstants;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -35,8 +36,9 @@ public class SemiRiskStore {
     private final List<String> auditLogs = new ArrayList<>();
 
     public SemiRiskStore() {
-        users.put("admin", new UserAccount("admin", "password", "管理员", "ADMIN"));
-        users.put("analyst", new UserAccount("analyst", "risk2026", "风险分析师", "ANALYST"));
+        users.put("admin", new UserAccount("admin", "password", "管理员", SemiriskConstants.ROLE_ADMIN));
+        users.put("analyst", new UserAccount("analyst", "risk2026", "风险分析师", SemiriskConstants.ROLE_ANALYST));
+        users.put("ops", new UserAccount("ops", "ops2026", "运营人员", SemiriskConstants.ROLE_OPERATOR));
         seedAlerts();
         seedUsers();
         auditLogs.add("[INFO] 2026-06-03 09:00:00 gateway route table initialized");

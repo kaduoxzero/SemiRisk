@@ -1,6 +1,7 @@
 package com.semirisk.api;
 
 import com.semirisk.service.SemiRiskStore;
+import com.semirisk.common.RolePermissionPolicy;
 import com.semirisk.service.SemiRiskStore.ReportJob;
 import com.semirisk.service.SemiRiskStore.SystemUser;
 import com.semirisk.service.SemiRiskStore.UploadTask;
@@ -62,7 +63,12 @@ public class SemiRiskController {
                     Map<String, Object> body = new HashMap<>();
                     body.put("token", token);
                     body.put("rememberMe", request.rememberMe());
-                    body.put("user", Map.of("username", account.username(), "displayName", account.displayName(), "role", account.role()));
+                    body.put("user", Map.of(
+                            "username", account.username(),
+                            "displayName", account.displayName(),
+                            "role", account.role(),
+                            "modules", RolePermissionPolicy.modules(account.role())
+                    ));
                     return ResponseEntity.ok(ApiResponse.ok("登录成功", body));
                 })
                 .orElseGet(() -> {
@@ -78,6 +84,29 @@ public class SemiRiskController {
     public ApiResponse<Map<String, Object>> logout(HttpSession session) {
         session.invalidate();
         return ApiResponse.ok(Map.of("loggedOut", true));
+    }
+
+    @GetMapping("/auth/me")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> me(HttpSession session) {
+        Object username = session.getAttribute("principal");
+        Object role = session.getAttribute("role");
+        if (username == null || role == null) {
+            return ResponseEntity.status(401).body(ApiResponse.fail("未登录"));
+        }
+        return ResponseEntity.ok(ApiResponse.ok(Map.of(
+                "username", username,
+                "role", role,
+                "modules", RolePermissionPolicy.modules(String.valueOf(role))
+        )));
+    }
+
+    @GetMapping("/auth/permissions/{module}")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> permission(@PathVariable String module, HttpSession session) {
+        Object role = session.getAttribute("role");
+        boolean allowed = role != null && RolePermissionPolicy.canAccess(String.valueOf(role), module);
+        return allowed
+                ? ResponseEntity.ok(ApiResponse.ok(Map.of("module", module, "allowed", true)))
+                : ResponseEntity.status(403).body(ApiResponse.fail("无权访问模块：" + module));
     }
 
     @PostMapping("/auth/password-reset/request")
