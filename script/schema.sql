@@ -1,0 +1,47 @@
+CREATE DATABASE IF NOT EXISTS semirisk DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+USE semirisk;
+
+CREATE TABLE IF NOT EXISTS risk_alert (
+  id VARCHAR(32) PRIMARY KEY,
+  alert_time DATETIME NOT NULL,
+  level VARCHAR(16) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  source VARCHAR(64) NOT NULL,
+  status VARCHAR(16) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS risk_event (
+  id VARCHAR(32) PRIMARY KEY,
+  risk_type VARCHAR(64) NOT NULL,
+  first_seen DATETIME NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  scope_text VARCHAR(512),
+  weekly_loss DECIMAL(18,2)
+);
+
+CREATE TABLE IF NOT EXISTS enterprise_profile (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(128) NOT NULL,
+  credit_code VARCHAR(32) NOT NULL,
+  risk_score INT NOT NULL,
+  credit_level VARCHAR(8) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS upload_task (
+  id VARCHAR(32) PRIMARY KEY,
+  filename VARCHAR(255) NOT NULL,
+  file_size BIGINT NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  rows_count INT DEFAULT 0,
+  created_at DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS report_job (
+  id VARCHAR(32) PRIMARY KEY,
+  template VARCHAR(64) NOT NULL,
+  language VARCHAR(16) NOT NULL,
+  export_format VARCHAR(16) NOT NULL,
+  progress INT NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  created_at DATETIME NOT NULL
+);
