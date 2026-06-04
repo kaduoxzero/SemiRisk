@@ -1,0 +1,92 @@
+services:
+  semirisk-data-service:
+    build:
+      context: ..
+      dockerfile: Dockerfile.service
+      args:
+        JAR_FILE: semirisk-services/semirisk-data-service/target/semirisk-data-service-0.0.1-SNAPSHOT.jar
+    image: semirisk/data-service:latest
+    environment:
+      SEMIRISK_DATA_PORT: 8081
+      SEMIRISK_CRAWLER_SOURCES: ${SEMIRISK_CRAWLER_SOURCES:-https://www.reuters.com/markets/commodities/,https://www.freightwaves.com/news}
+    ports:
+      - "8081:8081"
+
+  semirisk-risk-service:
+    build:
+      context: ..
+      dockerfile: Dockerfile.service
+      args:
+        JAR_FILE: semirisk-services/semirisk-risk-service/target/semirisk-risk-service-0.0.1-SNAPSHOT.jar
+    image: semirisk/risk-service:latest
+    environment:
+      SEMIRISK_RISK_PORT: 8082
+      SEMIRISK_DATA_SERVICE_URL: http://semirisk-data-service:8081
+    ports:
+      - "8082:8082"
+    depends_on:
+      - semirisk-data-service
+
+  semirisk-ai-service:
+    build:
+      context: ..
+      dockerfile: Dockerfile.service
+      args:
+        JAR_FILE: semirisk-services/semirisk-ai-service/target/semirisk-ai-service-0.0.1-SNAPSHOT.jar
+    image: semirisk/ai-service:latest
+    environment:
+      SEMIRISK_AI_PORT: 8083
+      SEMIRISK_RISK_SERVICE_URL: http://semirisk-risk-service:8082
+      SEMIRISK_AI_MODEL: ${SEMIRISK_AI_MODEL:-deepseekv4-pro}
+      SEMIRISK_AI_ENDPOINT: ${SEMIRISK_AI_ENDPOINT:-https://api.deepseek.com/v1}
+      SEMIRISK_AI_API_KEY: ${SEMIRISK_AI_API_KEY:-}
+    ports:
+      - "8083:8083"
+    depends_on:
+      - semirisk-risk-service
+
+  semirisk-alert-service:
+    build:
+      context: ..
+      dockerfile: Dockerfile.service
+      args:
+        JAR_FILE: semirisk-services/semirisk-alert-service/target/semirisk-alert-service-0.0.1-SNAPSHOT.jar
+    image: semirisk/alert-service:latest
+    environment:
+      SEMIRISK_ALERT_PORT: 8084
+      SEMIRISK_MIDDLEWARE_HOST: ${SEMIRISK_MIDDLEWARE_HOST:-192.168.101.128}
+    ports:
+      - "8084:8084"
+
+  semirisk-report-service:
+    build:
+      context: ..
+      dockerfile: Dockerfile.service
+      args:
+        JAR_FILE: semirisk-services/semirisk-report-service/target/semirisk-report-service-0.0.1-SNAPSHOT.jar
+    image: semirisk/report-service:latest
+    environment:
+      SEMIRISK_REPORT_PORT: 8085
+    ports:
+      - "8085:8085"
+
+  semirisk-gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile.service
+      args:
+        JAR_FILE: semirisk-services/semirisk-gateway/target/semirisk-gateway-0.0.1-SNAPSHOT.jar
+    image: semirisk/gateway:latest
+    environment:
+      SEMIRISK_PORT: 8080
+      SEMIRISK_MIDDLEWARE_HOST: ${SEMIRISK_MIDDLEWARE_HOST:-192.168.101.128}
+      SEMIRISK_FLYWAY_ENABLED: ${SEMIRISK_FLYWAY_ENABLED:-false}
+      SEMIRISK_AI_MODEL: ${SEMIRISK_AI_MODEL:-deepseekv4-pro}
+      SEMIRISK_AI_ENDPOINT: ${SEMIRISK_AI_ENDPOINT:-https://api.deepseek.com/v1}
+      SEMIRISK_AI_API_KEY: ${SEMIRISK_AI_API_KEY:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - semirisk-ai-service
+      - semirisk-alert-service
+      - semirisk-report-service

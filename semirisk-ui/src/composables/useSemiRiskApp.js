@@ -1,5 +1,7 @@
 import { computed, onMounted, onUnmounted, reactive, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { navItems } from '../constants/navigation';
+import { useSessionStore } from '../stores/session';
 import { useAlerts } from './useAlerts';
 import { useAuth } from './useAuth';
 import { useDashboard } from './useDashboard';
@@ -13,11 +15,16 @@ import { useToast } from './useToast';
 import { useUpload } from './useUpload';
 
 export function useSemiRiskApp() {
+  const route = useRoute();
+  const router = useRouter();
+  const sessionStore = useSessionStore();
+  const initialView = String(route.meta.module || route.name || 'dashboard');
+
   const state = reactive({
-    view: 'dashboard',
+    view: initialView,
     now: new Date().toLocaleString('zh-CN', { hour12: false }),
     toast: '',
-    session: JSON.parse(localStorage.getItem('semiriskUser') || 'null'),
+    session: sessionStore.session,
     authMode: 'login',
     loginForm: { username: 'admin', password: 'password', rememberMe: true },
     registerForm: { username: '', password: '', displayName: '' },
@@ -52,7 +59,11 @@ export function useSemiRiskApp() {
   const currentTitle = computed(() => navItems.find(item => item.key === state.view)?.label || 'SemiRisk');
   const { notify } = useToast(state);
   const dashboard = useDashboard(state, notify);
-  const auth = useAuth(state, allowedNavItems, notify, dashboard.loadDashboard);
+  const setSession = session => {
+    sessionStore.setSession(session);
+    state.session = session;
+  };
+  const auth = useAuth(state, allowedNavItems, notify, dashboard.loadDashboard, setSession);
   const upload = useUpload(state, notify);
   const risk = useRisk(state, notify);
   const reports = useReports(state, notify);
@@ -81,9 +92,11 @@ export function useSemiRiskApp() {
   function setView(view) {
     if (!allowedNavItems.value.some(item => item.key === view)) {
       state.view = 'dashboard';
+      if (route.name !== 'dashboard') router.push('/dashboard');
       return;
     }
     state.view = view;
+    if (route.name !== view) router.push(`/${view}`);
   }
 
   function openRisk(id) {
@@ -97,6 +110,12 @@ export function useSemiRiskApp() {
       return;
     }
     await loaders[key]?.();
+  });
+
+  watch(() => route.meta.module, module => {
+    if (module && module !== state.view) {
+      setView(String(module));
+    }
   });
 
   onMounted(async () => {

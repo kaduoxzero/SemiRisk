@@ -23,6 +23,8 @@
         <module>semirisk-services/semirisk-data-service</module>
         <module>semirisk-services/semirisk-risk-service</module>
         <module>semirisk-services/semirisk-ai-service</module>
+        <module>semirisk-services/semirisk-alert-service</module>
+        <module>semirisk-services/semirisk-report-service</module>
     </modules>
 
     <properties>

@@ -1,10 +1,9 @@
 import { authApi } from '../api/modules';
 
-export function useAuth(state, allowedNavItems, notify, loadDashboard) {
+export function useAuth(state, allowedNavItems, notify, loadDashboard, setSession) {
   async function login() {
     const data = await authApi.login({ ...state.loginForm, captchaToken: 'vue-slider-ok' });
-    localStorage.setItem('semiriskUser', JSON.stringify(data.user));
-    state.session = data.user;
+    setSession(data.user);
     if (!allowedNavItems.value.some(item => item.key === state.view)) {
       state.view = allowedNavItems.value[0]?.key || 'dashboard';
     }
@@ -14,8 +13,7 @@ export function useAuth(state, allowedNavItems, notify, loadDashboard) {
 
   async function register() {
     const data = await authApi.register(state.registerForm);
-    localStorage.setItem('semiriskUser', JSON.stringify(data.user));
-    state.session = data.user;
+    setSession(data.user);
     state.authMode = 'login';
     notify('注册成功，已自动登录');
     await loadDashboard();
@@ -28,8 +26,7 @@ export function useAuth(state, allowedNavItems, notify, loadDashboard) {
 
   async function logout() {
     await authApi.logout();
-    localStorage.removeItem('semiriskUser');
-    state.session = null;
+    setSession(null);
     state.view = 'dashboard';
   }
 
@@ -37,12 +34,10 @@ export function useAuth(state, allowedNavItems, notify, loadDashboard) {
     if (!state.session) return false;
     try {
       const me = await authApi.me();
-      state.session = { ...state.session, ...me };
-      localStorage.setItem('semiriskUser', JSON.stringify(state.session));
+      setSession({ ...state.session, ...me });
       return true;
     } catch {
-      localStorage.removeItem('semiriskUser');
-      state.session = null;
+      setSession(null);
       return false;
     }
   }

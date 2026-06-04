@@ -3,6 +3,7 @@ package com.semirisk.api;
 import com.semirisk.service.SemiRiskStore;
 import com.semirisk.common.RolePermissionPolicy;
 import com.semirisk.repository.PreparedRiskRepository;
+import com.semirisk.security.RedisLoginGuardService;
 import com.semirisk.service.SemiRiskStore.ReportJob;
 import com.semirisk.service.SemiRiskStore.SystemUser;
 import com.semirisk.service.SemiRiskStore.UploadTask;
@@ -45,21 +46,24 @@ public class SemiRiskController {
 
     private final SemiRiskStore store;
     private final PreparedRiskRepository preparedRiskRepository;
+    private final RedisLoginGuardService redisLoginGuardService;
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
 
-    public SemiRiskController(SemiRiskStore store, PreparedRiskRepository preparedRiskRepository) {
+    public SemiRiskController(SemiRiskStore store, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService) {
         this.store = store;
         this.preparedRiskRepository = preparedRiskRepository;
+        this.redisLoginGuardService = redisLoginGuardService;
     }
 
     @PostMapping("/auth/login")
     public ResponseEntity<ApiResponse<Map<String, Object>>> login(@Valid @RequestBody LoginRequest request, HttpSession session) {
-        SemiRiskStore.LoginState state = store.loginState(request.username());
+        SemiRiskStore.LoginState state = redisLoginGuardService.loginState(request.username()).orElseGet(() -> store.loginState(request.username()));
         if (state.locked()) {
             return ResponseEntity.status(423).body(ApiResponse.fail("账号已锁定至 " + state.lockedUntil()));
         }
         return store.authenticate(request.username(), request.password())
                 .map(account -> {
+                    redisLoginGuardService.clear(request.username());
                     String token = UUID.randomUUID().toString();
                     session.setAttribute("principal", account.username());
                     session.setAttribute("role", account.role());
@@ -75,7 +79,7 @@ public class SemiRiskController {
                     return ResponseEntity.ok(ApiResponse.ok("登录成功", body));
                 })
                 .orElseGet(() -> {
-                    SemiRiskStore.LoginState failed = store.recordFailure(request.username());
+                    SemiRiskStore.LoginState failed = redisLoginGuardService.recordFailure(request.username()).orElseGet(() -> store.recordFailure(request.username()));
                     String message = failed.locked()
                             ? "密码错误次数达到 5 次，账号锁定 30 分钟"
                             : "账号或密码错误，当前 5 分钟窗口失败次数：" + failed.failures();
@@ -152,17 +156,39 @@ public class SemiRiskController {
 
     @PostMapping(value = "/data/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<UploadTask> upload(@RequestParam("file") MultipartFile file) throws IOException {
-        return ApiResponse.ok("文件已进入 AI 清洗队列", store.createUpload(file));
+        UploadTask task = store.createUpload(file);
+        try {
+            preparedRiskRepository.insertUploadTask(task.id(), task.filename(), task.size(), task.status(), task.rows(), task.createdAt());
+            preparedRiskRepository.insertAuditLog("INFO", "upload accepted " + task.filename());
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok("文件已进入 AI 清洗队列", task);
     }
 
     @GetMapping("/data/uploads")
-    public ApiResponse<List<UploadTask>> uploads() {
-        return ApiResponse.ok(store.uploadTasks());
+    public ApiResponse<List<?>> uploads() {
+        try {
+            List<Map<String, Object>> rows = preparedRiskRepository.findUploadTasks(100);
+            if (!rows.isEmpty()) {
+                return ApiResponse.ok((List<?>) rows);
+            }
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok((List<?>) store.uploadTasks());
     }
 
     @PostMapping("/data/uploads/{id}/parse")
     public ApiResponse<UploadTask> parseUpload(@PathVariable String id) {
-        return ApiResponse.ok("AI 校验和导入完成", store.advanceUpload(id));
+        UploadTask task = store.advanceUpload(id);
+        try {
+            preparedRiskRepository.updateUploadTask(task.id(), task.status(), task.rows());
+            preparedRiskRepository.insertAuditLog("INFO", "upload parsed " + task.id());
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok("AI 校验和导入完成", task);
     }
 
     @GetMapping("/data/uploads/logs")
@@ -204,12 +230,24 @@ public class SemiRiskController {
     public ApiResponse<Map<String, Object>> assignRisk(@PathVariable String id, @RequestBody(required = false) Map<String, String> body) {
         String owner = body == null ? "默认负责人" : body.getOrDefault("owner", "默认负责人");
         store.alert(id).ifPresent(alert -> store.updateAlertStatus(alert.id(), "处理中"));
+        try {
+            preparedRiskRepository.updateAlertStatus(id, "处理中");
+            preparedRiskRepository.insertAuditLog("INFO", "risk assigned " + id + " owner=" + owner);
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
         return ApiResponse.ok("负责人已指派", Map.of("id", id, "owner", owner, "status", "处理中"));
     }
 
     @PostMapping("/risk/events/{id}/dispatch-report")
     public ApiResponse<Map<String, Object>> dispatchReport(@PathVariable String id) {
         store.alert(id).ifPresent(alert -> store.updateAlertStatus(alert.id(), "处理中"));
+        try {
+            preparedRiskRepository.updateAlertStatus(id, "处理中");
+            preparedRiskRepository.insertAuditLog("INFO", "risk report dispatched " + id);
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
         return ApiResponse.ok("处置报告已下发", Map.of("id", id, "status", "处理中"));
     }
 
@@ -224,12 +262,36 @@ public class SemiRiskController {
 
     @PostMapping("/reports/jobs")
     public ApiResponse<ReportJob> createReport(@Valid @RequestBody ReportRequest request) {
-        return ApiResponse.ok("报告生成任务已启动", store.createReport(request.template(), request.language(), request.format(), request.threshold()));
+        ReportJob job = store.createReport(request.template(), request.language(), request.format(), request.threshold());
+        try {
+            preparedRiskRepository.upsertReportJob(job.id(), job.template(), job.language(), job.format(), job.threshold(), job.status(), job.progress(), job.step(), job.downloadUrl(), job.createdAt());
+            preparedRiskRepository.insertAuditLog("INFO", "report job created " + job.id());
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok("报告生成任务已启动", job);
     }
 
     @GetMapping("/reports/jobs/{id}")
-    public ApiResponse<ReportJob> reportJob(@PathVariable String id) {
-        return store.reportJob(id).map(job -> ApiResponse.ok(store.advanceReport(id))).orElseGet(() -> ApiResponse.fail("报告任务不存在"));
+    public ApiResponse<?> reportJob(@PathVariable String id) {
+        if (store.reportJob(id).isPresent()) {
+            ReportJob advanced = store.advanceReport(id);
+            try {
+                preparedRiskRepository.upsertReportJob(advanced.id(), advanced.template(), advanced.language(), advanced.format(), advanced.threshold(), advanced.status(), advanced.progress(), advanced.step(), advanced.downloadUrl(), advanced.createdAt());
+            } catch (Exception ignored) {
+                // Local fallback keeps the project runnable before VM middleware is connected.
+            }
+            return ApiResponse.ok(advanced);
+        }
+        try {
+            Map<String, Object> row = preparedRiskRepository.findReportJob(id).stream().findFirst().orElse(Map.of());
+            if (!row.isEmpty()) {
+                return ApiResponse.ok(row);
+            }
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.fail("报告任务不存在");
     }
 
     @GetMapping(value = "/reports/{id}/download", produces = "text/plain;charset=UTF-8")
@@ -280,12 +342,25 @@ public class SemiRiskController {
 
     @PutMapping("/alerts/{id}/ignore")
     public ApiResponse<SemiRiskStore.RiskAlert> ignoreAlert(@PathVariable String id) {
-        return ApiResponse.ok("告警已忽略", store.updateAlertStatus(id, "已忽略"));
+        SemiRiskStore.RiskAlert alert = store.updateAlertStatus(id, "已忽略");
+        try {
+            preparedRiskRepository.updateAlertStatus(id, "已忽略");
+            preparedRiskRepository.insertAuditLog("WARN", "alert ignored " + id);
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok("告警已忽略", alert);
     }
 
     @PostMapping("/alerts/batch-process")
     public ApiResponse<Map<String, Object>> batchProcess(@RequestBody BatchRequest request) {
         request.ids().forEach(id -> store.updateAlertStatus(id, "处理中"));
+        try {
+            request.ids().forEach(id -> preparedRiskRepository.updateAlertStatus(id, "处理中"));
+            preparedRiskRepository.insertAuditLog("INFO", "alerts batch processed size=" + request.ids().size());
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
         return ApiResponse.ok("批量处理指令下发成功", Map.of("processed", request.ids().size()));
     }
 
@@ -311,22 +386,51 @@ public class SemiRiskController {
 
     @GetMapping("/system/overview")
     public ApiResponse<Map<String, Object>> systemOverview() {
-        return ApiResponse.ok(store.systemOverview());
+        Map<String, Object> overview = new HashMap<>(store.systemOverview());
+        try {
+            List<Map<String, Object>> users = preparedRiskRepository.findSystemUsers();
+            if (!users.isEmpty()) {
+                overview.put("users", users);
+            }
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok(overview);
     }
 
     @PostMapping("/system/users")
     public ApiResponse<SystemUser> addUser(@Valid @RequestBody AddUserRequest request) {
-        return ApiResponse.ok("系统用户已创建", store.addSystemUser(request.username(), request.email(), request.role()));
+        SystemUser user = store.addSystemUser(request.username(), request.email(), request.role());
+        try {
+            preparedRiskRepository.insertSystemUser(user.id(), user.username(), user.email(), user.role(), user.status());
+            preparedRiskRepository.insertAuditLog("INFO", "system user created " + user.username());
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok("系统用户已创建", user);
     }
 
     @PutMapping("/system/users/{id}/status")
     public ApiResponse<SystemUser> updateUserStatus(@PathVariable String id, @Valid @RequestBody StatusRequest request) {
-        return ApiResponse.ok("用户状态已更新，在线 Session 已踢下线", store.updateSystemUserStatus(id, request.status()));
+        SystemUser user = store.updateSystemUserStatus(id, request.status());
+        try {
+            preparedRiskRepository.updateSystemUserStatus(id, request.status());
+            preparedRiskRepository.insertAuditLog("WARN", "system user status changed " + id + " -> " + request.status());
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok("用户状态已更新，在线 Session 已踢下线", user);
     }
 
     @DeleteMapping("/system/users/{id}")
     public ApiResponse<Map<String, Object>> deleteUser(@PathVariable String id) {
         store.deleteSystemUser(id);
+        try {
+            preparedRiskRepository.deleteSystemUser(id);
+            preparedRiskRepository.insertAuditLog("ERROR", "system user deleted " + id);
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
         return ApiResponse.ok("用户已物理删除", Map.of("id", id));
     }
 
@@ -339,11 +443,28 @@ public class SemiRiskController {
 
     @PostMapping("/system/models/config")
     public ApiResponse<SemiRiskStore.AiModelConfig> saveModelConfig(@Valid @RequestBody AiModelConfigRequest request) {
-        return ApiResponse.ok("AI 模型 API Key 已保存", store.saveAiModelConfig(request.model(), request.endpoint(), request.apiKey()));
+        SemiRiskStore.AiModelConfig config = store.saveAiModelConfig(request.model(), request.endpoint(), request.apiKey());
+        try {
+            preparedRiskRepository.upsertAiModelConfig(config.model(), config.endpoint(), config.maskedApiKey(), config.configured(), config.updatedAt());
+            preparedRiskRepository.insertAuditLog("INFO", "AI model config saved " + config.model());
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok("AI 模型 API Key 已保存", config);
     }
 
     @GetMapping("/system/models/config")
-    public ApiResponse<Map<String, SemiRiskStore.AiModelConfig>> modelConfigs() {
+    public ApiResponse<?> modelConfigs() {
+        try {
+            List<Map<String, Object>> rows = preparedRiskRepository.findAiModelConfigs();
+            if (!rows.isEmpty()) {
+                Map<String, Map<String, Object>> configs = new HashMap<>();
+                rows.forEach(row -> configs.put(String.valueOf(row.get("model")), row));
+                return ApiResponse.ok(configs);
+            }
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
         return ApiResponse.ok(store.aiModelConfigs());
     }
 

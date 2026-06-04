@@ -10,9 +10,10 @@
   },
   "dependencies": {
     "@vitejs/plugin-vue": "latest",
+    "pinia": "latest",
     "vite": "latest",
-    "vue": "latest"
+    "vue": "latest",
+    "vue-router": "latest"
   },
   "devDependencies": {}
 }
-

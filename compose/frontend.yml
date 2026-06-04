@@ -1,0 +1,10 @@
+services:
+  semirisk-ui:
+    build:
+      context: ../semirisk-ui
+      dockerfile: Dockerfile
+    image: semirisk/ui:latest
+    ports:
+      - "5173:80"
+    depends_on:
+      - semirisk-gateway
