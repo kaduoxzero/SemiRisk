@@ -48,19 +48,12 @@ public class SemiRiskStore {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.defaultAiApiKey = defaultAiApiKey;
-        users.put("admin", new UserAccount("admin", "password", "管理员", SemiriskConstants.ROLE_ADMIN));
-        users.put("analyst", new UserAccount("analyst", "risk2026", "风险分析师", SemiriskConstants.ROLE_ANALYST));
-        users.put("ops", new UserAccount("ops", "ops2026", "运营人员", SemiriskConstants.ROLE_OPERATOR));
         seedDefaultAiModel();
-        seedAlerts();
-        seedUsers();
-        auditLogs.add("[INFO] 2026-06-03 09:00:00 gateway route table initialized");
-        auditLogs.add("[WARN] 2026-06-03 09:04:12 rag-service embedding queue latency 820ms");
-        auditLogs.add("[ERROR] 2026-06-03 09:08:31 gis webhook handshake timeout");
+        auditLogs.add("[INFO] gateway route table initialized");
         refreshDailyRiskRecords();
     }
 
-    @Scheduled(cron = "0 0 0 * * *")
+    @Scheduled(cron = "0 */10 * * * *")
     public void refreshDailyRiskRecords() {
         refreshDailyRiskRecords(List.of());
     }
@@ -102,9 +95,10 @@ public class SemiRiskStore {
         if (emailExists) {
             throw new IllegalArgumentException("邮箱已被注册");
         }
-        UserAccount account = new UserAccount(username, password, displayName, SemiriskConstants.ROLE_OPERATOR);
+        String role = users.isEmpty() ? SemiriskConstants.ROLE_ADMIN : SemiriskConstants.ROLE_OPERATOR;
+        UserAccount account = new UserAccount(username, password, displayName, role);
         users.put(username, account);
-        addSystemUser(username, email, "运营人员");
+        addSystemUser(username, email, role);
         auditLogs.add("[INFO] public registration completed username=" + username);
         return account;
     }
@@ -241,8 +235,12 @@ public class SemiRiskStore {
     }
 
     public SystemUser addSystemUser(String username, String email, String role) {
+        return addSystemUser(username, email, role, "启用");
+    }
+
+    public SystemUser addSystemUser(String username, String email, String role, String status) {
         String id = "U" + (1000 + systemUsers.size() + 1);
-        SystemUser user = new SystemUser(id, username, email, role, "启用");
+        SystemUser user = new SystemUser(id, username, email, role, status);
         systemUsers.put(id, user);
         auditLogs.add("[INFO] user " + username + " created with role " + role);
         return user;
@@ -395,6 +393,7 @@ public class SemiRiskStore {
                 .toList();
         return Map.of(
                 "query", q,
+                "searchEngine", "LocalPublicCrawler",
                 "categories", List.of("公开源文章(" + matchedSignals.size() + ")", "内部知识库(待接入)", "政策法规库(待接入)"),
                 "tags", List.of("#半导体", "#物流", "#供应链", "#公开源", "#风险信号"),
                 "results", matchedSignals.stream().limit(10).map(signal -> Map.of(
@@ -406,6 +405,21 @@ public class SemiRiskStore {
                         "summary", signal.source() + " / " + signal.dimension() + " / " + signal.fetchedAt(),
                         "url", signal.sourceUrl()
                 )).toList()
+        );
+    }
+
+    public Map<String, Object> knowledge(String query, List<Map<String, Object>> indexedResults) {
+        String q = query == null || query.isBlank() ? "半导体物流中断" : query;
+        List<Map<String, Object>> results = normalizeIndexedKnowledgeResults(indexedResults);
+        if (results.isEmpty()) {
+            return knowledge(q);
+        }
+        return Map.of(
+                "query", q,
+                "searchEngine", "Elasticsearch",
+                "categories", List.of("ES 公开源索引(" + results.size() + ")", "内部知识库(待接入)", "政策法规库(待接入)"),
+                "tags", List.of("#半导体", "#物流", "#供应链", "#Elasticsearch", "#RAG"),
+                "results", results
         );
     }
 
@@ -443,6 +457,76 @@ public class SemiRiskStore {
                 )).toList(),
                 "answeredAt", Instant.now().toString()
         );
+    }
+
+    public Map<String, Object> askKnowledgeAgent(String question, List<Map<String, Object>> indexedResults) {
+        String q = question == null || question.isBlank() ? "请总结当前供应链风险" : question.trim();
+        List<Map<String, Object>> results = normalizeIndexedKnowledgeResults(indexedResults);
+        if (results.isEmpty()) {
+            return askKnowledgeAgent(q);
+        }
+        Map<String, Object> top = results.get(0);
+        String answer = "基于 Elasticsearch 知识库检索到的公开源记录，当前最相关风险来自 "
+                + stringValue(top.get("source")) + "，维度为“" + stringValue(top.get("dimension"))
+                + "”，规则评分 " + top.getOrDefault("riskScore", 0)
+                + "。建议先打开引用原文核验事实，再将高分信号转为告警工单或报告输入。";
+        return Map.of(
+                "question", q,
+                "answer", answer,
+                "model", defaultAiModel,
+                "modelStatus", aiModelConfigs.containsKey(defaultAiModel) ? "API Key 已配置，可扩展为真实 DeepSeek 调用" : "未配置 API Key，当前使用 Elasticsearch RAG 摘要",
+                "trace", List.of("Query Rewrite", "Elasticsearch Retrieval", "Risk Scoring", "Answer Synthesis"),
+                "citations", results.stream().limit(5).map(result -> {
+                    Map<String, Object> citation = new HashMap<>();
+                    citation.put("id", stringValue(result.get("id")));
+                    citation.put("title", stringValue(result.get("title")));
+                    citation.put("source", stringValue(result.get("source")));
+                    citation.put("sourceUrl", stringValue(result.get("sourceUrl")));
+                    citation.put("score", result.getOrDefault("riskScore", 0));
+                    citation.put("fetchedAt", stringValue(result.get("fetchedAt")));
+                    citation.put("searchEngine", "Elasticsearch");
+                    return citation;
+                }).toList(),
+                "answeredAt", Instant.now().toString()
+        );
+    }
+
+    private List<Map<String, Object>> normalizeIndexedKnowledgeResults(List<Map<String, Object>> indexedResults) {
+        if (indexedResults == null || indexedResults.isEmpty()) {
+            return List.of();
+        }
+        return indexedResults.stream()
+                .filter(result -> result != null && !result.isEmpty())
+                .limit(10)
+                .map(result -> {
+                    Map<String, Object> item = new HashMap<>();
+                    String source = stringValue(result.get("source"));
+                    String dimension = stringValue(result.get("dimension"));
+                    String fetchedAt = stringValue(result.get("fetchedAt"));
+                    String sourceUrl = stringValue(result.get("sourceUrl"));
+                    item.put("id", stringValue(result.get("id")));
+                    item.put("title", stringValue(result.get("title")));
+                    item.put("format", result.getOrDefault("format", "WEB"));
+                    item.put("size", result.getOrDefault("size", "公开网页"));
+                    item.put("similarity", result.getOrDefault("similarity", result.getOrDefault("riskScore", 0)));
+                    item.put("summary", result.getOrDefault("summary", source + " / " + dimension + " / " + fetchedAt));
+                    item.put("url", result.getOrDefault("url", sourceUrl));
+                    item.put("source", source);
+                    item.put("sourceUrl", sourceUrl);
+                    item.put("dimension", dimension);
+                    item.put("riskScore", result.getOrDefault("riskScore", 0));
+                    item.put("fetchedAt", fetchedAt);
+                    item.put("searchEngine", result.getOrDefault("searchEngine", "Elasticsearch"));
+                    if (result.containsKey("searchScore")) {
+                        item.put("searchScore", result.get("searchScore"));
+                    }
+                    return item;
+                })
+                .toList();
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value);
     }
 
     public Map<String, Object> systemOverview() {
@@ -636,19 +720,6 @@ public class SemiRiskStore {
             return "未配置";
         }
         return key.substring(0, 4) + "****" + key.substring(key.length() - 4);
-    }
-
-    private void seedAlerts() {
-        alerts.put("RA-20260603-001", new RiskAlert("RA-20260603-001", Instant.now().minus(40, ChronoUnit.MINUTES), "高危", "新加坡港拥堵影响封测物料交付", "GIS Agent", "未处理", "risk-detail.html"));
-        alerts.put("RA-20260603-002", new RiskAlert("RA-20260603-002", Instant.now().minus(2, ChronoUnit.HOURS), "中危", "稀有金属报价连续三日上行", "Price Agent", "处理中", "risk-detail.html"));
-        alerts.put("RA-20260603-003", new RiskAlert("RA-20260603-003", Instant.now().minus(5, ChronoUnit.HOURS), "低危", "供应商工商信息发生变更", "Compliance Agent", "未处理", "enterprise-profile.html"));
-        alerts.put("RA-20260602-004", new RiskAlert("RA-20260602-004", Instant.now().minus(1, ChronoUnit.DAYS), "高危", "一级供应商现金流评级下调", "Finance Agent", "未处理", "enterprise-profile.html"));
-    }
-
-    private void seedUsers() {
-        systemUsers.put("U1001", new SystemUser("U1001", "admin", "admin@risk.com", "管理员", "启用"));
-        systemUsers.put("U1002", new SystemUser("U1002", "analyst", "analyst@risk.com", "分析师", "启用"));
-        systemUsers.put("U1003", new SystemUser("U1003", "ops", "ops@risk.com", "运营人员", "禁用"));
     }
 
     public record UserAccount(String username, String password, String displayName, String role, boolean enabled) {

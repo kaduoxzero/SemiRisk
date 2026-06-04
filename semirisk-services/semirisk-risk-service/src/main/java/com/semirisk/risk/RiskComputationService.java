@@ -26,7 +26,7 @@ public class RiskComputationService {
         recalculate();
     }
 
-    @Scheduled(cron = "0 10 0 * * *")
+    @Scheduled(cron = "0 */10 * * * *")
     public void recalculate() {
         List<Map<String, Object>> records = fetchCrawlerRecords().stream()
                 .filter(record -> "OK".equalsIgnoreCase(String.valueOf(record.getOrDefault("status", "OK"))))

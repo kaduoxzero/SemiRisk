@@ -21,11 +21,11 @@ public class AiReportService {
             @Value("${semirisk.ai.default.api-key:}") String defaultApiKey) {
         this.defaultModel = defaultModel;
         this.defaultApiKey = defaultApiKey;
-        generateDailyReport();
+        generateReport();
     }
 
-    @Scheduled(cron = "0 20 0 * * *")
-    public void generateDailyReport() {
+    @Scheduled(cron = "0 */10 * * * *")
+    public void generateReport() {
         boolean configured = defaultApiKey != null && !defaultApiKey.isBlank();
         latestReport.set(Map.of(
                 "title", "SemiRisk AI 本日风险分析",

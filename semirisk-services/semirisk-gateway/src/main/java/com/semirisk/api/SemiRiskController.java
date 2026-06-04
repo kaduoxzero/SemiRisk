@@ -4,14 +4,20 @@ import com.semirisk.service.SemiRiskStore;
 import com.semirisk.common.ReportFileFactory;
 import com.semirisk.common.ReportFileFactory.ReportFile;
 import com.semirisk.common.RolePermissionPolicy;
+import com.semirisk.common.SemiriskConstants;
 import com.semirisk.repository.PreparedRiskRepository;
+import com.semirisk.security.CsrfTokenService;
+import com.semirisk.security.InputSanitizer;
+import com.semirisk.security.PasswordHashService;
 import com.semirisk.security.RedisLoginGuardService;
+import com.semirisk.security.TokenAuthService;
+import com.semirisk.service.KnowledgeSearchIndexService;
 import com.semirisk.service.PublicCrawlerClient;
 import com.semirisk.service.SemiRiskStore.ReportJob;
 import com.semirisk.service.SemiRiskStore.SystemUser;
 import com.semirisk.service.SemiRiskStore.UploadTask;
 import com.semirisk.service.SemiRiskStore.UserAccount;
-import jakarta.servlet.http.HttpSession;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -19,6 +25,7 @@ import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,8 +44,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -50,31 +57,47 @@ public class SemiRiskController {
 
     private final SemiRiskStore store;
     private final PublicCrawlerClient publicCrawlerClient;
+    private final KnowledgeSearchIndexService knowledgeSearchIndexService;
     private final PreparedRiskRepository preparedRiskRepository;
     private final RedisLoginGuardService redisLoginGuardService;
+    private final PasswordHashService passwordHashService;
+    private final InputSanitizer inputSanitizer;
+    private final TokenAuthService tokenAuthService;
+    private final CsrfTokenService csrfTokenService;
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
 
-    public SemiRiskController(SemiRiskStore store, PublicCrawlerClient publicCrawlerClient, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService) {
+    public SemiRiskController(SemiRiskStore store, PublicCrawlerClient publicCrawlerClient, KnowledgeSearchIndexService knowledgeSearchIndexService, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService, PasswordHashService passwordHashService, InputSanitizer inputSanitizer, TokenAuthService tokenAuthService, CsrfTokenService csrfTokenService) {
         this.store = store;
         this.publicCrawlerClient = publicCrawlerClient;
+        this.knowledgeSearchIndexService = knowledgeSearchIndexService;
         this.preparedRiskRepository = preparedRiskRepository;
         this.redisLoginGuardService = redisLoginGuardService;
+        this.passwordHashService = passwordHashService;
+        this.inputSanitizer = inputSanitizer;
+        this.tokenAuthService = tokenAuthService;
+        this.csrfTokenService = csrfTokenService;
+    }
+
+    @GetMapping("/auth/csrf")
+    public ApiResponse<Map<String, Object>> csrf() {
+        return ApiResponse.ok(Map.of("token", csrfTokenService.issue()));
     }
 
     @PostMapping("/auth/login")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> login(@Valid @RequestBody LoginRequest request, HttpSession session) {
-        SemiRiskStore.LoginState state = redisLoginGuardService.loginState(request.username()).orElseGet(() -> store.loginState(request.username()));
+    public ResponseEntity<ApiResponse<Map<String, Object>>> login(@Valid @RequestBody LoginRequest request) {
+        String username = inputSanitizer.username(request.username());
+        String password = inputSanitizer.loginPassword(request.password());
+        SemiRiskStore.LoginState state = redisLoginGuardService.loginState(username).orElseGet(() -> store.loginState(username));
         if (state.locked()) {
             return ResponseEntity.status(423).body(ApiResponse.fail("账号已锁定至 " + state.lockedUntil()));
         }
-        return store.authenticate(request.username(), request.password())
+        return authenticate(username, password)
                 .map(account -> {
-                    redisLoginGuardService.clear(request.username());
-                    String token = UUID.randomUUID().toString();
-                    session.setAttribute("principal", account.username());
-                    session.setAttribute("role", account.role());
+                    redisLoginGuardService.clear(username);
+                    TokenAuthService.IssuedToken issuedToken = tokenAuthService.issue(account);
                     Map<String, Object> body = new HashMap<>();
-                    body.put("token", token);
+                    body.put("token", issuedToken.token());
+                    body.put("expiresAt", issuedToken.expiresAt().toString());
                     body.put("rememberMe", request.rememberMe());
                     body.put("user", Map.of(
                             "username", account.username(),
@@ -85,7 +108,7 @@ public class SemiRiskController {
                     return ResponseEntity.ok(ApiResponse.ok("登录成功", body));
                 })
                 .orElseGet(() -> {
-                    SemiRiskStore.LoginState failed = redisLoginGuardService.recordFailure(request.username()).orElseGet(() -> store.recordFailure(request.username()));
+                    SemiRiskStore.LoginState failed = redisLoginGuardService.recordFailure(username).orElseGet(() -> store.recordFailure(username));
                     String message = failed.locked()
                             ? "密码错误次数达到 5 次，账号锁定 30 分钟"
                             : "账号或密码错误，当前 5 分钟窗口失败次数：" + failed.failures();
@@ -94,15 +117,16 @@ public class SemiRiskController {
     }
 
     @PostMapping("/auth/register")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> register(@Valid @RequestBody RegisterRequest request, HttpSession session) {
-        if (!request.email().toLowerCase(Locale.ROOT).matches("^[1-9][0-9]{4,11}@qq\\.com$")) {
-            return ResponseEntity.badRequest().body(ApiResponse.fail("注册邮箱必须为 QQ 邮箱，例如 123456@qq.com"));
-        }
-        UserAccount account = store.register(request.username(), request.password(), request.displayName(), request.email());
-        session.setAttribute("principal", account.username());
-        session.setAttribute("role", account.role());
+    public ResponseEntity<ApiResponse<Map<String, Object>>> register(@Valid @RequestBody RegisterRequest request) {
+        String username = inputSanitizer.username(request.username());
+        String email = inputSanitizer.qqEmail(request.email());
+        String displayName = inputSanitizer.displayName(request.displayName());
+        String password = inputSanitizer.password(request.password());
+        UserAccount account = registerPersisted(username, password, displayName, email);
+        TokenAuthService.IssuedToken issuedToken = tokenAuthService.issue(account);
         Map<String, Object> body = new HashMap<>();
-        body.put("token", UUID.randomUUID().toString());
+        body.put("token", issuedToken.token());
+        body.put("expiresAt", issuedToken.expiresAt().toString());
         body.put("user", Map.of(
                 "username", account.username(),
                 "displayName", account.displayName(),
@@ -112,30 +136,95 @@ public class SemiRiskController {
         return ResponseEntity.ok(ApiResponse.ok("注册成功", body));
     }
 
+    private Optional<UserAccount> authenticate(String username, String password) {
+        try {
+            List<Map<String, Object>> rows = preparedRiskRepository.findAuthUserByUsername(username);
+            if (!rows.isEmpty()) {
+                Map<String, Object> row = rows.get(0);
+                String status = rowString(row, "status");
+                String hash = rowString(row, "passwordHash");
+                if (!"启用".equals(status) || !passwordHashService.verify(password, hash)) {
+                    return Optional.empty();
+                }
+                String id = rowString(row, "id");
+                String role = normalizeRole(rowString(row, "role"));
+                String displayName = rowString(row, "displayName").isBlank() ? username : rowString(row, "displayName");
+                preparedRiskRepository.updateSystemUserLastLogin(id);
+                preparedRiskRepository.insertAuditLog("INFO", "auth login success " + username);
+                return Optional.of(new UserAccount(username, "", displayName, role, true));
+            }
+        } catch (Exception ignored) {
+            // Local fallback keeps registration/login usable before VM MySQL is connected.
+        }
+        return store.authenticate(username, password);
+    }
+
+    private UserAccount registerPersisted(String username, String password, String displayName, String email) {
+        try {
+            if (!preparedRiskRepository.findAuthUserByUsername(username).isEmpty()) {
+                throw new IllegalArgumentException("账号已存在");
+            }
+            if (preparedRiskRepository.emailExists(email)) {
+                throw new IllegalArgumentException("邮箱已被注册");
+            }
+            String role = preparedRiskRepository.countLoginUsers() == 0 ? SemiriskConstants.ROLE_ADMIN : SemiriskConstants.ROLE_OPERATOR;
+            String id = "U-" + UUID.randomUUID().toString().substring(0, 8);
+            preparedRiskRepository.insertSystemUser(id, username, displayName, email, passwordHashService.hash(password), role, "启用");
+            preparedRiskRepository.insertAuditLog("INFO", "public registration persisted username=" + username + " role=" + role);
+            return new UserAccount(username, "", displayName, role, true);
+        } catch (IllegalArgumentException ex) {
+            throw ex;
+        } catch (DuplicateKeyException ex) {
+            throw new IllegalArgumentException("账号或邮箱已存在");
+        } catch (Exception ignored) {
+            return store.register(username, password, displayName, email);
+        }
+    }
+
+    private String rowString(Map<String, Object> row, String key) {
+        Object value = row.get(key);
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private String normalizeRole(String role) {
+        try {
+            return inputSanitizer.role(role);
+        } catch (IllegalArgumentException ignored) {
+            return SemiriskConstants.ROLE_OPERATOR;
+        }
+    }
+
+    private String sanitizeEndpoint(String endpoint) {
+        String clean = inputSanitizer.plain(endpoint, 512);
+        if (!clean.startsWith("https://") && !clean.startsWith("http://")) {
+            throw new IllegalArgumentException("Endpoint 必须以 http:// 或 https:// 开头");
+        }
+        return clean;
+    }
+
     @PostMapping("/auth/logout")
-    public ApiResponse<Map<String, Object>> logout(HttpSession session) {
-        session.invalidate();
+    public ApiResponse<Map<String, Object>> logout(HttpServletRequest request) {
+        tokenAuthService.revoke(request.getHeader("Authorization"));
         return ApiResponse.ok(Map.of("loggedOut", true));
     }
 
     @GetMapping("/auth/me")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> me(HttpSession session) {
-        Object username = session.getAttribute("principal");
-        Object role = session.getAttribute("role");
-        if (username == null || role == null) {
-            return ResponseEntity.status(401).body(ApiResponse.fail("未登录"));
-        }
-        return ResponseEntity.ok(ApiResponse.ok(Map.of(
-                "username", username,
-                "role", role,
-                "modules", RolePermissionPolicy.modules(String.valueOf(role))
-        )));
+    public ResponseEntity<ApiResponse<Map<String, Object>>> me(HttpServletRequest request) {
+        return tokenAuthService.validate(request.getHeader("Authorization"))
+                .map(principal -> ResponseEntity.ok(ApiResponse.ok(Map.of(
+                        "username", principal.username(),
+                        "displayName", principal.displayName(),
+                        "role", principal.role(),
+                        "modules", RolePermissionPolicy.modules(principal.role()),
+                        "expiresAt", principal.expiresAt().toString()
+                ))))
+                .orElseGet(() -> ResponseEntity.status(401).body(ApiResponse.fail("未登录或 Token 已过期")));
     }
 
     @GetMapping("/auth/permissions/{module}")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> permission(@PathVariable String module, HttpSession session) {
-        Object role = session.getAttribute("role");
-        boolean allowed = role != null && RolePermissionPolicy.canAccess(String.valueOf(role), module);
+    public ResponseEntity<ApiResponse<Map<String, Object>>> permission(@PathVariable String module, HttpServletRequest request) {
+        Optional<TokenAuthService.AuthPrincipal> principal = tokenAuthService.validate(request.getHeader("Authorization"));
+        boolean allowed = principal.isPresent() && RolePermissionPolicy.canAccess(principal.get().role(), module);
         return allowed
                 ? ResponseEntity.ok(ApiResponse.ok(Map.of("module", module, "allowed", true)))
                 : ResponseEntity.status(403).body(ApiResponse.fail("无权访问模块：" + module));
@@ -143,9 +232,10 @@ public class SemiRiskController {
 
     @PostMapping("/auth/password-reset/request")
     public ApiResponse<Map<String, Object>> requestReset(@Valid @RequestBody PasswordResetRequest request) {
-        String token = store.createResetToken(request.email());
+        String email = inputSanitizer.qqEmail(request.email());
+        String token = store.createResetToken(email);
         return ApiResponse.ok("重置链接已发送，Token 15 分钟内有效且仅可使用一次",
-                Map.of("email", request.email(), "token", token, "expiresInMinutes", 15));
+                Map.of("email", email, "token", token, "expiresInMinutes", 15));
     }
 
     @GetMapping("/dashboard/overview")
@@ -380,6 +470,7 @@ public class SemiRiskController {
     private void syncPublicCrawlerRecords() {
         List<SemiRiskStore.CrawlerSignal> records = publicCrawlerClient.today();
         store.refreshDailyRiskRecords(records);
+        knowledgeSearchIndexService.sync(records);
     }
 
     @GetMapping("/alerts/counts")
@@ -431,13 +522,15 @@ public class SemiRiskController {
     @GetMapping("/knowledge/search")
     public ApiResponse<Map<String, Object>> knowledge(@RequestParam(required = false) String query) {
         syncPublicCrawlerRecords();
-        return ApiResponse.ok(store.knowledge(query));
+        List<Map<String, Object>> indexedResults = knowledgeSearchIndexService.search(query, 10);
+        return ApiResponse.ok(store.knowledge(query, indexedResults));
     }
 
     @PostMapping("/knowledge/ask")
     public ApiResponse<Map<String, Object>> askKnowledge(@Valid @RequestBody KnowledgeAskRequest request) {
         syncPublicCrawlerRecords();
-        return ApiResponse.ok("AI 知识库智能体回答完成", store.askKnowledgeAgent(request.question()));
+        List<Map<String, Object>> indexedResults = knowledgeSearchIndexService.search(request.question(), 5);
+        return ApiResponse.ok("AI 知识库智能体回答完成", store.askKnowledgeAgent(request.question(), indexedResults));
     }
 
     @GetMapping(value = "/knowledge/preview/{id}", produces = "text/plain;charset=UTF-8")
@@ -461,9 +554,12 @@ public class SemiRiskController {
 
     @PostMapping("/system/users")
     public ApiResponse<SystemUser> addUser(@Valid @RequestBody AddUserRequest request) {
-        SystemUser user = store.addSystemUser(request.username(), request.email(), request.role());
+        String username = inputSanitizer.username(request.username());
+        String email = inputSanitizer.qqEmail(request.email());
+        String role = inputSanitizer.role(request.role());
+        SystemUser user = store.addSystemUser(username, email, role, "禁用");
         try {
-            preparedRiskRepository.insertSystemUser(user.id(), user.username(), user.email(), user.role(), user.status());
+            preparedRiskRepository.insertSystemUser(user.id(), user.username(), user.username(), user.email(), null, user.role(), user.status());
             preparedRiskRepository.insertAuditLog("INFO", "system user created " + user.username());
         } catch (Exception ignored) {
             // Local fallback keeps the project runnable before VM middleware is connected.
@@ -473,14 +569,15 @@ public class SemiRiskController {
 
     @PutMapping("/system/users/{id}/status")
     public ApiResponse<SystemUser> updateUserStatus(@PathVariable String id, @Valid @RequestBody StatusRequest request) {
-        SystemUser user = store.updateSystemUserStatus(id, request.status());
+        String cleanStatus = inputSanitizer.status(request.status());
+        SystemUser user = store.updateSystemUserStatus(id, cleanStatus);
         try {
-            preparedRiskRepository.updateSystemUserStatus(id, request.status());
-            preparedRiskRepository.insertAuditLog("WARN", "system user status changed " + id + " -> " + request.status());
+            preparedRiskRepository.updateSystemUserStatus(id, cleanStatus);
+            preparedRiskRepository.insertAuditLog("WARN", "system user status changed " + id + " -> " + cleanStatus);
         } catch (Exception ignored) {
             // Local fallback keeps the project runnable before VM middleware is connected.
         }
-        return ApiResponse.ok("用户状态已更新，在线 Session 已踢下线", user);
+        return ApiResponse.ok("用户状态已更新，后续请求需重新获取 Token", user);
     }
 
     @DeleteMapping("/system/users/{id}")
@@ -497,14 +594,17 @@ public class SemiRiskController {
 
     @PostMapping("/system/models/ping")
     public ApiResponse<Map<String, Object>> modelPing(@RequestBody Map<String, String> request) {
-        String model = request.getOrDefault("model", "default");
+        String model = inputSanitizer.plain(request.getOrDefault("model", "default"), 128);
         int latency = 240 + Math.abs(model.hashCode() % 300);
         return ApiResponse.ok("模型连通性测试成功", Map.of("model", model, "latencyMs", latency, "status", "健康"));
     }
 
     @PostMapping("/system/models/config")
     public ApiResponse<SemiRiskStore.AiModelConfig> saveModelConfig(@Valid @RequestBody AiModelConfigRequest request) {
-        SemiRiskStore.AiModelConfig config = store.saveAiModelConfig(request.model(), request.endpoint(), request.apiKey());
+        String model = inputSanitizer.plain(request.model(), 128);
+        String endpoint = sanitizeEndpoint(request.endpoint());
+        String apiKey = inputSanitizer.plain(request.apiKey(), 256);
+        SemiRiskStore.AiModelConfig config = store.saveAiModelConfig(model, endpoint, apiKey);
         try {
             preparedRiskRepository.upsertAiModelConfig(config.model(), config.endpoint(), config.maskedApiKey(), config.configured(), config.updatedAt());
             preparedRiskRepository.insertAuditLog("INFO", "AI model config saved " + config.model());

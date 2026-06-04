@@ -28,14 +28,39 @@ public final class SqlTemplates {
             """;
 
     public static final String FIND_SYSTEM_USERS = """
-            SELECT id, username, email, role, status
+            SELECT id, username, display_name AS displayName, email, role, status, last_login_at AS lastLoginAt
             FROM system_user
             ORDER BY username
             """;
 
     public static final String INSERT_SYSTEM_USER = """
-            INSERT INTO system_user(id, username, email, role, status)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO system_user(id, username, display_name, email, password_hash, role, status, password_updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """;
+
+    public static final String FIND_AUTH_USER_BY_USERNAME = """
+            SELECT id, username, display_name AS displayName, email, password_hash AS passwordHash, role, status
+            FROM system_user
+            WHERE username = ?
+            LIMIT 1
+            """;
+
+    public static final String COUNT_LOGIN_USERS = """
+            SELECT COUNT(*)
+            FROM system_user
+            WHERE password_hash IS NOT NULL AND password_hash <> ''
+            """;
+
+    public static final String COUNT_SYSTEM_USER_BY_EMAIL = """
+            SELECT COUNT(*)
+            FROM system_user
+            WHERE email = ?
+            """;
+
+    public static final String UPDATE_SYSTEM_USER_LAST_LOGIN = """
+            UPDATE system_user
+            SET last_login_at = CURRENT_TIMESTAMP
+            WHERE id = ?
             """;
 
     public static final String UPDATE_SYSTEM_USER_STATUS = """

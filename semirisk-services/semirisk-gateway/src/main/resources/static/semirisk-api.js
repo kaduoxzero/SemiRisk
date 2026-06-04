@@ -1,10 +1,29 @@
 (function () {
   const page = location.pathname.split('/').pop() || 'index.html';
+  let csrfToken = '';
+
+  async function csrf() {
+    if (csrfToken) return csrfToken;
+    const response = await fetch('/api/auth/csrf');
+    const body = await response.json();
+    csrfToken = body.data?.token || body.token || '';
+    return csrfToken;
+  }
 
   async function api(path, options = {}) {
+    const method = String(options.method || 'GET').toUpperCase();
+    const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const headers = options.body instanceof FormData ? { ...(options.headers || {}) } : { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    const authToken = localStorage.getItem('semiriskToken');
+    if (authToken) {
+      headers.Authorization = `Bearer ${authToken}`;
+    }
+    if (unsafe) {
+      headers['X-CSRF-Token'] = await csrf();
+    }
     const response = await fetch(path, {
-      headers: options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' },
-      ...options
+      ...options,
+      headers
     });
     const contentType = response.headers.get('content-type') || '';
     const body = contentType.includes('application/json') ? await response.json() : await response.text();
@@ -54,8 +73,8 @@
         event.preventDefault();
         event.stopImmediatePropagation();
         const inputs = form.querySelectorAll('input');
-        const username = inputs[0]?.value || 'admin';
-        const password = inputs[1]?.value || 'password';
+        const username = inputs[0]?.value || '';
+        const password = inputs[1]?.value || '';
         const rememberMe = !!form.querySelector('input[type="checkbox"]')?.checked;
         try {
           const data = await api('/api/auth/login', {
@@ -73,7 +92,7 @@
       if (page === 'forgot-password.html') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        const email = form.querySelector('input[type="email"], input[type="text"]')?.value || 'admin@risk.com';
+        const email = form.querySelector('input[type="email"], input[type="text"]')?.value || '';
         try {
           const data = await api('/api/auth/password-reset/request', {
             method: 'POST',

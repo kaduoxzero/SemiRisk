@@ -48,8 +48,26 @@ public class PreparedRiskRepository {
         return jdbcTemplate.queryForList(SqlTemplates.FIND_SYSTEM_USERS);
     }
 
-    public int insertSystemUser(String id, String username, String email, String role, String status) {
-        return jdbcTemplate.update(SqlTemplates.INSERT_SYSTEM_USER, id, username, email, role, status);
+    public int insertSystemUser(String id, String username, String displayName, String email, String passwordHash, String role, String status) {
+        return jdbcTemplate.update(SqlTemplates.INSERT_SYSTEM_USER, id, username, displayName, email, passwordHash, role, status);
+    }
+
+    public List<Map<String, Object>> findAuthUserByUsername(String username) {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_AUTH_USER_BY_USERNAME, username);
+    }
+
+    public int countLoginUsers() {
+        Number count = jdbcTemplate.queryForObject(SqlTemplates.COUNT_LOGIN_USERS, Number.class);
+        return count == null ? 0 : count.intValue();
+    }
+
+    public boolean emailExists(String email) {
+        Number count = jdbcTemplate.queryForObject(SqlTemplates.COUNT_SYSTEM_USER_BY_EMAIL, Number.class, email);
+        return count != null && count.intValue() > 0;
+    }
+
+    public int updateSystemUserLastLogin(String id) {
+        return jdbcTemplate.update(SqlTemplates.UPDATE_SYSTEM_USER_LAST_LOGIN, id);
     }
 
     public int updateSystemUserStatus(String id, String status) {

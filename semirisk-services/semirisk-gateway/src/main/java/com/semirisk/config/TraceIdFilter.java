@@ -24,6 +24,19 @@ public class TraceIdFilter extends OncePerRequestFilter {
         }
         MDC.put("traceId", traceId);
         response.setHeader(TRACE_ID, traceId);
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader("X-Frame-Options", "DENY");
+        response.setHeader("Referrer-Policy", "no-referrer");
+        response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+        response.setHeader("Content-Security-Policy",
+                "default-src 'self'; "
+                        + "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://code.iconify.design; "
+                        + "style-src 'self' 'unsafe-inline'; "
+                        + "img-src 'self' data: https:; "
+                        + "connect-src 'self' http://localhost:* http://127.0.0.1:*; "
+                        + "frame-ancestors 'none'; "
+                        + "base-uri 'self'; "
+                        + "form-action 'self'");
         try {
             filterChain.doFilter(request, response);
         } finally {

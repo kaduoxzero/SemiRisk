@@ -20,8 +20,8 @@
 
 - Vue 前端：http://localhost:5173
 - API Gateway：http://localhost:8080
-- 默认账号：admin / password
-- 分析师账号：analyst / risk2026
+- 系统不提供默认账号密码；首次注册账号自动成为 `ADMIN`
+- 登录使用 Bearer Token，默认 15 分钟有效，不使用 Cookie 登录态
 
 ## 中间件地址
 
@@ -36,14 +36,14 @@
 
 当前 VM 部署目录为 `/opt/semirisk`，中间件 Compose 位于 `/opt/semirisk/middleware`，部署包位于 `/opt/semirisk/packages/semirisk-middleware-deploy.tgz`。
 
-当前实现为可运行的前后端分离微服务版本，MySQL/Redis 配置已预留；业务状态默认使用内存，便于无中间件时直接启动演示。
+当前实现为可运行的前后端分离微服务版本。登录注册优先持久化到 MySQL，失败计数优先使用 Redis；公开源风险数据每 10 分钟刷新，知识库检索已接入 Elasticsearch `semirisk_knowledge`。
 
 ## 模块
 
 - `semirisk-ui`：Vue 前端
 - `semirisk-common`：公共响应结构
 - `semirisk-services/semirisk-gateway`：统一 API 入口
-- `semirisk-services/semirisk-data-service`：爬虫和每日记录
+- `semirisk-services/semirisk-data-service`：爬虫和 10 分钟刷新记录
 - `semirisk-services/semirisk-risk-service`：AI 风险测算
 - `semirisk-services/semirisk-ai-service`：AI API Key 和报告分析占位
 

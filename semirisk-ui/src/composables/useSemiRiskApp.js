@@ -27,7 +27,7 @@ export function useSemiRiskApp() {
     toast: '',
     session: sessionStore.session,
     authMode: initialAuthMode,
-    loginForm: { username: 'admin', password: 'password', rememberMe: true },
+    loginForm: { username: '', password: '', rememberMe: false },
     registerForm: { username: '', email: '', password: '', displayName: '' },
     dashboard: {},
     uploads: [],
@@ -93,6 +93,7 @@ export function useSemiRiskApp() {
 
   let clock;
   let keyHandler;
+  let authExpiredHandler;
 
   function setView(view) {
     if (!allowedNavItems.value.some(item => item.key === view)) {
@@ -147,6 +148,14 @@ export function useSemiRiskApp() {
       }
     };
     document.addEventListener('keydown', keyHandler);
+    authExpiredHandler = () => {
+      setSession(null);
+      state.view = 'dashboard';
+      state.authMode = 'login';
+      if (route.name !== 'dashboard') router.push('/dashboard');
+      notify('登录已过期，请重新登录');
+    };
+    window.addEventListener('semirisk-auth-expired', authExpiredHandler);
 
     if (state.session) {
       const restored = await auth.restoreSession();
@@ -157,6 +166,8 @@ export function useSemiRiskApp() {
       if (!allowedNavItems.value.some(item => item.key === state.view)) {
         state.view = allowedNavItems.value[0]?.key || 'dashboard';
       }
+      await loaders[state.view]?.();
+      return;
     }
     await dashboard.loadDashboard();
   });
@@ -164,6 +175,7 @@ export function useSemiRiskApp() {
   onUnmounted(() => {
     clearInterval(clock);
     document.removeEventListener('keydown', keyHandler);
+    window.removeEventListener('semirisk-auth-expired', authExpiredHandler);
   });
 
   return {

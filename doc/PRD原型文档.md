@@ -16,13 +16,20 @@
 ### 3.1 登录视图 `semirisk-ui`
 
 - 输入账号、密码，支持记住密码
+- 系统不提供默认账号密码；首个注册成功的账号自动成为 `ADMIN`，后续注册账号默认为 `OPERATOR`
+- 注册与登录必须通过后端 API 校验，账号、密码、邮箱、昵称均做后端二次校验
+- 注册信息写入 MySQL `system_user`，密码使用 PBKDF2 哈希保存，不允许明文落库
+- 登录和注册成功后返回 Bearer Token，不使用 Cookie 登录态
+- Token 默认 15 分钟有效；15 分钟内刷新任意页面需恢复当前页面并重新拉取当前页面数据，15 分钟后刷新任意页面必须回到首页重新登录
+- 正常路由跳转只复用当前 Token，不要求重新登录
+- 所有写接口请求必须先获取 `/api/auth/csrf` 并携带 `X-CSRF-Token`
 - 登录按钮调用 `/api/auth/login`
 - 5 分钟内失败 5 次锁定 30 分钟
 - 忘记密码跳转 `forgot-password.html`
 
 ### 3.2 忘记密码
 
-- 输入企业邮箱
+- 输入注册 QQ 邮箱
 - 调用 `/api/auth/password-reset/request`
 - 返回 15 分钟有效的一次性 Token
 
@@ -42,7 +49,7 @@
 - 上传调用 `/api/data/uploads`
 - AI 清洗日志通过 `/api/data/uploads/logs` SSE 推送
 - 解析按钮调用 `/api/data/uploads/{id}/parse`
-- 数据服务每天 00:00 刷新本日爬虫记录
+- 数据服务、风险测算、AI 报告占位和 Gateway 聚合兜底均每 10 分钟刷新一次
 
 ### 3.5 AI 风险深度分析 `risk-analysis.html`
 
@@ -91,8 +98,8 @@
 ### 3.11 知识库 `knowledge-base.html`
 
 - Ctrl+K 聚焦搜索框
-- 检索调用 `/api/knowledge/search`
-- AI 问答调用 `/api/knowledge/ask`
+- 检索调用 `/api/knowledge/search`，优先使用 Elasticsearch 索引 `semirisk_knowledge`
+- AI 问答调用 `/api/knowledge/ask`，优先基于 ES 检索引用生成回答
 - 问答结果必须展示回答、检索链路、引用原文和模型状态
 - 标签点击触发一键检索
 - 预览调用 `/api/knowledge/preview/{id}`
@@ -117,5 +124,9 @@
 - `./script/start-ui.sh` 可启动前端
 - 登录页、上传页、告警页、报告页、系统管理页至少各有一个真实可验证交互
 - 中间件配置默认指向 `192.168.101.130`
+- 登录/注册数据必须持久化到 MySQL；数据库不可达时只允许本地兜底演示，不作为生产路径
+- 系统不得提供默认账号密码，用户必须通过注册创建首个管理员账号
+- POST/PUT/DELETE 等写接口必须启用 CSRF Token 校验
+- 后端必须执行输入清洗和参数校验，防止前端绕过校验
 - 风险类页面优先使用公开源爬虫数据；公开源不可达时显示待采集或采集失败，不允许伪造实时事件
 - 告警忽略后默认列表和计数器不再重复出现该告警

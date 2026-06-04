@@ -1,6 +1,10 @@
 package com.semirisk.api;
 
+import com.jayway.jsonpath.JsonPath;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -13,14 +17,19 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:mysql://127.0.0.1:1/semirisk",
+        "spring.datasource.hikari.connection-timeout=250"
+})
 @AutoConfigureMockMvc
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class SemiRiskAuthApiTests {
 
     @Autowired
     private MockMvc mockMvc;
 
     @Test
+    @Order(1)
     void publicDashboardCanBeReadWithoutLogin() throws Exception {
         mockMvc.perform(get("/api/dashboard/overview"))
                 .andExpect(status().isOk())
@@ -28,6 +37,7 @@ class SemiRiskAuthApiTests {
     }
 
     @Test
+    @Order(2)
     void protectedAlertsRequiresLogin() throws Exception {
         mockMvc.perform(get("/api/alerts"))
                 .andExpect(status().isUnauthorized())
@@ -35,25 +45,61 @@ class SemiRiskAuthApiTests {
     }
 
     @Test
-    void loginCreatesSessionAndUnlocksProtectedApi() throws Exception {
-        MvcResult login = mockMvc.perform(post("/api/auth/login")
+    @Order(3)
+    void unsafeRequestWithoutCsrfIsRejected() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"admin\",\"password\":\"password\"}"))
+                        .content("{\"username\":\"csrf_user\",\"email\":\"123456@qq.com\",\"displayName\":\"测试用户\",\"password\":\"Password123\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("CSRF Token 无效或缺失"));
+    }
+
+    @Test
+    @Order(4)
+    void registerCreatesTokenAndUnlocksProtectedApi() throws Exception {
+        Csrf csrf = csrf();
+        MvcResult register = mockMvc.perform(post("/api/auth/register")
+                        .header("X-CSRF-Token", csrf.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"first_admin\",\"email\":\"1234567@qq.com\",\"displayName\":\"首个用户\",\"password\":\"Password123\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.user.role").value("ADMIN"))
+                .andExpect(jsonPath("$.data.token").exists())
                 .andReturn();
+        String token = JsonPath.read(register.getResponse().getContentAsString(), "$.data.token");
 
-        mockMvc.perform(get("/api/alerts").session((org.springframework.mock.web.MockHttpSession) login.getRequest().getSession(false)))
+        mockMvc.perform(get("/api/alerts").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
     }
 
     @Test
+    @Order(5)
     void wrongPasswordReturnsUnauthorized() throws Exception {
-        mockMvc.perform(post("/api/auth/login")
+        Csrf registerCsrf = csrf();
+        mockMvc.perform(post("/api/auth/register")
+                        .header("X-CSRF-Token", registerCsrf.token())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"admin\",\"password\":\"wrong\"}"))
+                        .content("{\"username\":\"wrong_password_user\",\"email\":\"2345678@qq.com\",\"displayName\":\"错误密码用户\",\"password\":\"Password123\"}"))
+                .andExpect(status().isOk());
+
+        Csrf loginCsrf = csrf();
+        mockMvc.perform(post("/api/auth/login")
+                        .header("X-CSRF-Token", loginCsrf.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"wrong_password_user\",\"password\":\"WrongPassword123\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.success").value(false));
+    }
+
+    private Csrf csrf() throws Exception {
+        MvcResult result = mockMvc.perform(get("/api/auth/csrf"))
+                .andExpect(status().isOk())
+                .andReturn();
+        String token = JsonPath.read(result.getResponse().getContentAsString(), "$.data.token");
+        return new Csrf(token);
+    }
+
+    private record Csrf(String token) {
     }
 }

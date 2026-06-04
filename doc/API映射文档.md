@@ -15,15 +15,28 @@
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
-| index.html | POST | `/api/auth/login` | 账号密码登录，失败计数与锁定 |
-| Vue 首页 | POST | `/api/auth/register` | 注册账号，默认运营人员角色；邮箱必须为 QQ 邮箱 |
-| Vue 应用 | GET | `/api/auth/me` | 查询当前登录态 |
-| Vue 应用 | GET | `/api/auth/permissions/{module}` | 校验模块权限 |
-| index.html | POST | `/api/auth/logout` | 注销 Session |
+| Vue 应用 | GET | `/api/auth/csrf` | 获取无 Cookie 签名 CSRF Token |
+| Vue 应用 | POST | `/api/auth/login` | 账号密码登录，返回 Bearer Token、`expiresAt`、用户与权限；Token 默认 15 分钟有效 |
+| Vue 首页 | POST | `/api/auth/register` | 注册账号并落库到 MySQL；首个注册账号为 `ADMIN`，后续默认为 `OPERATOR`；邮箱必须为 QQ 邮箱 |
+| Vue 应用 | GET | `/api/auth/me` | 基于 `Authorization: Bearer <token>` 查询当前登录态 |
+| Vue 应用 | GET | `/api/auth/permissions/{module}` | 基于 Bearer Token 校验模块权限 |
+| Vue 应用 | POST | `/api/auth/logout` | 撤销当前 Bearer Token |
 | forgot-password.html | POST | `/api/auth/password-reset/request` | 发送重置链接，Token 15 分钟有效 |
 
 Vue 前端默认通过 Vite 代理访问 Gateway：`http://localhost:5173/api -> http://localhost:8080/api`。
-未登录只允许访问 `/api/dashboard/overview` 和 `/api/risk-score/today`。
+未登录只允许访问 `/api/auth/**`、`/api/dashboard/overview` 和 `/api/risk-score/today`。
+
+所有 POST、PUT、DELETE 请求必须携带：
+
+```http
+X-CSRF-Token: <GET /api/auth/csrf 返回的 token>
+```
+
+登录后访问受保护接口必须携带：
+
+```http
+Authorization: Bearer <login/register 返回的 token>
+```
 
 ## 3. 首页看板
 
@@ -76,8 +89,8 @@ Vue 前端默认通过 Vite 代理访问 Gateway：`http://localhost:5173/api ->
 |---|---|---|---|
 | gis-map.html | GET | `/api/gis/map?layers=heatmap,suppliers,ports,routes` | GIS 图层、点位与多条公开源路径数据 |
 | enterprise-profile.html | GET | `/api/enterprises/profile?keyword=...` | 企业画像搜索重载 |
-| knowledge-base.html | GET | `/api/knowledge/search?query=...` | RAG 检索 |
-| knowledge-base.html | POST | `/api/knowledge/ask` | AI 知识库智能体问答，返回回答、检索链路和引用 |
+| knowledge-base.html | GET | `/api/knowledge/search?query=...` | RAG 检索，优先查询 Elasticsearch 索引 `semirisk_knowledge`，ES 不可用时回退公开源内存记录 |
+| knowledge-base.html | POST | `/api/knowledge/ask` | AI 知识库智能体问答，优先使用 Elasticsearch 检索结果生成回答、检索链路和引用 |
 | knowledge-base.html | GET | `/api/knowledge/preview/{id}` | 文档在线预览 |
 
 ## 9. 系统管理
@@ -110,11 +123,28 @@ Vue 前端默认通过 Vite 代理访问 Gateway：`http://localhost:5173/api ->
 | semirisk-report-service:8085 | GET | `/api/reports/jobs/{id}` | 查询报告任务进度 |
 | semirisk-report-service:8085 | GET | `/api/reports/{id}/download` | 下载 PDF、DOCX、PPTX 报告 |
 
-## 12. AI 知识库问答请求示例
+## 11. 权限矩阵
+
+| 角色 | 可访问模块 |
+|---|---|
+| `ADMIN` | dashboard、upload、analysis、detail、report、alerts、gis、enterprise、knowledge、system |
+| `ANALYST` | dashboard、analysis、detail、report、alerts、gis、enterprise、knowledge |
+| `OPERATOR` | dashboard、upload、alerts、gis、enterprise、knowledge |
+
+## 12. 运维与文档 API
+
+| 服务 | 方法 | API | 说明 |
+|---|---|---|---|
+| semirisk-gateway:8080 | GET | `/swagger-ui.html` | OpenAPI 文档页面 |
+| semirisk-gateway:8080 | GET | `/v3/api-docs` | OpenAPI JSON |
+
+## 13. AI 知识库问答请求示例
 
 ```http
 POST /api/knowledge/ask
 Content-Type: application/json
+Authorization: Bearer <token>
+X-CSRF-Token: <csrf-token>
 
 {
   "question": "当前半导体供应链最需要关注什么风险？"
@@ -128,9 +158,16 @@ Content-Type: application/json
 - `citations`：引用原文标题、来源、URL、风险分
 - `modelStatus`：当前是否已配置 DeepSeek API Key
 
-## 11. 运维与文档 API
+## 14. Elasticsearch 知识库检索
 
-| 服务 | 方法 | API | 说明 |
-|---|---|---|---|
-| semirisk-gateway:8080 | GET | `/swagger-ui.html` | OpenAPI 文档页面 |
-| semirisk-gateway:8080 | GET | `/v3/api-docs` | OpenAPI JSON |
+Gateway 在同步公开爬虫记录时会将 `status=OK` 的记录写入 ES：
+
+- 默认地址：`SEMIRISK_ES_URL=http://192.168.101.130:9200`
+- 默认索引：`SEMIRISK_ES_INDEX=semirisk_knowledge`
+- 索引字段：`id`、`title`、`content`、`source`、`sourceUrl`、`dimension`、`riskScore`、`fetchedAt`
+
+`/api/knowledge/search` 返回：
+
+- `searchEngine`：`Elasticsearch` 或 `LocalPublicCrawler`
+- `results[].searchScore`：ES 原始 `_score`
+- `results[].similarity`：前端展示用相关度值

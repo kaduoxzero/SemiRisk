@@ -42,7 +42,7 @@ public class CrawlerService {
         refreshDailyRecords();
     }
 
-    @Scheduled(cron = "0 0 0 * * *")
+    @Scheduled(cron = "0 */10 * * * *")
     public void refreshDailyRecords() {
         List<CrawlerRecord> records = new ArrayList<>();
         for (SourceSpec source : sources) {

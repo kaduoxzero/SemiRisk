@@ -2,6 +2,8 @@ package com.semirisk.config;
 
 import com.semirisk.api.ApiResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.semirisk.security.CsrfTokenService;
+import com.semirisk.security.TokenAuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.ConstraintViolationException;
@@ -18,10 +20,16 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @org.springframework.context.annotation.Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    private final ObjectMapper objectMapper;
+    private static final String CSRF_HEADER = "X-CSRF-Token";
 
-    public WebConfig(ObjectMapper objectMapper) {
+    private final ObjectMapper objectMapper;
+    private final CsrfTokenService csrfTokenService;
+    private final TokenAuthService tokenAuthService;
+
+    public WebConfig(ObjectMapper objectMapper, CsrfTokenService csrfTokenService, TokenAuthService tokenAuthService) {
         this.objectMapper = objectMapper;
+        this.csrfTokenService = csrfTokenService;
+        this.tokenAuthService = tokenAuthService;
     }
 
     @Override
@@ -44,22 +52,43 @@ public class WebConfig implements WebMvcConfigurer {
                     @Override
                     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
                         String uri = request.getRequestURI();
-                        if ("OPTIONS".equalsIgnoreCase(request.getMethod())
-                                || uri.startsWith("/api/auth/")
+                        String method = request.getMethod();
+                        if ("OPTIONS".equalsIgnoreCase(method)) {
+                            return true;
+                        }
+                        if (uri.startsWith("/api/") && requiresCsrf(method) && !csrfValid(request)) {
+                            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                            response.setContentType("application/json;charset=UTF-8");
+                            response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail("CSRF Token 无效或缺失")));
+                            return false;
+                        }
+                        if (uri.startsWith("/api/auth/")
                                 || uri.equals("/api/dashboard/overview")
                                 || uri.equals("/api/risk-score/today")) {
                             return true;
                         }
-                        if (uri.startsWith("/api/") && request.getSession(false) == null) {
+                        var principal = tokenAuthService.validate(request.getHeader("Authorization"));
+                        if (uri.startsWith("/api/") && principal.isEmpty()) {
                             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                             response.setContentType("application/json;charset=UTF-8");
                             response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail("请先登录")));
                             return false;
                         }
+                        principal.ifPresent(value -> request.setAttribute("authPrincipal", value));
                         return true;
                     }
                 })
                 .addPathPatterns("/api/**");
+    }
+
+    private boolean requiresCsrf(String method) {
+        return !"GET".equalsIgnoreCase(method)
+                && !"HEAD".equalsIgnoreCase(method)
+                && !"OPTIONS".equalsIgnoreCase(method);
+    }
+
+    private boolean csrfValid(HttpServletRequest request) {
+        return csrfTokenService.validate(request.getHeader(CSRF_HEADER));
     }
 
     @RestControllerAdvice

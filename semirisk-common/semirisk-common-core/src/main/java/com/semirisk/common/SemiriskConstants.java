@@ -2,7 +2,7 @@ package com.semirisk.common;
 
 public final class SemiriskConstants {
 
-    public static final String DEFAULT_MIDDLEWARE_HOST = "192.168.101.128";
+    public static final String DEFAULT_MIDDLEWARE_HOST = "192.168.101.130";
     public static final int GATEWAY_PORT = 8080;
     public static final int DATA_SERVICE_PORT = 8081;
     public static final int RISK_SERVICE_PORT = 8082;
@@ -16,4 +16,3 @@ public final class SemiriskConstants {
     private SemiriskConstants() {
     }
 }
-

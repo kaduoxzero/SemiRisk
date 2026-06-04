@@ -22,8 +22,18 @@ export const router = createRouter({
 router.beforeEach(to => {
   const module = to.meta.module;
   if (!module || module === 'dashboard') return true;
-  const session = JSON.parse(localStorage.getItem('semiriskUser') || 'null');
+  const session = readSession();
   if (!session) return '/dashboard';
   if (Array.isArray(session.modules) && !session.modules.includes(module)) return '/dashboard';
   return true;
 });
+
+function readSession() {
+  const session = JSON.parse(localStorage.getItem('semiriskUser') || 'null');
+  if (!session?.token || !session?.expiresAt) return session;
+  if (new Date(session.expiresAt).getTime() <= Date.now()) {
+    localStorage.removeItem('semiriskUser');
+    return null;
+  }
+  return session;
+}

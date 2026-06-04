@@ -78,9 +78,13 @@ CREATE TABLE IF NOT EXISTS report_job (
 CREATE TABLE IF NOT EXISTS system_user (
     id VARCHAR(64) PRIMARY KEY,
     username VARCHAR(128) NOT NULL,
+    display_name VARCHAR(128) NOT NULL,
     email VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NULL,
     role VARCHAR(64) NOT NULL,
     status VARCHAR(32) NOT NULL,
+    last_login_at DATETIME NULL,
+    password_updated_at DATETIME NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_system_user_username(username),
@@ -89,6 +93,20 @@ CREATE TABLE IF NOT EXISTS system_user (
     INDEX idx_system_user_status(status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+ALTER TABLE system_user
+    ADD COLUMN IF NOT EXISTS display_name VARCHAR(128) NOT NULL DEFAULT '' AFTER username,
+    ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL AFTER email,
+    ADD COLUMN IF NOT EXISTS last_login_at DATETIME NULL AFTER status,
+    ADD COLUMN IF NOT EXISTS password_updated_at DATETIME NULL AFTER last_login_at;
+
+UPDATE system_user
+SET display_name = username
+WHERE display_name = '';
+
+DELETE FROM system_user
+WHERE username IN ('admin', 'analyst', 'ops')
+  AND (password_hash IS NULL OR password_hash = '');
+
 CREATE TABLE IF NOT EXISTS system_audit_log (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     level VARCHAR(16) NOT NULL,
@@ -96,35 +114,3 @@ CREATE TABLE IF NOT EXISTS system_audit_log (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_system_audit_log_level_time(level, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-INSERT INTO risk_alert(id, alert_time, level, title, source, status, target)
-VALUES
-('RA-20260603-001', NOW() - INTERVAL 40 MINUTE, '高危', '新加坡港拥堵影响封测物料交付', 'GIS Agent', '未处理', 'risk-detail.html'),
-('RA-20260603-002', NOW() - INTERVAL 2 HOUR, '中危', '稀有金属报价连续三日上行', 'Price Agent', '处理中', 'risk-detail.html'),
-('RA-20260603-003', NOW() - INTERVAL 5 HOUR, '低危', '供应商工商信息发生变更', 'Compliance Agent', '未处理', 'enterprise-profile.html')
-ON DUPLICATE KEY UPDATE
-alert_time = VALUES(alert_time),
-level = VALUES(level),
-title = VALUES(title),
-source = VALUES(source),
-status = VALUES(status),
-target = VALUES(target);
-
-INSERT INTO enterprise_profile(id, name, credit_code, risk_score, credit_level)
-VALUES
-('EP-001', '安芯半导体供应链有限公司', '91310000MA1SEMIR01', 72, 'A'),
-('EP-002', '华南晶圆材料有限公司', '91440000MA1SEMIR02', 61, 'A-')
-ON DUPLICATE KEY UPDATE
-name = VALUES(name),
-risk_score = VALUES(risk_score),
-credit_level = VALUES(credit_level);
-
-INSERT INTO system_user(id, username, email, role, status)
-VALUES
-('U1001', 'admin', 'admin@risk.com', '管理员', '启用'),
-('U1002', 'analyst', 'analyst@risk.com', '分析师', '启用'),
-('U1003', 'ops', 'ops@risk.com', '运营人员', '禁用')
-ON DUPLICATE KEY UPDATE
-email = VALUES(email),
-role = VALUES(role),
-status = VALUES(status);
