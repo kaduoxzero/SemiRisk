@@ -1,9 +1,12 @@
 package com.semirisk.api;
 
 import com.semirisk.service.SemiRiskStore;
+import com.semirisk.common.ReportFileFactory;
+import com.semirisk.common.ReportFileFactory.ReportFile;
 import com.semirisk.common.RolePermissionPolicy;
 import com.semirisk.repository.PreparedRiskRepository;
 import com.semirisk.security.RedisLoginGuardService;
+import com.semirisk.service.PublicCrawlerClient;
 import com.semirisk.service.SemiRiskStore.ReportJob;
 import com.semirisk.service.SemiRiskStore.SystemUser;
 import com.semirisk.service.SemiRiskStore.UploadTask;
@@ -34,6 +37,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -45,12 +49,14 @@ import java.util.concurrent.Executors;
 public class SemiRiskController {
 
     private final SemiRiskStore store;
+    private final PublicCrawlerClient publicCrawlerClient;
     private final PreparedRiskRepository preparedRiskRepository;
     private final RedisLoginGuardService redisLoginGuardService;
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
 
-    public SemiRiskController(SemiRiskStore store, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService) {
+    public SemiRiskController(SemiRiskStore store, PublicCrawlerClient publicCrawlerClient, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService) {
         this.store = store;
+        this.publicCrawlerClient = publicCrawlerClient;
         this.preparedRiskRepository = preparedRiskRepository;
         this.redisLoginGuardService = redisLoginGuardService;
     }
@@ -89,7 +95,10 @@ public class SemiRiskController {
 
     @PostMapping("/auth/register")
     public ResponseEntity<ApiResponse<Map<String, Object>>> register(@Valid @RequestBody RegisterRequest request, HttpSession session) {
-        UserAccount account = store.register(request.username(), request.password(), request.displayName());
+        if (!request.email().toLowerCase(Locale.ROOT).matches("^[1-9][0-9]{4,11}@qq\\.com$")) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("注册邮箱必须为 QQ 邮箱，例如 123456@qq.com"));
+        }
+        UserAccount account = store.register(request.username(), request.password(), request.displayName(), request.email());
         session.setAttribute("principal", account.username());
         session.setAttribute("role", account.role());
         Map<String, Object> body = new HashMap<>();
@@ -141,6 +150,7 @@ public class SemiRiskController {
 
     @GetMapping("/dashboard/overview")
     public ApiResponse<Map<String, Object>> dashboard() {
+        syncPublicCrawlerRecords();
         return ApiResponse.ok(store.dashboard());
     }
 
@@ -218,11 +228,13 @@ public class SemiRiskController {
 
     @GetMapping("/risk/analysis")
     public ApiResponse<Map<String, Object>> riskAnalysis(@RequestParam(defaultValue = "24h") String window) {
+        syncPublicCrawlerRecords();
         return ApiResponse.ok(store.riskAnalysis(window));
     }
 
     @GetMapping("/risk/events/{id}")
     public ApiResponse<Map<String, Object>> riskDetail(@PathVariable String id) {
+        syncPublicCrawlerRecords();
         return ApiResponse.ok(store.riskDetail(id));
     }
 
@@ -294,17 +306,29 @@ public class SemiRiskController {
         return ApiResponse.fail("报告任务不存在");
     }
 
-    @GetMapping(value = "/reports/{id}/download", produces = "text/plain;charset=UTF-8")
-    public ResponseEntity<String> downloadReport(@PathVariable String id) {
-        String report = """
-                SemiRisk AI 风险报告
-                报告编号：%s
-                结论：当前主要风险为物流中断与原材料价格波动叠加。
-                建议：启用备用仓、询价现货供应商、上调安全库存阈值。
-                """.formatted(id);
+    @GetMapping("/reports/{id}/download")
+    public ResponseEntity<byte[]> downloadReport(@PathVariable String id) {
+        syncPublicCrawlerRecords();
+        ReportJob job = store.reportJob(id).orElse(null);
+        Map<String, Object> persisted = Map.of();
+        if (job == null) {
+            try {
+                persisted = preparedRiskRepository.findReportJob(id).stream().findFirst().orElse(Map.of());
+            } catch (Exception ignored) {
+                // Local fallback keeps the project runnable before VM middleware is connected.
+            }
+        }
+        String template = job == null ? String.valueOf(persisted.getOrDefault("template", "risk-assessment")) : job.template();
+        String language = job == null ? String.valueOf(persisted.getOrDefault("language", "中文")) : job.language();
+        String format = job == null ? String.valueOf(persisted.getOrDefault("format", "PDF")) : job.format();
+        List<String> findings = store.dailyRiskSnapshot().signals().stream()
+                .map(signal -> signal.source() + "：" + signal.title())
+                .toList();
+        ReportFile report = ReportFileFactory.build(id, template, language, format, findings);
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + id + "-report.txt")
-                .body(report);
+                .contentType(MediaType.parseMediaType(report.contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + report.filename() + "\"")
+                .body(report.body());
     }
 
     @GetMapping("/alerts")
@@ -312,7 +336,15 @@ public class SemiRiskController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String level,
             @RequestParam(required = false) String status) {
+        syncPublicCrawlerRecords();
         String kw = keyword == null ? "" : keyword.trim();
+        List<SemiRiskStore.RiskAlert> publicAlerts = filterAlerts(store.publicSignalAlerts(), kw, level, status);
+        if (!publicAlerts.isEmpty()) {
+            return ApiResponse.ok((List<?>) publicAlerts);
+        }
+        if (!store.dailyRiskSnapshot().signals().isEmpty() || "待采集".equals(store.dailyRiskSnapshot().level())) {
+            return ApiResponse.ok(List.of());
+        }
         try {
             List<Map<String, Object>> rows = preparedRiskRepository.findAlerts(kw.isBlank() ? null : kw, blankToNull(level), blankToNull(status), 100);
             if (!rows.isEmpty()) {
@@ -321,22 +353,34 @@ public class SemiRiskController {
         } catch (Exception ignored) {
             // Local fallback keeps the project runnable before VM middleware is connected.
         }
-        List<SemiRiskStore.RiskAlert> filtered = store.alerts().stream()
-                .filter(alert -> kw.isBlank() || alert.title().contains(kw) || alert.source().contains(kw))
+        List<SemiRiskStore.RiskAlert> filtered = filterAlerts(store.alerts(), kw, level, status);
+        return ApiResponse.ok((List<?>) filtered);
+    }
+
+    private List<SemiRiskStore.RiskAlert> filterAlerts(List<SemiRiskStore.RiskAlert> alerts, String keyword, String level, String status) {
+        return alerts.stream()
+                .filter(alert -> keyword == null || keyword.isBlank() || alert.title().contains(keyword) || alert.source().contains(keyword))
                 .filter(alert -> level == null || level.isBlank() || alert.level().equals(level))
                 .filter(alert -> status == null || status.isBlank() || alert.status().equals(status))
                 .toList();
-        return ApiResponse.ok((List<?>) filtered);
     }
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
     }
 
+    private void syncPublicCrawlerRecords() {
+        List<SemiRiskStore.CrawlerSignal> records = publicCrawlerClient.today();
+        store.refreshDailyRiskRecords(records);
+    }
+
     @GetMapping("/alerts/counts")
     public ApiResponse<Map<String, Long>> alertCounts() {
+        syncPublicCrawlerRecords();
         Map<String, Long> counts = new HashMap<>();
-        store.alerts().stream().filter(alert -> !"已忽略".equals(alert.status())).forEach(alert -> counts.merge(alert.level(), 1L, Long::sum));
+        store.publicSignalAlerts().stream()
+                .filter(alert -> !"已忽略".equals(alert.status()))
+                .forEach(alert -> counts.merge(alert.level(), 1L, Long::sum));
         return ApiResponse.ok(counts);
     }
 
@@ -366,16 +410,19 @@ public class SemiRiskController {
 
     @GetMapping("/gis/map")
     public ApiResponse<Map<String, Object>> gis(@RequestParam(required = false) String layers) {
+        syncPublicCrawlerRecords();
         return ApiResponse.ok(store.gis(layers));
     }
 
     @GetMapping("/enterprises/profile")
     public ApiResponse<Map<String, Object>> enterprise(@RequestParam(required = false) String keyword) {
+        syncPublicCrawlerRecords();
         return ApiResponse.ok(store.enterprise(keyword));
     }
 
     @GetMapping("/knowledge/search")
     public ApiResponse<Map<String, Object>> knowledge(@RequestParam(required = false) String query) {
+        syncPublicCrawlerRecords();
         return ApiResponse.ok(store.knowledge(query));
     }
 
@@ -470,12 +517,13 @@ public class SemiRiskController {
 
     @GetMapping("/risk-score/today")
     public ApiResponse<SemiRiskStore.DailyRiskSnapshot> todayRiskScore() {
+        syncPublicCrawlerRecords();
         return ApiResponse.ok(store.dailyRiskSnapshot());
     }
 
     @PostMapping("/risk-score/recalculate")
     public ApiResponse<SemiRiskStore.DailyRiskSnapshot> recalculateRiskScore() {
-        store.refreshDailyRiskRecords();
+        syncPublicCrawlerRecords();
         return ApiResponse.ok("AI 风险自动测算完成", store.dailyRiskSnapshot());
     }
 
@@ -492,7 +540,7 @@ public class SemiRiskController {
     public record LoginRequest(@NotBlank String username, @NotBlank String password, boolean rememberMe, String captchaToken) {
     }
 
-    public record RegisterRequest(@NotBlank String username, @NotBlank String password, @NotBlank String displayName) {
+    public record RegisterRequest(@NotBlank String username, @NotBlank @Email String email, @NotBlank String password, @NotBlank String displayName) {
     }
 
     public record PasswordResetRequest(@NotBlank @Email String email) {

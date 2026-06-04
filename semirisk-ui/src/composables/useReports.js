@@ -13,8 +13,16 @@ export function useReports(state, notify) {
   async function pollReport(id) {
     state.reportJob = await reportApi.job(id);
     if (state.reportJob.progress < 100) setTimeout(() => pollReport(id), 900);
-    else notify('报告已生成，可通过后端下载接口获取');
+    else notify('报告已生成，可下载对应格式文件');
   }
 
-  return { loadReportTemplates, startReport };
+  function downloadReport() {
+    if (!state.reportJob?.downloadUrl) {
+      notify('报告尚未生成完成');
+      return;
+    }
+    window.location.href = state.reportJob.downloadUrl;
+  }
+
+  return { loadReportTemplates, startReport, downloadReport };
 }

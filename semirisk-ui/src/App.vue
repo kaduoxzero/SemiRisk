@@ -5,9 +5,10 @@
     :nav-items="allowedNavItems"
     :now="state.now"
     :session="state.session"
-    @auth-mode="state.authMode = $event"
+    @auth-mode="actions.setAuthMode"
     @change-view="actions.setView"
     @logout="actions.logout"
+    @switch-account="actions.switchAccount"
   >
     <component :is="currentViewComponent" :state="state" :actions="actions" />
   </AppShell>

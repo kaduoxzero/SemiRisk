@@ -19,15 +19,16 @@ export function useSemiRiskApp() {
   const router = useRouter();
   const sessionStore = useSessionStore();
   const initialView = String(route.meta.module || route.name || 'dashboard');
+  const initialAuthMode = String(route.meta.authMode || 'login');
 
   const state = reactive({
     view: initialView,
     now: new Date().toLocaleString('zh-CN', { hour12: false }),
     toast: '',
     session: sessionStore.session,
-    authMode: 'login',
+    authMode: initialAuthMode,
     loginForm: { username: 'admin', password: 'password', rememberMe: true },
-    registerForm: { username: '', password: '', displayName: '' },
+    registerForm: { username: '', email: '', password: '', displayName: '' },
     dashboard: {},
     uploads: [],
     logs: [],
@@ -99,9 +100,20 @@ export function useSemiRiskApp() {
     if (route.name !== view) router.push(`/${view}`);
   }
 
+  function setAuthMode(mode) {
+    state.authMode = mode === 'register' ? 'register' : 'login';
+    const target = state.authMode === 'register' ? '/register' : '/login';
+    if (route.path !== target) router.push(target);
+  }
+
   function openRisk(id) {
     state.view = 'detail';
     risk.loadRiskDetail(id);
+  }
+
+  async function switchAccount() {
+    await auth.logout();
+    setAuthMode('login');
   }
 
   watch(() => state.view, async key => {
@@ -116,6 +128,10 @@ export function useSemiRiskApp() {
     if (module && module !== state.view) {
       setView(String(module));
     }
+  });
+
+  watch(() => route.meta.authMode, mode => {
+    if (mode) state.authMode = String(mode);
   });
 
   onMounted(async () => {
@@ -162,7 +178,9 @@ export function useSemiRiskApp() {
       ...knowledge,
       ...system,
       openRisk,
-      setView
+      switchAccount,
+      setView,
+      setAuthMode
     }
   };
 }

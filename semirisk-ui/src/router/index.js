@@ -3,6 +3,8 @@ import { navItems } from '../constants/navigation';
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
+  { path: '/login', name: 'login', component: { template: '<span />' }, meta: { module: 'dashboard', authMode: 'login', title: '登录' } },
+  { path: '/register', name: 'register', component: { template: '<span />' }, meta: { module: 'dashboard', authMode: 'register', title: '注册' } },
   ...navItems.map(item => ({
     path: `/${item.key}`,
     name: item.key,

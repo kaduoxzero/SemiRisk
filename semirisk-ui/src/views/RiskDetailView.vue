@@ -6,6 +6,7 @@
       <p>类型：{{ state.riskDetail.type }}</p>
       <p>状态：{{ state.riskDetail.status }}</p>
       <p>预计周损失：{{ state.riskDetail.weeklyLoss }}</p>
+      <p v-if="state.riskDetail.sourceUrl"><a class="text-link" :href="state.riskDetail.sourceUrl" target="_blank" rel="noreferrer">查看公开源原文</a></p>
       <button class="btn" @click="actions.assignRisk">指派负责人</button>
       <button class="btn secondary" @click="actions.setView('report')">生成处置报告</button>
     </div>

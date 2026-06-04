@@ -12,6 +12,19 @@
           {{ item.label }}
         </button>
       </nav>
+      <div class="sidebar-footer">
+        <template v-if="session">
+          <div class="account-name">{{ session.displayName || session.username }}</div>
+          <div class="account-role">{{ session.role }} · {{ session.username }}</div>
+          <button class="btn secondary full" @click="$emit('switch-account')">切换账户</button>
+          <button class="btn danger full" @click="$emit('logout')">退出登录</button>
+        </template>
+        <template v-else>
+          <div class="account-role">未登录，仅开放首页风险总览</div>
+          <button class="btn full" @click="$emit('auth-mode', 'login')">登录</button>
+          <button class="btn secondary full" @click="$emit('auth-mode', 'register')">注册</button>
+        </template>
+      </div>
     </aside>
 
     <section class="main">
@@ -44,5 +57,5 @@ defineProps({
   session: { type: Object, default: null }
 });
 
-defineEmits(['auth-mode', 'change-view', 'logout']);
+defineEmits(['auth-mode', 'change-view', 'logout', 'switch-account']);
 </script>

@@ -23,6 +23,9 @@
               <button class="btn danger" @click="actions.ignoreAlert(alert.id)">忽略</button>
             </td>
           </tr>
+          <tr v-if="!state.alerts.length">
+            <td colspan="6" class="muted">暂无公开源告警，请确认 data-service 已完成公开网站采集。</td>
+          </tr>
         </tbody>
       </table>
     </div>

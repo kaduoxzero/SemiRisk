@@ -12,6 +12,10 @@ export function useAuth(state, allowedNavItems, notify, loadDashboard, setSessio
   }
 
   async function register() {
+    if (!/^[1-9][0-9]{4,11}@qq\.com$/i.test(state.registerForm.email || '')) {
+      notify('请使用 QQ 邮箱注册，例如 123456@qq.com');
+      return;
+    }
     const data = await authApi.register(state.registerForm);
     setSession(data.user);
     state.authMode = 'login';

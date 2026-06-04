@@ -61,16 +61,26 @@ public class SemiRiskStore {
 
     @Scheduled(cron = "0 0 0 * * *")
     public void refreshDailyRiskRecords() {
-        List<CrawlerSignal> signals = List.of(
-                crawlerSignal("Reuters Commodity Feed", "稀有金属价格波动扩大，采购成本承压", "原材料", 76),
-                crawlerSignal("Freight Waves", "东南亚港口等待时间高于历史均值", "物流", 84),
-                crawlerSignal("Policy Monitor", "出口管制政策出现新解释口径", "合规", 69)
-        );
-        int score = signals.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(65);
+        refreshDailyRiskRecords(List.of());
+    }
+
+    public void refreshDailyRiskRecords(List<CrawlerSignal> signals) {
+        List<CrawlerSignal> collected = signals == null ? List.of() : List.copyOf(signals);
+        List<CrawlerSignal> availableSignals = collected.stream()
+                .filter(signal -> "OK".equalsIgnoreCase(signal.status()))
+                .toList();
+        if (availableSignals.isEmpty()) {
+            dailyRiskSnapshot = new DailyRiskSnapshot(0, "待采集",
+                    "公开源暂未成功采集，本日风险测算等待 data-service 获取公开网站数据后刷新。",
+                    collected, Instant.now());
+            auditLogs.add("[WARN] daily crawler refresh completed without public source records");
+            return;
+        }
+        int score = availableSignals.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(0);
         String level = score >= 80 ? "高危" : score >= 60 ? "中危" : "低危";
         dailyRiskSnapshot = new DailyRiskSnapshot(score, level,
-                "AI 自动测算：" + level + "，本日风险分 " + score + "，由爬虫情报与历史基线共同计算。",
-                signals, Instant.now());
+                "AI 自动测算：" + level + "，本日风险分 " + score + "，由公开网站爬虫记录和风险规则共同计算。",
+                collected, Instant.now());
         auditLogs.add("[INFO] daily crawler refresh and AI risk calculation completed score=" + score);
     }
 
@@ -83,13 +93,17 @@ public class SemiRiskStore {
         return Optional.of(account);
     }
 
-    public UserAccount register(String username, String password, String displayName) {
+    public UserAccount register(String username, String password, String displayName, String email) {
         if (users.containsKey(username)) {
             throw new IllegalArgumentException("账号已存在");
         }
+        boolean emailExists = systemUsers.values().stream().anyMatch(user -> user.email().equalsIgnoreCase(email));
+        if (emailExists) {
+            throw new IllegalArgumentException("邮箱已被注册");
+        }
         UserAccount account = new UserAccount(username, password, displayName, SemiriskConstants.ROLE_OPERATOR);
         users.put(username, account);
-        addSystemUser(username, username + "@risk.com", "运营人员");
+        addSystemUser(username, email, "运营人员");
         auditLogs.add("[INFO] public registration completed username=" + username);
         return account;
     }
@@ -143,7 +157,11 @@ public class SemiRiskStore {
     public RiskAlert updateAlertStatus(String id, String status) {
         RiskAlert current = alerts.get(id);
         if (current == null) {
-            throw new IllegalArgumentException("告警不存在");
+            return publicSignalAlerts().stream()
+                    .filter(alert -> alert.id().equals(id))
+                    .findFirst()
+                    .map(alert -> new RiskAlert(alert.id(), alert.time(), alert.level(), alert.title(), alert.source(), status, alert.target()))
+                    .orElseThrow(() -> new IllegalArgumentException("告警不存在"));
         }
         RiskAlert updated = new RiskAlert(current.id(), current.time(), current.level(), current.title(), current.source(), status, current.target());
         alerts.put(id, updated);
@@ -248,104 +266,139 @@ public class SemiRiskStore {
         return List.copyOf(auditLogs);
     }
 
+    public List<RiskAlert> publicSignalAlerts() {
+        return publicAlerts(availableSignals());
+    }
+
     public Map<String, Object> dashboard() {
         DailyRiskSnapshot snapshot = dailyRiskSnapshot;
+        List<CrawlerSignal> availableSignals = availableSignals();
+        long highCount = availableSignals.stream().filter(signal -> signal.riskScore() >= 80).count();
+        long handled = publicSignalAlerts().stream().filter(alert -> "处理中".equals(alert.status()) || "已处理".equals(alert.status())).count();
+        long totalEvents = availableSignals.size();
+        String closureRate = totalEvents == 0 ? "0%" : String.format(Locale.ROOT, "%.1f%%", handled * 100.0 / totalEvents);
         return Map.of(
                 "kpis", List.of(
-                        Map.of("name", "总风险事件数", "value", 1286, "trend", "+12.4%"),
-                        Map.of("name", "今日新增", "value", snapshot.signals().size() * 12 + 1, "trend", "+8"),
-                        Map.of("name", "已处理件数", "value", 914, "trend", "+26"),
-                        Map.of("name", "闭环处理率", "value", "71.1%", "trend", "+3.2%")
+                        Map.of("name", "公开源事件数", "value", availableSignals.size(), "trend", "公开网站"),
+                        Map.of("name", "今日新增", "value", snapshot.signals().size(), "trend", "爬虫记录"),
+                        Map.of("name", "高危信号", "value", highCount, "trend", "规则评分"),
+                        Map.of("name", "闭环处理率", "value", closureRate, "trend", "告警处置")
                 ),
-                "hotspots", List.of(
-                        Map.of("name", "新加坡港", "lon", 103.8, "lat", 1.29, "level", "高危", "score", 91),
-                        Map.of("name", "鹿特丹港", "lon", 4.47, "lat", 51.92, "level", "中危", "score", 68),
-                        Map.of("name", "洛杉矶港", "lon", -118.26, "lat", 33.74, "level", "中危", "score", 64)
-                ),
-                "ranking", alerts().stream().limit(5).toList(),
-                "materials", List.of(
-                        Map.of("name", "锂电池材料", "index", 82),
-                        Map.of("name", "稀有金属", "index", 74),
-                        Map.of("name", "高分子材料", "index", 47)
-                ),
-                "stages", List.of("原材料采集:中危", "生产制造:低危", "仓储物流:高危", "终端销售:低危"),
+                "hotspots", gisPoints(availableSignals).stream().limit(4).toList(),
+                "ranking", publicAlerts(availableSignals).stream().limit(5).toList(),
+                "materials", dimensionScores(availableSignals),
+                "stages", availableSignals.isEmpty()
+                        ? List.of("公开源采集:待采集", "规则评分:待采集", "AI测算:待采集", "处置闭环:待派发")
+                        : List.of("公开源采集:已完成", "规则评分:" + snapshot.level(), "AI测算:" + snapshot.level(), "处置闭环:待派发"),
                 "aiSummary", snapshot.summary(),
                 "dailyRisk", snapshot,
+                "dataMode", availableSignals.isEmpty() ? "WAITING_PUBLIC_SOURCE" : "PUBLIC_CRAWLED",
+                "dataSource", "semirisk-data-service 公开 RSS 采集",
                 "refreshedAt", Instant.now().toString()
         );
     }
 
     public Map<String, Object> riskAnalysis(String window) {
+        DailyRiskSnapshot snapshot = dailyRiskSnapshot;
+        List<CrawlerSignal> availableSignals = availableSignals();
         return Map.of(
                 "window", window,
-                "score", 78,
-                "summary", "罢工、财报下调与海运延迟同时出现，AI 判断物流维度是当前系统性风险主因。",
-                "dimensions", List.of(Map.of("name", "物流", "value", 42), Map.of("name", "财务", "value", 24), Map.of("name", "合规", "value", 19), Map.of("name", "地缘", "value", 15)),
-                "sources", List.of(Map.of("name", "外部新闻", "value", 48), Map.of("name", "财报", "value", 31), Map.of("name", "传感器", "value", 21)),
-                "reasoning", List.of("数据输入: 港口拥堵、交期拉长", "逻辑关联: 关键供应商覆盖率高", "风险结论: 未来 7 天断供概率升高"),
+                "score", snapshot.score(),
+                "summary", snapshot.summary(),
+                "dimensions", dimensionScores(availableSignals),
+                "sources", sourceScores(availableSignals),
+                "reasoning", availableSignals.isEmpty()
+                        ? List.of("数据输入: 公开源暂无成功采集记录", "逻辑关联: 暂停自动推理", "风险结论: 等待下一次爬虫刷新")
+                        : availableSignals.stream().limit(5).map(signal -> "公开源: " + signal.source() + " / " + signal.title()).toList(),
                 "solutions", List.of(
-                        Map.of("name", "启用华南备用仓", "feasibility", 88),
-                        Map.of("name", "切换现货供应商", "feasibility", 76),
-                        Map.of("name", "提升安全库存阈值", "feasibility", 69)
+                        Map.of("name", "人工复核公开源原文", "feasibility", availableSignals.isEmpty() ? 0 : 92),
+                        Map.of("name", "将高危信号转为告警工单", "feasibility", availableSignals.isEmpty() ? 0 : 84),
+                        Map.of("name", "按维度同步采购/物流负责人", "feasibility", availableSignals.isEmpty() ? 0 : 78)
                 )
         );
     }
 
     public Map<String, Object> riskDetail(String id) {
+        Optional<CrawlerSignal> signal = dailyRiskSnapshot.signals().stream().filter(item -> item.id().equals(id)).findFirst();
+        if (signal.isPresent()) {
+            CrawlerSignal current = signal.get();
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("id", current.id());
+            detail.put("type", current.dimension());
+            detail.put("firstSeen", current.fetchedAt().toString());
+            detail.put("status", "待处置");
+            detail.put("scope", current.source() + " 公开源信号");
+            detail.put("weeklyLoss", "需结合 ERP/BOM 数据人工定损");
+            detail.put("timeline", List.of("公开网站采集", "规则风险评分", "AI 摘要生成", "等待负责人处置"));
+            detail.put("path", List.of(current.source(), current.sourceUrl(), "SemiRisk 风险中心"));
+            detail.put("sop", List.of("打开原文链接核验事实", "确认影响物料/供应商范围", "同步责任人并创建处置工单", "更新风险状态"));
+            detail.put("enterprises", List.of(current.source()));
+            detail.put("sourceUrl", current.sourceUrl());
+            return detail;
+        }
         return Map.of(
                 "id", id,
-                "type", "物流中断",
-                "firstSeen", "2026-06-03T08:42:00+08:00",
-                "status", alert(id).map(RiskAlert::status).orElse("处理中"),
-                "scope", "东南亚港口、一级供应商 3 家、二级供应商 9 家",
-                "weeklyLoss", 860000,
-                "timeline", List.of("基准监控", "异常信号捕获", "风险等级上调", "处置策略生成"),
-                "path", List.of("新加坡港", "一级供应商 A", "二级封测厂", "总装线"),
-                "sop", List.of("核查未来 14 天库存", "询价备用供应商", "切换转运路线", "下发处置报告"),
-                "enterprises", List.of("安芯物流", "华南晶圆", "北美封测")
+                "type", "待采集",
+                "firstSeen", "",
+                "status", "未找到公开源记录",
+                "scope", "请先刷新公开源爬虫或从告警列表进入详情",
+                "weeklyLoss", "无公开源记录，无法定损",
+                "timeline", List.of("公开源暂无匹配记录"),
+                "path", List.of(),
+                "sop", List.of("刷新公开源爬虫", "确认 data-service 是否运行", "从公开源告警列表重新进入详情"),
+                "enterprises", List.of()
         );
     }
 
     public Map<String, Object> enterprise(String keyword) {
-        String name = keyword == null || keyword.isBlank() ? "安芯半导体供应链有限公司" : keyword;
+        String name = keyword == null || keyword.isBlank() ? "请输入企业名称后搜索" : keyword;
+        List<CrawlerSignal> relatedSignals = availableSignals().stream()
+                .filter(signal -> keyword == null || keyword.isBlank() || signalMatches(signal, keyword))
+                .toList();
+        int score = relatedSignals.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(0);
         return Map.of(
                 "name", name,
-                "creditCode", "91310000MA1RISK2026",
-                "cooperationYears", 6,
-                "industry", "半导体供应链",
-                "riskScore", 72,
-                "creditLevel", "A",
-                "business", Map.of("legalPerson", "陈启明", "capital", "5000 万人民币", "founded", "2018-04-12", "type", "有限责任公司", "status", "存续"),
-                "radar", List.of(76, 68, 61, 83, 72),
-                "topology", List.of("上游核心晶圆厂", name, "贵司总装", "物流承运方"),
-                "events", List.of("2026-05 财报异常预警", "2025-11 扩产验收成功", "2025-03 交期违约一次")
+                "creditCode", "公开工商数据源未接入",
+                "cooperationYears", "待内部 ERP 同步",
+                "industry", relatedSignals.stream().findFirst().map(CrawlerSignal::dimension).orElse("待公开源确认"),
+                "riskScore", score,
+                "creditLevel", riskLevel(score),
+                "business", Map.of("legalPerson", "待公开工商接口返回", "capital", "待公开工商接口返回", "founded", "待公开工商接口返回", "type", "待公开工商接口返回", "status", "待公开工商接口返回"),
+                "radar", List.of(score, Math.max(0, score - 8), Math.max(0, score - 16), Math.max(0, score - 12), score),
+                "topology", List.of("公开网站信号", name, "SemiRisk 风控工作台"),
+                "events", relatedSignals.stream().limit(6).map(signal -> signal.fetchedAt() + " " + signal.title()).toList()
         );
     }
 
     public Map<String, Object> gis(String layers) {
+        List<CrawlerSignal> availableSignals = availableSignals();
         return Map.of(
                 "layers", layers == null ? "heatmap,suppliers,ports,routes" : layers,
-                "regions", List.of(
-                        Map.of("name", "东南亚", "status", "港口积压升高", "score", 91),
-                        Map.of("name", "北美", "status", "铁路转运延误", "score", 67)
-                ),
-                "points", List.of(
-                        Map.of("name", "新加坡港", "lon", 103.8, "lat", 1.29, "riskIndex", 91, "analysis", "等待泊位时间超过历史均值 37%"),
-                        Map.of("name", "上海港", "lon", 121.49, "lat", 31.23, "riskIndex", 42, "analysis", "航线运行稳定")
-                )
+                "regions", regionsFromSignals(availableSignals),
+                "points", gisPoints(availableSignals),
+                "updatedAt", dailyRiskSnapshot.calculatedAt().toString(),
+                "dataSource", "公开网站 RSS 条目映射到来源区域，仅用于风险空间视图"
         );
     }
 
     public Map<String, Object> knowledge(String query) {
         String q = query == null || query.isBlank() ? "半导体物流中断" : query;
+        List<CrawlerSignal> matchedSignals = availableSignals().stream()
+                .filter(signal -> signalMatches(signal, q) || q.isBlank())
+                .toList();
         return Map.of(
                 "query", q,
-                "categories", List.of("行业标准与规范(128)", "历史风险案例(356)", "政策法规库(92)"),
-                "tags", List.of("#半导体", "#物流中断", "#东南亚", "#国产替代", "#供应商尽调"),
-                "results", List.of(
-                        Map.of("id", "KB-001", "title", "港口拥堵场景供应链处置 SOP", "format", "PDF", "size", "1.8MB", "similarity", 94, "summary", "建议建立备用港口切换阈值和安全库存联动规则。"),
-                        Map.of("id", "KB-002", "title", "半导体关键物料断供案例复盘", "format", "DOCX", "size", "940KB", "similarity", 88, "summary", "涵盖晶圆、封测、物流三类高频断点。")
-                )
+                "categories", List.of("公开源文章(" + matchedSignals.size() + ")", "内部知识库(待接入)", "政策法规库(待接入)"),
+                "tags", List.of("#半导体", "#物流", "#供应链", "#公开源", "#风险信号"),
+                "results", matchedSignals.stream().limit(10).map(signal -> Map.of(
+                        "id", signal.id(),
+                        "title", signal.title(),
+                        "format", "WEB",
+                        "size", "公开网页",
+                        "similarity", signal.riskScore(),
+                        "summary", signal.source() + " / " + signal.dimension() + " / " + signal.fetchedAt(),
+                        "url", signal.sourceUrl()
+                )).toList()
         );
     }
 
@@ -367,6 +420,107 @@ public class SemiRiskStore {
                         Map.of("name", "三方 GIS Webhook", "status", "阻断", "host", "192.168.101.130:8088")
                 )
         );
+    }
+
+    private List<CrawlerSignal> availableSignals() {
+        DailyRiskSnapshot snapshot = dailyRiskSnapshot;
+        if (snapshot == null) {
+            return List.of();
+        }
+        return snapshot.signals().stream()
+                .filter(signal -> "OK".equalsIgnoreCase(signal.status()))
+                .sorted(Comparator.comparing(CrawlerSignal::riskScore).reversed())
+                .toList();
+    }
+
+    private List<RiskAlert> publicAlerts(List<CrawlerSignal> signals) {
+        return signals.stream()
+                .sorted(Comparator.comparing(CrawlerSignal::riskScore).reversed())
+                .map(signal -> new RiskAlert(signal.id(), signal.fetchedAt(), riskLevel(signal.riskScore()), signal.title(), signal.source(), "未处理", "risk-detail.html"))
+                .toList();
+    }
+
+    private List<Map<String, Object>> dimensionScores(List<CrawlerSignal> signals) {
+        Map<String, Integer> scores = new LinkedHashMap<>();
+        for (CrawlerSignal signal : signals) {
+            scores.merge(signal.dimension(), signal.riskScore(), Math::max);
+        }
+        return scores.entrySet().stream()
+                .map(entry -> Map.<String, Object>of("name", entry.getKey(), "index", entry.getValue(), "value", entry.getValue()))
+                .toList();
+    }
+
+    private List<Map<String, Object>> sourceScores(List<CrawlerSignal> signals) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (CrawlerSignal signal : signals) {
+            counts.merge(signal.source(), 1, Integer::sum);
+        }
+        return counts.entrySet().stream()
+                .map(entry -> Map.<String, Object>of("name", entry.getKey(), "value", entry.getValue()))
+                .toList();
+    }
+
+    private List<Map<String, Object>> regionsFromSignals(List<CrawlerSignal> signals) {
+        if (signals.isEmpty()) {
+            return List.of(Map.of("name", "公开源", "status", "暂无成功采集记录", "score", 0));
+        }
+        return dimensionScores(signals).stream()
+                .map(item -> Map.<String, Object>of(
+                        "name", String.valueOf(item.get("name")),
+                        "status", "公开源维度信号",
+                        "score", item.get("value")
+                ))
+                .toList();
+    }
+
+    private List<Map<String, Object>> gisPoints(List<CrawlerSignal> signals) {
+        double[][] coordinates = {
+                {-77.03, 38.90},
+                {-118.26, 33.74},
+                {103.80, 1.29},
+                {121.49, 31.23},
+                {4.47, 51.92},
+                {139.76, 35.68}
+        };
+        List<Map<String, Object>> points = new ArrayList<>();
+        for (int i = 0; i < signals.size(); i++) {
+            CrawlerSignal signal = signals.get(i);
+            double[] coordinate = coordinates[i % coordinates.length];
+            points.add(Map.of(
+                    "id", signal.id(),
+                    "name", signal.source() + " #" + (i + 1),
+                    "lon", coordinate[0],
+                    "lat", coordinate[1],
+                    "riskIndex", signal.riskScore(),
+                    "analysis", signal.title(),
+                    "source", signal.source(),
+                    "sourceUrl", signal.sourceUrl()
+            ));
+        }
+        return points;
+    }
+
+    private String riskLevel(int score) {
+        if (score >= 80) {
+            return "高危";
+        }
+        if (score >= 60) {
+            return "中危";
+        }
+        if (score > 0) {
+            return "低危";
+        }
+        return "待采集";
+    }
+
+    private boolean signalMatches(CrawlerSignal signal, String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return true;
+        }
+        String normalized = keyword.toLowerCase(Locale.ROOT);
+        return signal.title().toLowerCase(Locale.ROOT).contains(normalized)
+                || signal.source().toLowerCase(Locale.ROOT).contains(normalized)
+                || signal.dimension().toLowerCase(Locale.ROOT).contains(normalized);
     }
 
     public AiModelConfig saveAiModelConfig(String model, String endpoint, String apiKey) {
@@ -398,10 +552,6 @@ public class SemiRiskStore {
         if (defaultAiApiKey != null && !defaultAiApiKey.isBlank()) {
             aiModelConfigs.put(defaultAiModel, new AiModelConfig(defaultAiModel, defaultAiEndpoint, mask(defaultAiApiKey), true, Instant.now()));
         }
-    }
-
-    private CrawlerSignal crawlerSignal(String source, String title, String dimension, int riskScore) {
-        return new CrawlerSignal("CS-" + UUID.randomUUID().toString().substring(0, 8), source, title, dimension, riskScore, Instant.now());
     }
 
     private String mask(String key) {
@@ -448,7 +598,7 @@ public class SemiRiskStore {
     public record SystemUser(String id, String username, String email, String role, String status) {
     }
 
-    public record CrawlerSignal(String id, String source, String title, String dimension, int riskScore, Instant fetchedAt) {
+    public record CrawlerSignal(String id, String source, String title, String dimension, int riskScore, Instant fetchedAt, String sourceUrl, String status) {
     }
 
     public record DailyRiskSnapshot(int score, String level, String summary, List<CrawlerSignal> signals, Instant calculatedAt) {
