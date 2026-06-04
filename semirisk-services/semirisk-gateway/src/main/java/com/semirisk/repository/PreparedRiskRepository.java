@@ -16,9 +16,10 @@ public class PreparedRiskRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public List<Map<String, Object>> findAlerts(String level, String status, int limit) {
+    public List<Map<String, Object>> findAlerts(String keyword, String level, String status, int limit) {
         return jdbcTemplate.queryForList(
-                SqlTemplates.FIND_ALERTS_BY_LEVEL_STATUS,
+                SqlTemplates.FIND_ALERTS,
+                keyword, keyword, keyword,
                 level, level,
                 status, status,
                 limit

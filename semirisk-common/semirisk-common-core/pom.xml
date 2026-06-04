@@ -4,17 +4,10 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>com.semirisk</groupId>
-        <artifactId>semirisk</artifactId>
+        <artifactId>semirisk-common</artifactId>
         <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
-    <artifactId>semirisk-common</artifactId>
-    <packaging>pom</packaging>
-    <name>semirisk-common</name>
-
-    <modules>
-        <module>semirisk-common-core</module>
-        <module>semirisk-common-db</module>
-        <module>semirisk-common-middleware</module>
-        <module>semirisk-common-ai</module>
-    </modules>
+    <artifactId>semirisk-common-core</artifactId>
+    <name>semirisk-common-core</name>
 </project>

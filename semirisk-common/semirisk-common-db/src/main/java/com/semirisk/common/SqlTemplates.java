@@ -2,10 +2,11 @@ package com.semirisk.common;
 
 public final class SqlTemplates {
 
-    public static final String FIND_ALERTS_BY_LEVEL_STATUS = """
-            SELECT id, alert_time, level, title, source, status
+    public static final String FIND_ALERTS = """
+            SELECT id, alert_time AS time, level, title, source, status, target
             FROM risk_alert
-            WHERE (? IS NULL OR level = ?)
+            WHERE (? IS NULL OR title LIKE CONCAT('%', ?, '%') OR source LIKE CONCAT('%', ?, '%'))
+              AND (? IS NULL OR level = ?)
               AND (? IS NULL OR status = ?)
             ORDER BY alert_time DESC
             LIMIT ?

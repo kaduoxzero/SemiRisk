@@ -391,8 +391,8 @@
       if (btn.textContent.includes('连通性测试')) {
         btn.addEventListener('click', async () => {
           const card = btn.closest('.hud-card');
-          const model = card?.querySelector('p.text-sm')?.textContent?.trim() || 'GPT-4o';
-          const endpoint = card?.querySelector('input[type="text"]')?.value || 'https://api.openai.com/v1';
+          const model = card?.querySelector('p.text-sm')?.textContent?.trim() || 'deepseekv4-pro';
+          const endpoint = card?.querySelector('input[type="text"]')?.value || 'https://api.deepseek.com/v1';
           const apiKey = card?.querySelector('input[type="password"]')?.value || 'sk-placeholder';
           await api('/api/system/models/config', { method: 'POST', body: JSON.stringify({ model, endpoint, apiKey }) });
           const data = await api('/api/system/models/ping', { method: 'POST', body: JSON.stringify({ model }) });

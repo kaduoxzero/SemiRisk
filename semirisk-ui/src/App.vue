@@ -208,7 +208,7 @@
         <div class="panel">
           <h3>AI 模型 API Key 配置</h3>
           <div class="toolbar">
-            <input v-model="aiConfig.model" class="input" placeholder="模型名称，如 GPT-4o" />
+            <input v-model="aiConfig.model" class="input" placeholder="模型名称，如 deepseekv4-pro" />
             <input v-model="aiConfig.endpoint" class="input" placeholder="Endpoint" />
             <input v-model="aiConfig.apiKey" class="input" placeholder="API Key" type="password" />
             <button class="btn" @click="saveAiConfig">保存配置</button>
@@ -266,7 +266,7 @@ const enterprise = ref({});
 const knowledgeQuery = ref('半导体物流中断');
 const knowledge = ref({});
 const system = ref({});
-const aiConfig = reactive({ model: 'GPT-4o', endpoint: 'https://api.openai.com/v1', apiKey: '' });
+const aiConfig = reactive({ model: 'deepseekv4-pro', endpoint: 'https://api.deepseek.com/v1', apiKey: '' });
 
 const currentTitle = computed(() => navItems.find(item => item.key === view.value)?.label || 'SemiRisk');
 const allowedNavItems = computed(() => {

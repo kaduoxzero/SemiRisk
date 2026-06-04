@@ -1,6 +1,8 @@
 package com.semirisk.service;
 
+import com.semirisk.common.AiModelDefaults;
 import com.semirisk.common.SemiriskConstants;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -34,11 +36,21 @@ public class SemiRiskStore {
     private final Map<String, AiModelConfig> aiModelConfigs = new ConcurrentHashMap<>();
     private volatile DailyRiskSnapshot dailyRiskSnapshot;
     private final List<String> auditLogs = new ArrayList<>();
+    private final String defaultAiModel;
+    private final String defaultAiEndpoint;
+    private final String defaultAiApiKey;
 
-    public SemiRiskStore() {
+    public SemiRiskStore(
+            @Value("${semirisk.ai.default.model:" + AiModelDefaults.DEFAULT_MODEL + "}") String defaultAiModel,
+            @Value("${semirisk.ai.default.endpoint:" + AiModelDefaults.DEFAULT_ENDPOINT + "}") String defaultAiEndpoint,
+            @Value("${semirisk.ai.default.api-key:}") String defaultAiApiKey) {
+        this.defaultAiModel = defaultAiModel;
+        this.defaultAiEndpoint = defaultAiEndpoint;
+        this.defaultAiApiKey = defaultAiApiKey;
         users.put("admin", new UserAccount("admin", "password", "管理员", SemiriskConstants.ROLE_ADMIN));
         users.put("analyst", new UserAccount("analyst", "risk2026", "风险分析师", SemiriskConstants.ROLE_ANALYST));
         users.put("ops", new UserAccount("ops", "ops2026", "运营人员", SemiriskConstants.ROLE_OPERATOR));
+        seedDefaultAiModel();
         seedAlerts();
         seedUsers();
         auditLogs.add("[INFO] 2026-06-03 09:00:00 gateway route table initialized");
@@ -342,8 +354,8 @@ public class SemiRiskStore {
                 "users", systemUsers(),
                 "roles", List.of("管理员", "分析师", "运营人员"),
                 "models", List.of(
-                        modelOverview("GPT-4o", "https://api.openai.com/v1", 321),
-                        modelOverview("Claude", "https://api.anthropic.com/v1", 425)
+                        modelOverview(defaultAiModel, defaultAiEndpoint, 286),
+                        modelOverview("deepseek-chat", AiModelDefaults.DEFAULT_ENDPOINT, 344)
                 ),
                 "agents", List.of(
                         Map.of("name", "舆情监控 Agent", "status", "运行中", "cron", "*/15 * * * *", "lastPull", Instant.now().minus(8, ChronoUnit.MINUTES).toString()),
@@ -380,6 +392,12 @@ public class SemiRiskStore {
         map.put("latencyMs", latencyMs);
         map.put("status", config != null && config.configured() ? "已配置" : "待配置 API Key");
         return map;
+    }
+
+    private void seedDefaultAiModel() {
+        if (defaultAiApiKey != null && !defaultAiApiKey.isBlank()) {
+            aiModelConfigs.put(defaultAiModel, new AiModelConfig(defaultAiModel, defaultAiEndpoint, mask(defaultAiApiKey), true, Instant.now()));
+        }
     }
 
     private CrawlerSignal crawlerSignal(String source, String title, String dimension, int riskScore) {

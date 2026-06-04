@@ -101,5 +101,5 @@ Vue 前端默认通过 Vite 代理访问 Gateway：`http://localhost:5173/api ->
 | semirisk-data-service:8081 | POST | `/api/crawler/refresh` | 手动刷新爬虫记录 |
 | semirisk-risk-service:8082 | GET | `/api/risk-score/today` | 查询本日风险测算 |
 | semirisk-risk-service:8082 | POST | `/api/risk-score/recalculate` | 手动重算风险 |
-| semirisk-ai-service:8083 | POST | `/api/ai/models/config` | 保存 AI 模型 API Key |
-| semirisk-ai-service:8083 | GET | `/api/ai/reports/latest` | 获取本日 AI 报告占位 |
+| semirisk-ai-service:8083 | POST | `/api/ai/models/config` | 保存 DeepSeek 模型 Endpoint 与 API Key |
+| semirisk-ai-service:8083 | GET | `/api/ai/reports/latest` | 获取本日 AI 报告占位，默认模型 `deepseekv4-pro` |

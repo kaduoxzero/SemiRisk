@@ -5,6 +5,7 @@ set -euo pipefail
 # It installs Docker if missing and starts the middleware required by SemiRisk.
 
 PROJECT_DIR="${PROJECT_DIR:-/opt/semirisk-middleware}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-root}"
 MYSQL_DATABASE="${MYSQL_DATABASE:-semirisk}"
 MYSQL_USER="${MYSQL_USER:-semirisk}"
@@ -98,3 +99,21 @@ EOF
 docker compose up -d
 docker compose ps
 
+echo "Waiting for MySQL to accept connections..."
+for i in {1..30}; do
+  if docker exec semirisk-mysql mysqladmin ping -uroot -p"${MYSQL_ROOT_PASSWORD}" --silent >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+  if [[ "$i" == "30" ]]; then
+    echo "MySQL is not ready after 60 seconds; skip schema initialization."
+    exit 0
+  fi
+done
+
+if [[ -f "${SCRIPT_DIR}/semirisk-schema.sql" ]]; then
+  docker exec -i semirisk-mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" < "${SCRIPT_DIR}/semirisk-schema.sql"
+  echo "SemiRisk schema initialized."
+else
+  echo "Schema file not found: ${SCRIPT_DIR}/semirisk-schema.sql"
+fi

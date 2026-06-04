@@ -5,6 +5,13 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="${ROOT_DIR}/logs"
 mkdir -p "${LOG_DIR}"
 
+if [[ -f "${ROOT_DIR}/.env.local" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.env.local"
+  set +a
+fi
+
 cd "${ROOT_DIR}"
 
 ./mvnw -q -DskipTests install
@@ -27,3 +34,4 @@ echo "  gateway:      http://localhost:8080"
 echo "  data-service: http://localhost:8081"
 echo "  risk-service: http://localhost:8082"
 echo "  ai-service:   http://localhost:8083"
+echo "  ai-model:     ${SEMIRISK_AI_MODEL:-deepseekv4-pro}"

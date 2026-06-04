@@ -14,7 +14,7 @@
     <dependencies>
         <dependency>
             <groupId>com.semirisk</groupId>
-            <artifactId>semirisk-common</artifactId>
+            <artifactId>semirisk-common-core</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
@@ -40,4 +40,3 @@
         </plugins>
     </build>
 </project>
-

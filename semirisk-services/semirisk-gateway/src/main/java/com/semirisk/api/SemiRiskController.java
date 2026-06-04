@@ -2,6 +2,7 @@ package com.semirisk.api;
 
 import com.semirisk.service.SemiRiskStore;
 import com.semirisk.common.RolePermissionPolicy;
+import com.semirisk.repository.PreparedRiskRepository;
 import com.semirisk.service.SemiRiskStore.ReportJob;
 import com.semirisk.service.SemiRiskStore.SystemUser;
 import com.semirisk.service.SemiRiskStore.UploadTask;
@@ -43,10 +44,12 @@ import java.util.concurrent.Executors;
 public class SemiRiskController {
 
     private final SemiRiskStore store;
+    private final PreparedRiskRepository preparedRiskRepository;
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
 
-    public SemiRiskController(SemiRiskStore store) {
+    public SemiRiskController(SemiRiskStore store, PreparedRiskRepository preparedRiskRepository) {
         this.store = store;
+        this.preparedRiskRepository = preparedRiskRepository;
     }
 
     @PostMapping("/auth/login")
@@ -243,17 +246,29 @@ public class SemiRiskController {
     }
 
     @GetMapping("/alerts")
-    public ApiResponse<List<SemiRiskStore.RiskAlert>> alerts(
+    public ApiResponse<List<?>> alerts(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String level,
             @RequestParam(required = false) String status) {
         String kw = keyword == null ? "" : keyword.trim();
+        try {
+            List<Map<String, Object>> rows = preparedRiskRepository.findAlerts(kw.isBlank() ? null : kw, blankToNull(level), blankToNull(status), 100);
+            if (!rows.isEmpty()) {
+                return ApiResponse.ok((List<?>) rows);
+            }
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
         List<SemiRiskStore.RiskAlert> filtered = store.alerts().stream()
                 .filter(alert -> kw.isBlank() || alert.title().contains(kw) || alert.source().contains(kw))
                 .filter(alert -> level == null || level.isBlank() || alert.level().equals(level))
                 .filter(alert -> status == null || status.isBlank() || alert.status().equals(status))
                 .toList();
-        return ApiResponse.ok(filtered);
+        return ApiResponse.ok((List<?>) filtered);
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     @GetMapping("/alerts/counts")

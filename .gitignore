@@ -1,6 +1,8 @@
 HELP.md
 target/
 *.log
+.env.local
+.env.*.local
 node_modules/
 dist/
 semirisk-ui/node_modules/
