@@ -6,6 +6,8 @@ export function useAuth(state, allowedNavItems, notify, loadDashboard, setSessio
       notify('请输入账号和密码');
       return;
     }
+    if (state.authSubmitting) return;
+    state.authSubmitting = true;
     try {
       const data = await authApi.login({ ...state.loginForm, captchaToken: 'vue-slider-ok' });
       setSession({ ...data.user, token: data.token, expiresAt: data.expiresAt });
@@ -16,6 +18,8 @@ export function useAuth(state, allowedNavItems, notify, loadDashboard, setSessio
       await loadDashboard();
     } catch (error) {
       notify(error.message || '账号或密码错误');
+    } finally {
+      state.authSubmitting = false;
     }
   }
 
@@ -36,6 +40,8 @@ export function useAuth(state, allowedNavItems, notify, loadDashboard, setSessio
       notify('密码至少 8 位');
       return;
     }
+    if (state.authSubmitting) return;
+    state.authSubmitting = true;
     try {
       const data = await authApi.register(state.registerForm);
       setSession({ ...data.user, token: data.token, expiresAt: data.expiresAt });
@@ -44,6 +50,8 @@ export function useAuth(state, allowedNavItems, notify, loadDashboard, setSessio
       await loadDashboard();
     } catch (error) {
       notify(error.message || '注册失败');
+    } finally {
+      state.authSubmitting = false;
     }
   }
 

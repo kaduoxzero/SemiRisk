@@ -2,6 +2,7 @@ import { riskApi } from '../api/modules';
 
 export function useRisk(state, notify) {
   async function loadRiskAnalysis(windowName = '24h') {
+    state.analysisWindow = windowName;
     state.analysis = await riskApi.analysis(windowName);
   }
 

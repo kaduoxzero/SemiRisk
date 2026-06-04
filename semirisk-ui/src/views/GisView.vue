@@ -9,7 +9,15 @@
         <button class="btn secondary" @click="actions.loadGis">刷新图层</button>
       </div>
 
-      <div class="map-canvas">
+      <div
+        class="map-canvas map-canvas-3d"
+        :class="{ dragging: isDragging, paused: manualControl }"
+        :style="mapTransform"
+        @pointerdown="startDrag"
+        @pointermove="drag"
+        @pointerup="stopDrag"
+        @pointerleave="stopDrag"
+      >
         <svg class="route-network" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
           <path
             v-for="route in visibleRoutes"
@@ -38,6 +46,12 @@
           <strong>{{ activeLayerText }}</strong>
           <span>{{ state.gis.updatedAt || state.dashboard.refreshedAt || '等待刷新' }}</span>
           <span>{{ state.gis.dataSource || '公开源数据待加载' }}</span>
+        </div>
+        <div v-if="selectedPoint" class="map-popover" :style="pointStyle(selectedPoint)">
+          <b>{{ selectedPoint.name }}</b>
+          <p>风险指数：{{ selectedPoint.riskIndex }}</p>
+          <p>{{ selectedPoint.analysis }}</p>
+          <a v-if="selectedPoint.sourceUrl" class="text-link" :href="selectedPoint.sourceUrl" target="_blank" rel="noreferrer">原文</a>
         </div>
       </div>
     </div>
@@ -108,11 +122,19 @@ const props = defineProps({
 });
 
 const selectedPoint = ref(null);
+const isDragging = ref(false);
+const manualControl = ref(false);
+const rotation = ref({ x: 62, y: -22 });
+const dragStart = ref({ x: 0, y: 0, rx: 62, ry: -22 });
 const points = computed(() => props.state.gis.points || []);
 const routes = computed(() => props.state.gis.routes || []);
 const regions = computed(() => props.state.gis.regions || []);
 const visibleRoutes = computed(() => props.state.activeLayers.includes('routes') ? routes.value : []);
 const activeLayerText = computed(() => props.state.activeLayers.map(layerName).join(' / '));
+const mapTransform = computed(() => ({
+  '--rotate-x': `${rotation.value.x}deg`,
+  '--rotate-y': `${rotation.value.y}deg`
+}));
 
 watch(points, list => {
   if (!list.length) {
@@ -164,5 +186,23 @@ function riskClass(score) {
 
 function badgeClass(score) {
   return riskClass(score);
+}
+
+function startDrag(event) {
+  isDragging.value = true;
+  manualControl.value = true;
+  dragStart.value = { x: event.clientX, y: event.clientY, rx: rotation.value.x, ry: rotation.value.y };
+}
+
+function drag(event) {
+  if (!isDragging.value) return;
+  rotation.value = {
+    x: Math.max(38, Math.min(76, dragStart.value.rx - (event.clientY - dragStart.value.y) * 0.25)),
+    y: dragStart.value.ry + (event.clientX - dragStart.value.x) * 0.35
+  };
+}
+
+function stopDrag() {
+  isDragging.value = false;
 }
 </script>

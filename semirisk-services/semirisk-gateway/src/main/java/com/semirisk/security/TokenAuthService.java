@@ -19,7 +19,7 @@ public class TokenAuthService {
     private final Map<String, AuthPrincipal> tokens = new ConcurrentHashMap<>();
     private final long ttlMinutes;
 
-    public TokenAuthService(@Value("${semirisk.auth.token-ttl-minutes:15}") long ttlMinutes) {
+    public TokenAuthService(@Value("${semirisk.auth.token-ttl-minutes:30}") long ttlMinutes) {
         this.ttlMinutes = ttlMinutes;
     }
 
@@ -45,7 +45,9 @@ public class TokenAuthService {
             tokens.remove(token);
             return Optional.empty();
         }
-        return Optional.of(principal);
+        AuthPrincipal renewed = new AuthPrincipal(principal.username(), principal.displayName(), principal.role(), Instant.now().plus(ttlMinutes, ChronoUnit.MINUTES));
+        tokens.put(token, renewed);
+        return Optional.of(renewed);
     }
 
     public void revoke(String authorization) {

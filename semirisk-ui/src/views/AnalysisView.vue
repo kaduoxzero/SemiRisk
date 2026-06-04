@@ -1,9 +1,10 @@
 <template>
   <section class="grid">
     <div class="toolbar">
-      <button class="btn" @click="actions.loadRiskAnalysis('24h')">近24小时</button>
-      <button class="btn secondary" @click="actions.loadRiskAnalysis('7d')">近7天</button>
-      <button class="btn secondary" @click="actions.loadRiskAnalysis('30d')">近30天</button>
+      <button class="btn" :class="{ secondary: state.analysisWindow !== '24h' }" @click="actions.loadRiskAnalysis('24h')">近24小时</button>
+      <button class="btn" :class="{ secondary: state.analysisWindow !== '7d' }" @click="actions.loadRiskAnalysis('7d')">近7天</button>
+      <button class="btn" :class="{ secondary: state.analysisWindow !== '30d' }" @click="actions.loadRiskAnalysis('30d')">近30天</button>
+      <span class="muted">当前切片：{{ state.analysis.window || state.analysisWindow }}</span>
     </div>
     <div class="grid cols-3">
       <div class="panel"><h3>系统评分</h3><strong class="warning">{{ state.analysis.score }}</strong></div>

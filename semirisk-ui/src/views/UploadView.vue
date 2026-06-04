@@ -2,8 +2,14 @@
   <section class="grid cols-2">
     <div class="panel">
       <h3>数据上传与清洗</h3>
+      <div class="hint-box">
+        <b>清洗对象</b>
+        <p>供应商名录、BOM 物料、物流节点、合同交期、公开研报和压缩包附件。</p>
+        <b>清洗目的</b>
+        <p>统一字段、去重、补全缺失值、识别企业/物料实体，并把结果用于风险评分、预警派发、企业画像和报告生成。</p>
+      </div>
       <label class="drop">
-        <span>点击选择 Excel / CSV / PDF / ZIP，单文件 50MB 内</span>
+        <span>点击选择 Excel / CSV / PDF / ZIP，上传后进入 ETL 校验队列，单文件 50MB 内</span>
         <input hidden type="file" @change="actions.uploadFile" />
       </label>
       <div class="toolbar">

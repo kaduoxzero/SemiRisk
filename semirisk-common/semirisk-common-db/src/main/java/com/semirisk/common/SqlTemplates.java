@@ -38,6 +38,18 @@ public final class SqlTemplates {
             VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """;
 
+    public static final String UPSERT_SYSTEM_LOGIN_USER = """
+            INSERT INTO system_user(id, username, display_name, email, password_hash, role, status, password_updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE
+              display_name = VALUES(display_name),
+              email = VALUES(email),
+              password_hash = VALUES(password_hash),
+              role = VALUES(role),
+              status = VALUES(status),
+              password_updated_at = CURRENT_TIMESTAMP
+            """;
+
     public static final String FIND_AUTH_USER_BY_USERNAME = """
             SELECT id, username, display_name AS displayName, email, password_hash AS passwordHash, role, status
             FROM system_user

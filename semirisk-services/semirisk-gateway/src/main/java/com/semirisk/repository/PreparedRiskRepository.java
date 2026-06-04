@@ -52,6 +52,10 @@ public class PreparedRiskRepository {
         return jdbcTemplate.update(SqlTemplates.INSERT_SYSTEM_USER, id, username, displayName, email, passwordHash, role, status);
     }
 
+    public int upsertSystemLoginUser(String id, String username, String displayName, String email, String passwordHash, String role, String status) {
+        return jdbcTemplate.update(SqlTemplates.UPSERT_SYSTEM_LOGIN_USER, id, username, displayName, email, passwordHash, role, status);
+    }
+
     public List<Map<String, Object>> findAuthUserByUsername(String username) {
         return jdbcTemplate.queryForList(SqlTemplates.FIND_AUTH_USER_BY_USERNAME, username);
     }

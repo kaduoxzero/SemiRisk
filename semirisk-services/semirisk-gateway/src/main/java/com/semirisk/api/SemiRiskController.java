@@ -65,6 +65,7 @@ public class SemiRiskController {
     private final TokenAuthService tokenAuthService;
     private final CsrfTokenService csrfTokenService;
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
+    private volatile Instant lastCrawlerSync = Instant.EPOCH;
 
     public SemiRiskController(SemiRiskStore store, PublicCrawlerClient publicCrawlerClient, KnowledgeSearchIndexService knowledgeSearchIndexService, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService, PasswordHashService passwordHashService, InputSanitizer inputSanitizer, TokenAuthService tokenAuthService, CsrfTokenService csrfTokenService) {
         this.store = store;
@@ -468,9 +469,14 @@ public class SemiRiskController {
     }
 
     private void syncPublicCrawlerRecords() {
+        Instant now = Instant.now();
+        if (lastCrawlerSync.isAfter(now.minusSeconds(120))) {
+            return;
+        }
         List<SemiRiskStore.CrawlerSignal> records = publicCrawlerClient.today();
         store.refreshDailyRiskRecords(records);
         knowledgeSearchIndexService.sync(records);
+        lastCrawlerSync = now;
     }
 
     @GetMapping("/alerts/counts")
@@ -565,6 +571,29 @@ public class SemiRiskController {
             // Local fallback keeps the project runnable before VM middleware is connected.
         }
         return ApiResponse.ok("系统用户已创建", user);
+    }
+
+    @PostMapping("/system/users/login")
+    public ApiResponse<Map<String, Object>> upsertLoginUser(@Valid @RequestBody LoginUserRequest request) {
+        String username = inputSanitizer.username(request.username());
+        String email = inputSanitizer.qqEmail(request.email());
+        String displayName = inputSanitizer.displayName(request.displayName());
+        String password = inputSanitizer.password(request.password());
+        String role = inputSanitizer.role(request.role());
+        UserAccount account = store.upsertLoginUser(username, password, displayName, email, role);
+        try {
+            String id = "U-" + UUID.randomUUID().toString().substring(0, 8);
+            preparedRiskRepository.upsertSystemLoginUser(id, username, displayName, email, passwordHashService.hash(password), role, "启用");
+            preparedRiskRepository.insertAuditLog("INFO", "login user upserted " + username + " role=" + role);
+        } catch (Exception ignored) {
+            // Local fallback keeps admin provisioning usable before VM MySQL is connected.
+        }
+        return ApiResponse.ok("登录用户已创建/更新", Map.of(
+                "username", account.username(),
+                "displayName", account.displayName(),
+                "role", account.role(),
+                "modules", RolePermissionPolicy.modules(account.role())
+        ));
     }
 
     @PutMapping("/system/users/{id}/status")
@@ -667,6 +696,9 @@ public class SemiRiskController {
     }
 
     public record AddUserRequest(@NotBlank String username, @NotBlank @Email String email, @NotBlank String role) {
+    }
+
+    public record LoginUserRequest(@NotBlank String username, @NotBlank @Email String email, @NotBlank String displayName, @NotBlank String password, @NotBlank String role) {
     }
 
     public record StatusRequest(@NotBlank String status) {

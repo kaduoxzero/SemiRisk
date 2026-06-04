@@ -2,6 +2,7 @@ package com.semirisk.config;
 
 import com.semirisk.api.ApiResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.semirisk.common.RolePermissionPolicy;
 import com.semirisk.security.CsrfTokenService;
 import com.semirisk.security.TokenAuthService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -64,7 +65,8 @@ public class WebConfig implements WebMvcConfigurer {
                         }
                         if (uri.startsWith("/api/auth/")
                                 || uri.equals("/api/dashboard/overview")
-                                || uri.equals("/api/risk-score/today")) {
+                                || uri.equals("/api/risk-score/today")
+                                || ("GET".equalsIgnoreCase(method) && uri.startsWith("/api/reports/") && uri.endsWith("/download"))) {
                             return true;
                         }
                         var principal = tokenAuthService.validate(request.getHeader("Authorization"));
@@ -74,7 +76,17 @@ public class WebConfig implements WebMvcConfigurer {
                             response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail("请先登录")));
                             return false;
                         }
-                        principal.ifPresent(value -> request.setAttribute("authPrincipal", value));
+                        if (principal.isPresent()) {
+                            TokenAuthService.AuthPrincipal value = principal.get();
+                            String module = moduleFor(uri);
+                            if (module != null && !RolePermissionPolicy.canAccess(value.role(), module)) {
+                                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                                response.setContentType("application/json;charset=UTF-8");
+                                response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail("无权访问模块：" + module)));
+                                return false;
+                            }
+                            request.setAttribute("authPrincipal", value);
+                        }
                         return true;
                     }
                 })
@@ -89,6 +101,20 @@ public class WebConfig implements WebMvcConfigurer {
 
     private boolean csrfValid(HttpServletRequest request) {
         return csrfTokenService.validate(request.getHeader(CSRF_HEADER));
+    }
+
+    private String moduleFor(String uri) {
+        if (uri.startsWith("/api/data/")) return "upload";
+        if (uri.startsWith("/api/risk/analysis")) return "analysis";
+        if (uri.startsWith("/api/risk/events/")) return "detail";
+        if (uri.startsWith("/api/reports/")) return "report";
+        if (uri.startsWith("/api/alerts")) return "alerts";
+        if (uri.startsWith("/api/gis/")) return "gis";
+        if (uri.startsWith("/api/enterprises/")) return "enterprise";
+        if (uri.startsWith("/api/knowledge/")) return "knowledge";
+        if (uri.startsWith("/api/system/")) return "system";
+        if (uri.startsWith("/api/risk-score/")) return "dashboard";
+        return null;
     }
 
     @RestControllerAdvice

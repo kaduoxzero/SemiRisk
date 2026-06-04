@@ -10,6 +10,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
@@ -23,6 +24,7 @@ public class KnowledgeSearchIndexService {
     private final String esUrl;
     private final String indexName;
     private volatile String indexedSignature = "";
+    private volatile Instant esDisabledUntil = Instant.EPOCH;
 
     public KnowledgeSearchIndexService(
             @Value("${semirisk.elasticsearch.url}") String esUrl,
@@ -33,6 +35,9 @@ public class KnowledgeSearchIndexService {
 
     public void sync(List<SemiRiskStore.CrawlerSignal> signals) {
         if (signals == null || signals.isEmpty()) {
+            return;
+        }
+        if (esDisabledUntil.isAfter(Instant.now())) {
             return;
         }
         String signature = signature(signals);
@@ -49,6 +54,7 @@ public class KnowledgeSearchIndexService {
             }
             indexedSignature = signature;
         } catch (Exception ignored) {
+            esDisabledUntil = Instant.now().plusSeconds(60);
             // ES is optional locally; callers fall back to in-memory RAG.
         }
     }
@@ -57,6 +63,9 @@ public class KnowledgeSearchIndexService {
     public List<Map<String, Object>> search(String query, int size) {
         if (query == null || query.isBlank()) {
             query = "semiconductor supply chain risk";
+        }
+        if (esDisabledUntil.isAfter(Instant.now())) {
+            return List.of();
         }
         try {
             Map<String, Object> body = Map.of(
@@ -71,6 +80,7 @@ public class KnowledgeSearchIndexService {
             HttpRequest request = jsonRequest("POST", "/" + indexName + "/_search", objectMapper.writeValueAsString(body));
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 300) {
+                esDisabledUntil = Instant.now().plusSeconds(60);
                 return List.of();
             }
             Map<String, Object> parsed = objectMapper.readValue(response.body(), new TypeReference<>() {
@@ -107,6 +117,7 @@ public class KnowledgeSearchIndexService {
                     })
                     .toList();
         } catch (Exception ignored) {
+            esDisabledUntil = Instant.now().plusSeconds(60);
             return List.of();
         }
     }

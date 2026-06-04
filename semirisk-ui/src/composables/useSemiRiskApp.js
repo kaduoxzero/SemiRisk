@@ -29,11 +29,15 @@ export function useSemiRiskApp() {
     authMode: initialAuthMode,
     loginForm: { username: '', password: '', rememberMe: false },
     registerForm: { username: '', email: '', password: '', displayName: '' },
+    authSubmitting: false,
     dashboard: {},
+    dashboardPage: 1,
     uploads: [],
     logs: [],
+    analysisWindow: '24h',
     analysis: {},
     selectedRiskId: '',
+    detailPage: 1,
     riskDetail: {},
     reportTemplates: [],
     reportForm: { template: 'risk-assessment', language: '中文', format: 'PDF' },
@@ -45,6 +49,7 @@ export function useSemiRiskApp() {
     activeLayers: ['heatmap', 'suppliers', 'ports', 'routes'],
     gis: {},
     enterpriseKeyword: '安芯半导体供应链有限公司',
+    enterprisePage: 1,
     enterprise: {},
     knowledgeQuery: '半导体物流中断',
     knowledgeQuestion: '当前半导体供应链最需要关注什么风险？',
@@ -52,6 +57,8 @@ export function useSemiRiskApp() {
     knowledgeLoading: false,
     knowledge: {},
     system: {},
+    systemLogPage: 1,
+    systemLogDate: new Date().toISOString().slice(0, 10),
     aiConfig: { model: 'deepseekv4-pro', endpoint: 'https://api.deepseek.com/v1', apiKey: '' }
   });
 

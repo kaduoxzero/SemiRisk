@@ -56,6 +56,20 @@ class SemiRiskAuthApiTests {
 
     @Test
     @Order(4)
+    void bootstrapAdminCanLogin() throws Exception {
+        Csrf csrf = csrf();
+        mockMvc.perform(post("/api/auth/login")
+                        .header("X-CSRF-Token", csrf.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"kaduoxli\",\"password\":\"123qwe123\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.user.role").value("ADMIN"))
+                .andExpect(jsonPath("$.data.user.modules").isArray())
+                .andExpect(jsonPath("$.data.token").exists());
+    }
+
+    @Test
+    @Order(5)
     void registerCreatesTokenAndUnlocksProtectedApi() throws Exception {
         Csrf csrf = csrf();
         MvcResult register = mockMvc.perform(post("/api/auth/register")
@@ -63,7 +77,7 @@ class SemiRiskAuthApiTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"first_admin\",\"email\":\"1234567@qq.com\",\"displayName\":\"首个用户\",\"password\":\"Password123\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.user.role").value("ADMIN"))
+                .andExpect(jsonPath("$.data.user.role").value("OPERATOR"))
                 .andExpect(jsonPath("$.data.token").exists())
                 .andReturn();
         String token = JsonPath.read(register.getResponse().getContentAsString(), "$.data.token");
@@ -71,10 +85,14 @@ class SemiRiskAuthApiTests {
         mockMvc.perform(get("/api/alerts").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+
+        mockMvc.perform(get("/api/system/overview").header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("无权访问模块：system"));
     }
 
     @Test
-    @Order(5)
+    @Order(6)
     void wrongPasswordReturnsUnauthorized() throws Exception {
         Csrf registerCsrf = csrf();
         mockMvc.perform(post("/api/auth/register")

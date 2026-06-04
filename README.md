@@ -19,9 +19,10 @@
 访问：
 
 - Vue 前端：http://localhost:5173
-- API Gateway：http://localhost:8080
-- 系统不提供默认账号密码；首次注册账号自动成为 `ADMIN`
-- 登录使用 Bearer Token，默认 15 分钟有效，不使用 Cookie 登录态
+- API Gateway：http://localhost:8080，构建前端后同样优先托管 `semirisk-ui/dist`
+- 启动管理员：`kaduoxli / 123qwe123`，角色 `ADMIN`
+- 后续 QQ 邮箱注册用户默认为 `OPERATOR`
+- 登录使用 Bearer Token，默认 30 分钟滑动有效，不使用 Cookie 登录态
 
 ## 中间件地址
 
@@ -36,7 +37,7 @@
 
 当前 VM 部署目录为 `/opt/semirisk`，中间件 Compose 位于 `/opt/semirisk/middleware`，部署包位于 `/opt/semirisk/packages/semirisk-middleware-deploy.tgz`。
 
-当前实现为可运行的前后端分离微服务版本。登录注册优先持久化到 MySQL，失败计数优先使用 Redis；公开源风险数据启动/手动实时爬取并每 12 小时自动刷新，知识库检索已接入 Elasticsearch `semirisk_knowledge`。
+当前实现为可运行的前后端分离微服务版本。登录注册优先持久化到 MySQL，VM/MySQL 暂不可达时使用本地兜底账号；失败计数优先使用 Redis；公开源风险数据启动/手动实时爬取并每 12 小时自动刷新，知识库检索已接入 Elasticsearch `semirisk_knowledge`，AI 问答在配置 Key 后真实调用 DeepSeek。
 
 ## 模块
 

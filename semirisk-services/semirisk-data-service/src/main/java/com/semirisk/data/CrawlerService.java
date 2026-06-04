@@ -201,14 +201,18 @@ public class CrawlerService {
         String normalized = title.toLowerCase(Locale.ROOT);
         int score = 35;
         if (containsAny(normalized, "delay", "strike", "shortage", "disrupt", "congestion", "bankruptcy", "shutdown", "tariff")
-                || title.contains("中断") || title.contains("拥堵") || title.contains("短缺") || title.contains("关税")) {
+                || title.contains("中断") || title.contains("拥堵") || title.contains("短缺") || title.contains("关税")
+                || title.contains("制裁") || title.contains("停产") || title.contains("断供") || title.contains("延期")) {
             score += 28;
         }
         if (containsAny(normalized, "price", "commodity", "freight", "export", "restriction", "regulation", "semiconductor", "chip")
-                || title.contains("价格") || title.contains("出口") || title.contains("半导体")) {
+                || title.contains("价格") || title.contains("出口") || title.contains("半导体") || title.contains("芯片")
+                || title.contains("供应链") || title.contains("产业链") || title.contains("物流") || title.contains("港口")
+                || title.contains("海关") || title.contains("贸易") || title.contains("制造")) {
             score += 18;
         }
-        if (containsAny(normalized, "risk", "warning", "lawsuit", "recall", "sanction")) {
+        if (containsAny(normalized, "risk", "warning", "lawsuit", "recall", "sanction")
+                || title.contains("风险") || title.contains("预警") || title.contains("召回") || title.contains("调查")) {
             score += 10;
         }
         String signal = score >= 75 ? "高危信号" : score >= 60 ? "中危信号" : "监控信号";

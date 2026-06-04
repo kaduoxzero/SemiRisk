@@ -2,12 +2,18 @@ package com.semirisk.service;
 
 import com.semirisk.common.AiModelDefaults;
 import com.semirisk.common.SemiriskConstants;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -36,19 +42,24 @@ public class SemiRiskStore {
     private final Map<String, String> publicAlertStatuses = new ConcurrentHashMap<>();
     private final Map<String, SystemUser> systemUsers = new ConcurrentHashMap<>();
     private final Map<String, AiModelConfig> aiModelConfigs = new ConcurrentHashMap<>();
+    private final Map<String, String> aiModelApiKeys = new ConcurrentHashMap<>();
+    private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
     private volatile DailyRiskSnapshot dailyRiskSnapshot;
     private final List<String> auditLogs = new ArrayList<>();
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
     private final String defaultAiApiKey;
+    private final ObjectMapper objectMapper;
 
     public SemiRiskStore(
             @Value("${semirisk.ai.default.model:" + AiModelDefaults.DEFAULT_MODEL + "}") String defaultAiModel,
             @Value("${semirisk.ai.default.endpoint:" + AiModelDefaults.DEFAULT_ENDPOINT + "}") String defaultAiEndpoint,
-            @Value("${semirisk.ai.default.api-key:}") String defaultAiApiKey) {
+            @Value("${semirisk.ai.default.api-key:}") String defaultAiApiKey,
+            ObjectMapper objectMapper) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.defaultAiApiKey = defaultAiApiKey;
+        this.objectMapper = objectMapper;
         seedDefaultAiModel();
         auditLogs.add("[INFO] gateway route table initialized");
         refreshDailyRiskRecords();
@@ -101,6 +112,20 @@ public class SemiRiskStore {
         users.put(username, account);
         addSystemUser(username, email, role);
         auditLogs.add("[INFO] public registration completed username=" + username);
+        return account;
+    }
+
+    public UserAccount upsertLoginUser(String username, String password, String displayName, String email, String role) {
+        UserAccount account = new UserAccount(username, password, displayName, role);
+        users.put(username, account);
+        systemUsers.values().stream()
+                .filter(user -> user.username().equals(username))
+                .findFirst()
+                .ifPresentOrElse(
+                        user -> systemUsers.put(user.id(), new SystemUser(user.id(), username, email, role, "启用")),
+                        () -> addSystemUser(username, email, role, "启用")
+                );
+        auditLogs.add("[INFO] login user " + username + " upserted with role " + role);
         return account;
     }
 
@@ -267,7 +292,10 @@ public class SemiRiskStore {
     }
 
     public List<String> auditLogs() {
-        return List.copyOf(auditLogs);
+        String today = LocalDate.now().toString();
+        return auditLogs.stream()
+                .map(log -> log.matches("^\\d{4}-\\d{2}-\\d{2}.*") ? log : today + " " + log)
+                .toList();
     }
 
     public List<RiskAlert> publicSignalAlerts() {
@@ -619,12 +647,22 @@ public class SemiRiskStore {
                     + "，维度为“" + top.dimension() + "”，规则评分 " + top.riskScore()
                     + "。建议先打开引用原文核验事实，再将高分信号转为告警工单。";
         }
+        List<String> context = new ArrayList<>(localKnowledgeLines());
+        context.addAll(matched.stream()
+                .limit(8)
+                .map(signal -> signal.source() + " | " + signal.dimension() + " | " + signal.title() + " | " + signal.sourceUrl())
+                .toList());
+        AiAnswer aiAnswer = callDeepSeek(q, context);
         return Map.of(
                 "question", q,
-                "answer", answer,
+                "answer", aiAnswer.answer().isBlank() ? answer : aiAnswer.answer(),
                 "model", defaultAiModel,
-                "modelStatus", aiModelConfigs.containsKey(defaultAiModel) ? "API Key 已配置，可扩展为真实 DeepSeek 调用" : "未配置 API Key，当前使用本地 RAG 摘要",
-                "trace", List.of("Query Rewrite", "Knowledge Retrieval", "Risk Scoring", "Answer Synthesis"),
+                "modelStatus", aiAnswer.status(),
+                "aiCalled", aiAnswer.called(),
+                "usage", aiAnswer.usage(),
+                "trace", aiAnswer.called()
+                        ? List.of("Query Rewrite", "Knowledge Retrieval", "DeepSeek Chat Completions", "Answer Synthesis")
+                        : List.of("Query Rewrite", "Knowledge Retrieval", "Risk Scoring", "Local Answer Synthesis"),
                 "citations", matched.stream().limit(5).map(signal -> Map.of(
                         "id", signal.id(),
                         "title", signal.title(),
@@ -648,12 +686,22 @@ public class SemiRiskStore {
                 + stringValue(top.get("source")) + "，维度为“" + stringValue(top.get("dimension"))
                 + "”，规则评分 " + top.getOrDefault("riskScore", 0)
                 + "。建议先打开引用原文核验事实，再将高分信号转为告警工单或报告输入。";
+        List<String> context = new ArrayList<>(localKnowledgeLines());
+        context.addAll(results.stream()
+                .limit(8)
+                .map(result -> stringValue(result.get("source")) + " | " + stringValue(result.get("dimension")) + " | " + stringValue(result.get("title")) + " | " + stringValue(result.get("sourceUrl")))
+                .toList());
+        AiAnswer aiAnswer = callDeepSeek(q, context);
         return Map.of(
                 "question", q,
-                "answer", answer,
+                "answer", aiAnswer.answer().isBlank() ? answer : aiAnswer.answer(),
                 "model", defaultAiModel,
-                "modelStatus", aiModelConfigs.containsKey(defaultAiModel) ? "API Key 已配置，可扩展为真实 DeepSeek 调用" : "未配置 API Key，当前使用 Elasticsearch RAG 摘要",
-                "trace", List.of("Query Rewrite", "Elasticsearch Retrieval", "Risk Scoring", "Answer Synthesis"),
+                "modelStatus", aiAnswer.status(),
+                "aiCalled", aiAnswer.called(),
+                "usage", aiAnswer.usage(),
+                "trace", aiAnswer.called()
+                        ? List.of("Query Rewrite", "Elasticsearch Retrieval", "DeepSeek Chat Completions", "Answer Synthesis")
+                        : List.of("Query Rewrite", "Elasticsearch Retrieval", "Risk Scoring", "Local Answer Synthesis"),
                 "citations", results.stream().limit(5).map(result -> {
                     Map<String, Object> citation = new HashMap<>();
                     citation.put("id", stringValue(result.get("id")));
@@ -667,6 +715,71 @@ public class SemiRiskStore {
                 }).toList(),
                 "answeredAt", Instant.now().toString()
         );
+    }
+
+    private AiAnswer callDeepSeek(String question, List<String> contextLines) {
+        String apiKey = aiModelApiKeys.getOrDefault(defaultAiModel, defaultAiApiKey == null ? "" : defaultAiApiKey);
+        if (apiKey == null || apiKey.isBlank()) {
+            return new AiAnswer(false, "", "未配置 API Key，当前使用本地 RAG 摘要", Map.of());
+        }
+        String endpoint = aiModelConfigs.getOrDefault(defaultAiModel, new AiModelConfig(defaultAiModel, defaultAiEndpoint, mask(apiKey), true, Instant.now())).endpoint();
+        String url = endpoint.endsWith("/chat/completions")
+                ? endpoint
+                : endpoint.replaceAll("/+$", "") + "/chat/completions";
+        try {
+            String apiModel = resolveDeepSeekApiModel(defaultAiModel);
+            Map<String, Object> payload = Map.of(
+                    "model", apiModel,
+                    "temperature", 0.2,
+                    "stream", false,
+                    "messages", List.of(
+                            Map.of("role", "system", "content", "你是 SemiRisk 半导体供应链风险智能体。只能依据给定公开源/本地知识库上下文回答，区分事实和建议，输出中文，结尾给出可执行处置建议。"),
+                            Map.of("role", "user", "content", "问题：" + question + "\n\n检索上下文：\n" + String.join("\n", contextLines))
+                    )
+            );
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(java.time.Duration.ofSeconds(25))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                auditLogs.add("[WARN] DeepSeek call failed status=" + response.statusCode());
+                return new AiAnswer(false, "", "DeepSeek 调用失败，HTTP " + response.statusCode() + "，已回退本地 RAG 摘要", Map.of("httpStatus", response.statusCode()));
+            }
+            JsonNode root = objectMapper.readTree(response.body());
+            String answer = root.path("choices").path(0).path("message").path("content").asText("");
+            Map<String, Object> usage = new HashMap<>();
+            JsonNode usageNode = root.path("usage");
+            if (!usageNode.isMissingNode()) {
+                usage.put("promptTokens", usageNode.path("prompt_tokens").asInt(0));
+                usage.put("completionTokens", usageNode.path("completion_tokens").asInt(0));
+                usage.put("totalTokens", usageNode.path("total_tokens").asInt(0));
+            }
+            usage.put("apiModel", apiModel);
+            auditLogs.add("[INFO] DeepSeek knowledge agent called model=" + apiModel + " displayModel=" + defaultAiModel + " totalTokens=" + usage.getOrDefault("totalTokens", 0));
+            return new AiAnswer(true, answer, "已调用 DeepSeek Chat Completions，模型返回成功；显示模型 " + defaultAiModel + "，实际请求模型 " + apiModel, usage);
+        } catch (Exception ex) {
+            auditLogs.add("[WARN] DeepSeek call exception " + ex.getClass().getSimpleName());
+            return new AiAnswer(false, "", "DeepSeek 调用异常：" + ex.getClass().getSimpleName() + "，已回退本地 RAG 摘要", Map.of("error", ex.getClass().getSimpleName()));
+        }
+    }
+
+    private List<String> localKnowledgeLines() {
+        return List.of(
+                "本地知识库 | SOP | 高危供应链告警先核验公开源原文，再确认影响物料、库存覆盖天数和替代供应商。",
+                "本地知识库 | 半导体 | 半导体供应链风险重点关注先进制程产能、封测排期、关键设备出口管制、物流节点拥堵和汇率/关税变化。",
+                "本地知识库 | 处置 | 当公开源出现关税、罢工、港口拥堵、制裁、短缺等关键词时，优先同步采购、物流、合规三类责任人。",
+                "本地知识库 | 报告 | 管理层报告需要给出事实来源、影响范围、评分依据、可选方案、负责人和闭环时间。"
+        );
+    }
+
+    private String resolveDeepSeekApiModel(String model) {
+        if ("deepseekv4-pro".equalsIgnoreCase(model) || "deepseek-v4-pro".equalsIgnoreCase(model)) {
+            return "deepseek-chat";
+        }
+        return model;
     }
 
     private List<Map<String, Object>> normalizeIndexedKnowledgeResults(List<Map<String, Object>> indexedResults) {
@@ -865,6 +978,9 @@ public class SemiRiskStore {
     public AiModelConfig saveAiModelConfig(String model, String endpoint, String apiKey) {
         AiModelConfig config = new AiModelConfig(model, endpoint, mask(apiKey), apiKey != null && !apiKey.isBlank(), Instant.now());
         aiModelConfigs.put(model, config);
+        if (apiKey != null && !apiKey.isBlank()) {
+            aiModelApiKeys.put(model, apiKey);
+        }
         auditLogs.add("[INFO] AI model config saved for " + model + " endpoint=" + endpoint);
         return config;
     }
@@ -890,6 +1006,7 @@ public class SemiRiskStore {
     private void seedDefaultAiModel() {
         if (defaultAiApiKey != null && !defaultAiApiKey.isBlank()) {
             aiModelConfigs.put(defaultAiModel, new AiModelConfig(defaultAiModel, defaultAiEndpoint, mask(defaultAiApiKey), true, Instant.now()));
+            aiModelApiKeys.put(defaultAiModel, defaultAiApiKey);
         }
     }
 
@@ -934,5 +1051,8 @@ public class SemiRiskStore {
     }
 
     public record AiModelConfig(String model, String endpoint, String maskedApiKey, boolean configured, Instant updatedAt) {
+    }
+
+    private record AiAnswer(boolean called, String answer, String status, Map<String, Object> usage) {
     }
 }

@@ -15,11 +15,11 @@
         <p class="muted">刷新时间：{{ state.dashboard.refreshedAt }}</p>
         <button class="btn" @click="actions.recalculateRisk">立即重新测算</button>
       </div>
-      <div class="panel">
+      <div class="panel fixed-panel">
         <h3>公开源爬虫信号</h3>
         <table>
           <tbody>
-            <tr v-for="signal in state.dashboard.dailyRisk?.signals || []" :key="signal.id">
+            <tr v-for="signal in visibleSignals" :key="signal.id">
               <td>
                 <a v-if="signal.sourceUrl" class="text-link" :href="signal.sourceUrl" target="_blank" rel="noreferrer">{{ signal.source }}</a>
                 <span v-else>{{ signal.source }}</span>
@@ -27,22 +27,37 @@
               <td>{{ signal.title }}</td>
               <td><span class="badge" :class="riskBadge(signal.riskScore)">{{ signal.status === 'OK' ? signal.riskScore : signal.status }}</span></td>
             </tr>
-            <tr v-if="!(state.dashboard.dailyRisk?.signals || []).length">
+            <tr v-if="!signals.length">
               <td colspan="3" class="muted">暂无公开源采集记录，请确认 data-service 已启动并可访问公开网站。</td>
             </tr>
           </tbody>
         </table>
+        <div class="pager">
+          <button class="btn secondary" :disabled="state.dashboardPage <= 1" @click="state.dashboardPage--">上一页</button>
+          <span>第 {{ state.dashboardPage }} / {{ totalPages }} 页</span>
+          <button class="btn secondary" :disabled="state.dashboardPage >= totalPages" @click="state.dashboardPage++">下一页</button>
+        </div>
       </div>
     </div>
   </section>
 </template>
 
 <script setup>
+import { computed, watch } from 'vue';
 import AuthPanel from '../components/AuthPanel.vue';
 
-defineProps({
+const props = defineProps({
   actions: { type: Object, required: true },
   state: { type: Object, required: true }
+});
+
+const pageSize = 8;
+const signals = computed(() => props.state.dashboard.dailyRisk?.signals || []);
+const totalPages = computed(() => Math.max(1, Math.ceil(signals.value.length / pageSize)));
+const visibleSignals = computed(() => signals.value.slice((props.state.dashboardPage - 1) * pageSize, props.state.dashboardPage * pageSize));
+
+watch(signals, () => {
+  props.state.dashboardPage = 1;
 });
 
 function riskBadge(score) {
