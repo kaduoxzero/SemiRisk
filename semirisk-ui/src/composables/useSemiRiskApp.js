@@ -1,0 +1,149 @@
+import { computed, onMounted, onUnmounted, reactive, watch } from 'vue';
+import { navItems } from '../constants/navigation';
+import { useAlerts } from './useAlerts';
+import { useAuth } from './useAuth';
+import { useDashboard } from './useDashboard';
+import { useEnterprise } from './useEnterprise';
+import { useGis } from './useGis';
+import { useKnowledge } from './useKnowledge';
+import { useReports } from './useReports';
+import { useRisk } from './useRisk';
+import { useSystem } from './useSystem';
+import { useToast } from './useToast';
+import { useUpload } from './useUpload';
+
+export function useSemiRiskApp() {
+  const state = reactive({
+    view: 'dashboard',
+    now: new Date().toLocaleString('zh-CN', { hour12: false }),
+    toast: '',
+    session: JSON.parse(localStorage.getItem('semiriskUser') || 'null'),
+    authMode: 'login',
+    loginForm: { username: 'admin', password: 'password', rememberMe: true },
+    registerForm: { username: '', password: '', displayName: '' },
+    dashboard: {},
+    uploads: [],
+    logs: [],
+    analysis: {},
+    riskDetail: {},
+    reportTemplates: [],
+    reportForm: { template: 'risk-assessment', language: '中文', format: 'PDF' },
+    reportJob: null,
+    alerts: [],
+    alertFilter: { keyword: '', level: '' },
+    layers: ['heatmap', 'suppliers', 'ports', 'routes'],
+    activeLayers: ['heatmap', 'suppliers'],
+    gis: {},
+    enterpriseKeyword: '安芯半导体供应链有限公司',
+    enterprise: {},
+    knowledgeQuery: '半导体物流中断',
+    knowledge: {},
+    system: {},
+    aiConfig: { model: 'deepseekv4-pro', endpoint: 'https://api.deepseek.com/v1', apiKey: '' }
+  });
+
+  const allowedNavItems = computed(() => {
+    if (!state.session) return navItems.filter(item => item.key === 'dashboard');
+    const modules = state.session?.modules;
+    if (!modules || !Array.isArray(modules)) return navItems;
+    return navItems.filter(item => modules.includes(item.key));
+  });
+
+  const currentTitle = computed(() => navItems.find(item => item.key === state.view)?.label || 'SemiRisk');
+  const { notify } = useToast(state);
+  const dashboard = useDashboard(state, notify);
+  const auth = useAuth(state, allowedNavItems, notify, dashboard.loadDashboard);
+  const upload = useUpload(state, notify);
+  const risk = useRisk(state, notify);
+  const reports = useReports(state, notify);
+  const alerts = useAlerts(state, notify);
+  const gis = useGis(state);
+  const enterprise = useEnterprise(state);
+  const knowledge = useKnowledge(state);
+  const system = useSystem(state, notify);
+
+  const loaders = {
+    dashboard: dashboard.loadDashboard,
+    upload: upload.loadUploads,
+    analysis: risk.loadRiskAnalysis,
+    detail: risk.loadRiskDetail,
+    report: reports.loadReportTemplates,
+    alerts: alerts.loadAlerts,
+    gis: gis.loadGis,
+    enterprise: enterprise.loadEnterprise,
+    knowledge: knowledge.searchKnowledge,
+    system: system.loadSystem
+  };
+
+  let clock;
+  let keyHandler;
+
+  function setView(view) {
+    if (!allowedNavItems.value.some(item => item.key === view)) {
+      state.view = 'dashboard';
+      return;
+    }
+    state.view = view;
+  }
+
+  function openRisk(id) {
+    state.view = 'detail';
+    risk.loadRiskDetail(id);
+  }
+
+  watch(() => state.view, async key => {
+    if (!allowedNavItems.value.some(item => item.key === key)) {
+      state.view = 'dashboard';
+      return;
+    }
+    await loaders[key]?.();
+  });
+
+  onMounted(async () => {
+    clock = setInterval(() => (state.now = new Date().toLocaleString('zh-CN', { hour12: false })), 1000);
+    keyHandler = event => {
+      if (event.ctrlKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setView('knowledge');
+      }
+    };
+    document.addEventListener('keydown', keyHandler);
+
+    if (state.session) {
+      const restored = await auth.restoreSession();
+      if (!restored) {
+        await dashboard.loadDashboard();
+        return;
+      }
+      if (!allowedNavItems.value.some(item => item.key === state.view)) {
+        state.view = allowedNavItems.value[0]?.key || 'dashboard';
+      }
+    }
+    await dashboard.loadDashboard();
+  });
+
+  onUnmounted(() => {
+    clearInterval(clock);
+    document.removeEventListener('keydown', keyHandler);
+  });
+
+  return {
+    state,
+    currentTitle,
+    allowedNavItems,
+    actions: {
+      ...auth,
+      ...dashboard,
+      ...upload,
+      ...risk,
+      ...reports,
+      ...alerts,
+      ...gis,
+      ...enterprise,
+      ...knowledge,
+      ...system,
+      openRisk,
+      setView
+    }
+  };
+}
