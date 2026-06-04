@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS crawler_record (
     id VARCHAR(64) PRIMARY KEY,
     source VARCHAR(512) NOT NULL,
     title VARCHAR(512) NOT NULL,
-    signal VARCHAR(64) NOT NULL,
+    risk_signal VARCHAR(64) NOT NULL,
     risk_score INT NOT NULL,
     fetched_at DATETIME NOT NULL,
     INDEX idx_crawler_record_fetched_at(fetched_at),

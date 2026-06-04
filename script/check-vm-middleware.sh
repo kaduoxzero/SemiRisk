@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VM_HOST="${VM_HOST:-192.168.101.128}"
+VM_HOST="${VM_HOST:-192.168.101.130}"
 
 check_port() {
   local name="$1"

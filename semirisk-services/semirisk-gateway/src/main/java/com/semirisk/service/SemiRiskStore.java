@@ -363,8 +363,8 @@ public class SemiRiskStore {
                 ),
                 "logs", auditLogs(),
                 "dataSources", List.of(
-                        Map.of("name", "SAP ERP", "status", "健康", "host", "192.168.101.128:3306"),
-                        Map.of("name", "三方 GIS Webhook", "status", "阻断", "host", "192.168.101.128:8088")
+                        Map.of("name", "SAP ERP", "status", "健康", "host", "192.168.101.130:3306"),
+                        Map.of("name", "三方 GIS Webhook", "status", "阻断", "host", "192.168.101.130:8088")
                 )
         );
     }

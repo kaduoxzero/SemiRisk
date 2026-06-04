@@ -54,7 +54,7 @@ services:
     image: semirisk/alert-service:latest
     environment:
       SEMIRISK_ALERT_PORT: 8084
-      SEMIRISK_MIDDLEWARE_HOST: ${SEMIRISK_MIDDLEWARE_HOST:-192.168.101.128}
+      SEMIRISK_MIDDLEWARE_HOST: ${SEMIRISK_MIDDLEWARE_HOST:-192.168.101.130}
     ports:
       - "8084:8084"
 
@@ -79,7 +79,7 @@ services:
     image: semirisk/gateway:latest
     environment:
       SEMIRISK_PORT: 8080
-      SEMIRISK_MIDDLEWARE_HOST: ${SEMIRISK_MIDDLEWARE_HOST:-192.168.101.128}
+      SEMIRISK_MIDDLEWARE_HOST: ${SEMIRISK_MIDDLEWARE_HOST:-192.168.101.130}
       SEMIRISK_FLYWAY_ENABLED: ${SEMIRISK_FLYWAY_ENABLED:-false}
       SEMIRISK_AI_MODEL: ${SEMIRISK_AI_MODEL:-deepseekv4-pro}
       SEMIRISK_AI_ENDPOINT: ${SEMIRISK_AI_ENDPOINT:-https://api.deepseek.com/v1}

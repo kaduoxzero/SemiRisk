@@ -486,7 +486,7 @@ public class SemiRiskController {
 
     @PostMapping("/system/datasources/{name}/reconnect")
     public ApiResponse<Map<String, Object>> reconnect(@PathVariable String name) {
-        return ApiResponse.ok("数据源重连成功", Map.of("source", name, "host", "192.168.101.128"));
+        return ApiResponse.ok("数据源重连成功", Map.of("source", name, "host", "192.168.101.130"));
     }
 
     public record LoginRequest(@NotBlank String username, @NotBlank String password, boolean rememberMe, String captchaToken) {
