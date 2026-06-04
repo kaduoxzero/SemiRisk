@@ -20,7 +20,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -28,6 +30,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 @Service
 public class CrawlerService {
+
+    private static final int RECENT_WINDOW_DAYS = 3;
+    private static final int PER_SOURCE_LIMIT = 12;
 
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(4)).build();
     private final CopyOnWriteArrayList<CrawlerRecord> dailyRecords = new CopyOnWriteArrayList<>();
@@ -42,7 +47,7 @@ public class CrawlerService {
         refreshDailyRecords();
     }
 
-    @Scheduled(cron = "0 */10 * * * *")
+    @Scheduled(cron = "0 0 */12 * * *")
     public void refreshDailyRecords() {
         List<CrawlerRecord> records = new ArrayList<>();
         for (SourceSpec source : sources) {
@@ -63,17 +68,25 @@ public class CrawlerService {
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(source.url()))
                     .timeout(Duration.ofSeconds(6))
-                    .header("User-Agent", "SemiRiskCrawler/1.0")
+                    .header("User-Agent", "Mozilla/5.0 SemiRiskCrawler/1.0")
                     .header("Accept", "application/rss+xml, application/xml, text/xml, */*")
                     .GET()
                     .build();
             String xml = httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body();
             List<FeedItem> items = parseFeed(xml);
             if (items.isEmpty()) {
-                return List.of(failed(source, "公开源返回内容未解析到 RSS 条目"));
+                return List.of(failed(source, "公开源返回内容未解析到 RSS/Atom 条目"));
             }
-            return items.stream()
-                    .limit(4)
+            Instant cutoff = Instant.now().minus(RECENT_WINDOW_DAYS, ChronoUnit.DAYS);
+            List<FeedItem> recentItems = items.stream()
+                    .filter(item -> !item.publishedAt().isBefore(cutoff))
+                    .sorted(Comparator.comparing(FeedItem::publishedAt).reversed())
+                    .limit(PER_SOURCE_LIMIT)
+                    .toList();
+            if (recentItems.isEmpty()) {
+                return List.of(failed(source, "近三天未发现 RSS/Atom 条目"));
+            }
+            return recentItems.stream()
                     .map(item -> record(source, item))
                     .toList();
         } catch (Exception ex) {
@@ -102,6 +115,8 @@ public class CrawlerService {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
             factory.setNamespaceAware(false);
             Document document = factory.newDocumentBuilder().parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
             NodeList nodes = document.getElementsByTagName("item");
@@ -110,7 +125,31 @@ public class CrawlerService {
                 if (node instanceof Element element) {
                     String title = childText(element, "title");
                     String link = childText(element, "link");
+                    if (link.isBlank()) {
+                        link = childText(element, "guid");
+                    }
                     String published = childText(element, "pubDate");
+                    if (!title.isBlank()) {
+                        items.add(new FeedItem(title, link, parsePublishedAt(published)));
+                    }
+                }
+            }
+            NodeList entries = document.getElementsByTagName("entry");
+            for (int i = 0; i < entries.getLength(); i++) {
+                Node node = entries.item(i);
+                if (node instanceof Element element) {
+                    String title = childText(element, "title");
+                    String link = childText(element, "link");
+                    if (link.isBlank()) {
+                        link = childAttribute(element, "link", "href");
+                    }
+                    if (link.isBlank()) {
+                        link = childText(element, "id");
+                    }
+                    String published = childText(element, "published");
+                    if (published.isBlank()) {
+                        published = childText(element, "updated");
+                    }
                     if (!title.isBlank()) {
                         items.add(new FeedItem(title, link, parsePublishedAt(published)));
                     }
@@ -129,7 +168,15 @@ public class CrawlerService {
         try {
             return ZonedDateTime.parse(value.trim(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
         } catch (Exception ignored) {
-            return Instant.now();
+            try {
+                return Instant.parse(value.trim());
+            } catch (Exception ignoredAgain) {
+                try {
+                    return ZonedDateTime.parse(value.trim(), DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant();
+                } catch (Exception ignoredFinally) {
+                    return Instant.now();
+                }
+            }
         }
     }
 
@@ -139,6 +186,14 @@ public class CrawlerService {
             return "";
         }
         return nodes.item(0).getTextContent().replaceAll("\\s+", " ").trim();
+    }
+
+    private String childAttribute(Element item, String tagName, String attributeName) {
+        NodeList nodes = item.getElementsByTagName(tagName);
+        if (nodes.getLength() == 0 || !(nodes.item(0) instanceof Element element)) {
+            return "";
+        }
+        return element.getAttribute(attributeName).replaceAll("\\s+", " ").trim();
     }
 
     private CrawlerRecord record(SourceSpec source, FeedItem item) {

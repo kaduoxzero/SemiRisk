@@ -26,7 +26,7 @@ public class RiskComputationService {
         recalculate();
     }
 
-    @Scheduled(cron = "0 */10 * * * *")
+    @Scheduled(cron = "0 0 */12 * * *")
     public void recalculate() {
         List<Map<String, Object>> records = fetchCrawlerRecords().stream()
                 .filter(record -> "OK".equalsIgnoreCase(String.valueOf(record.getOrDefault("status", "OK"))))
@@ -44,7 +44,7 @@ public class RiskComputationService {
                 .orElse(0);
         int score = Math.min(96, Math.max(35, max + records.size() * 3));
         String level = score >= 80 ? "高危" : score >= 60 ? "中危" : "低危";
-        String summary = "AI 自动测算结果：" + level + "，今日风险分 " + score + "，由公开网站爬虫记录和规则评分共同驱动。";
+        String summary = "AI 自动测算结果：" + level + "，当前风险分 " + score + "，由近三天公开网站爬虫记录和规则评分共同驱动。";
         List<String> reasons = records.stream()
                 .limit(5)
                 .map(record -> String.valueOf(record.getOrDefault("title", "供应链情报信号")))
@@ -60,7 +60,7 @@ public class RiskComputationService {
     private List<Map<String, Object>> fetchCrawlerRecords() {
         try {
             Map<String, Object> response = restClient.get()
-                    .uri("/api/crawler/records/today")
+                    .uri("/api/crawler/records/recent")
                     .retrieve()
                     .body(Map.class);
             Object data = response == null ? null : response.get("data");

@@ -38,7 +38,7 @@
 - 每 30 秒轮询 `/api/dashboard/overview`
 - 展示 KPI、热点、原材料风险、AI 摘要
 - 高危项可跳转风险详情或企业画像
-- 展示本日爬虫信号与 AI 自动风险测算结果
+- 展示近三天公开源爬虫信号与 AI 自动风险测算结果
 - 支持手动触发重新测算
 
 ### 3.4 数据上传与清洗
@@ -49,7 +49,7 @@
 - 上传调用 `/api/data/uploads`
 - AI 清洗日志通过 `/api/data/uploads/logs` SSE 推送
 - 解析按钮调用 `/api/data/uploads/{id}/parse`
-- 数据服务、风险测算、AI 报告占位和 Gateway 聚合兜底均每 10 分钟刷新一次
+- 数据服务启动时实时爬取公开 RSS/Atom，之后每 12 小时自动重新爬取；手动刷新接口必须立即重新爬取公开源，不允许使用写死记录
 
 ### 3.5 AI 风险深度分析 `risk-analysis.html`
 
@@ -59,10 +59,12 @@
 
 ### 3.6 风险详情 `risk-detail.html`
 
-- 读取 URL 参数 `id`
-- 调用 `/api/risk/events/{id}`
-- 指派负责人调用 `/api/risk/events/{id}/assign`
-- 生成处置报告调用 `/api/risk/events/{id}/dispatch-report`
+- 从预警中心进入时读取选中告警 `id`
+- 调用 `/api/risk/events/{id}` 后只展示当前这一条公开源告警的信息
+- 必须展示来源、原文链接、发布时间、等级、状态、风险评分
+- 必须展示 `translation.zh` 与 `translation.en`，并提供中英文对照表
+- 从预警中心进入的详情页不展示 SOP、定损、传导路径和批量处置内容
+- 指派负责人 `/api/risk/events/{id}/assign` 与报告下发 `/api/risk/events/{id}/dispatch-report` 作为兼容处置流接口保留，不作为预警详情默认交互
 
 ### 3.7 报告生成 `report-generation.html`
 
@@ -79,6 +81,8 @@
 - 支持关键词、等级、状态筛选
 - 默认不展示已忽略告警，切换状态为“已忽略”后可追踪历史
 - 每行展示公开源名称和原文链接
+- 列表至少覆盖近三天真实公开源成功采集记录派生的告警；采集失败记录不作为真实告警展示
+- 点击详情只展示该行对应告警本身，并展示中英文对照
 - 复选框选择后才能执行批量处理
 - 忽略调用 `/api/alerts/{id}/ignore`
 - 批量处理调用 `/api/alerts/batch-process`
@@ -99,6 +103,7 @@
 
 - Ctrl+K 聚焦搜索框
 - 检索调用 `/api/knowledge/search`，优先使用 Elasticsearch 索引 `semirisk_knowledge`
+- 默认最多展示 30 条知识库检索结果，内容来自近三天公开源成功采集记录或 ES 索引
 - AI 问答调用 `/api/knowledge/ask`，优先基于 ES 检索引用生成回答
 - 问答结果必须展示回答、检索链路、引用原文和模型状态
 - 标签点击触发一键检索
@@ -129,4 +134,5 @@
 - POST/PUT/DELETE 等写接口必须启用 CSRF Token 校验
 - 后端必须执行输入清洗和参数校验，防止前端绕过校验
 - 风险类页面优先使用公开源爬虫数据；公开源不可达时显示待采集或采集失败，不允许伪造实时事件
+- 公开源爬虫必须在服务启动和手动刷新时实时抓取，自动周期为每 12 小时
 - 告警忽略后默认列表和计数器不再重复出现该告警

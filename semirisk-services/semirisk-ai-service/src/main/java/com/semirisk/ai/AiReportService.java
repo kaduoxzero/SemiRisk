@@ -24,14 +24,14 @@ public class AiReportService {
         generateReport();
     }
 
-    @Scheduled(cron = "0 */10 * * * *")
+    @Scheduled(cron = "0 0 */12 * * *")
     public void generateReport() {
         boolean configured = defaultApiKey != null && !defaultApiKey.isBlank();
         latestReport.set(Map.of(
                 "title", "SemiRisk AI 本日风险分析",
                 "model", defaultModel,
                 "configured", configured,
-                "summary", "系统已完成本日爬虫情报聚合、风险测算和处置建议生成。当前默认模型为 " + defaultModel + "。",
+                "summary", "系统已完成近三天公开源情报聚合、风险测算和处置建议生成。当前默认模型为 " + defaultModel + "。",
                 "recommendation", "优先检查高危港口、关键供应商现金流和稀有金属安全库存。",
                 "generatedAt", Instant.now().toString()
         ));

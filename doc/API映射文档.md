@@ -59,9 +59,9 @@ Authorization: Bearer <login/register 返回的 token>
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
 | risk-analysis.html | GET | `/api/risk/analysis?window=24h` | 深度分析数据切片 |
-| risk-detail.html | GET | `/api/risk/events/{id}` | 单一风险事件详情 |
-| risk-detail.html | POST | `/api/risk/events/{id}/assign` | 指派负责人，状态变更为处理中 |
-| risk-detail.html | POST | `/api/risk/events/{id}/dispatch-report` | 下发处置报告 |
+| risk-detail.html | GET | `/api/risk/events/{id}` | 从预警中心进入时只返回单一公开源告警详情，包含 `translation` 和 `bilingualRows` 中英文对照 |
+| risk-detail.html | POST | `/api/risk/events/{id}/assign` | 兼容处置流接口，指派负责人，状态变更为处理中 |
+| risk-detail.html | POST | `/api/risk/events/{id}/dispatch-report` | 兼容处置流接口，下发处置报告 |
 | Vue 首页 | GET | `/api/risk-score/today` | 获取本日 AI 自动测算风险 |
 | Vue 首页 | POST | `/api/risk-score/recalculate` | 手动触发本日风险重算 |
 
@@ -78,10 +78,18 @@ Authorization: Bearer <login/register 返回的 token>
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
-| alert-center.html | GET | `/api/alerts` | 告警列表，支持 `keyword`、`level`、`status`；默认不返回已忽略公开源告警 |
+| alert-center.html | GET | `/api/alerts` | 告警列表，支持 `keyword`、`level`、`status`；返回近三天真实公开源成功采集记录派生的告警，默认不返回已忽略公开源告警 |
 | alert-center.html | GET | `/api/alerts/counts` | 高中低危未忽略计数 |
 | alert-center.html | PUT | `/api/alerts/{id}/ignore` | 忽略告警，公开源告警状态写入 Gateway 状态集 |
 | alert-center.html | POST | `/api/alerts/batch-process` | 批量流转选中的告警为处理中 |
+
+预警中心点击“详情”后，`/api/risk/events/{id}` 的核心返回字段：
+
+- `alertOnly`：固定为 `true`
+- `id`、`level`、`status`、`type`、`riskScore`
+- `source`、`sourceUrl`、`firstSeen`
+- `originalTitle`、`translation.zh`、`translation.en`
+- `bilingualRows[]`：中英文对照行，包含 `zhLabel`、`zh`、`enLabel`、`en`
 
 ## 8. GIS、企业画像、知识库
 
@@ -89,7 +97,7 @@ Authorization: Bearer <login/register 返回的 token>
 |---|---|---|---|
 | gis-map.html | GET | `/api/gis/map?layers=heatmap,suppliers,ports,routes` | GIS 图层、点位与多条公开源路径数据 |
 | enterprise-profile.html | GET | `/api/enterprises/profile?keyword=...` | 企业画像搜索重载 |
-| knowledge-base.html | GET | `/api/knowledge/search?query=...` | RAG 检索，优先查询 Elasticsearch 索引 `semirisk_knowledge`，ES 不可用时回退公开源内存记录 |
+| knowledge-base.html | GET | `/api/knowledge/search?query=...` | RAG 检索，优先查询 Elasticsearch 索引 `semirisk_knowledge`，ES 不可用时回退公开源内存记录，默认最多返回 30 条 |
 | knowledge-base.html | POST | `/api/knowledge/ask` | AI 知识库智能体问答，优先使用 Elasticsearch 检索结果生成回答、检索链路和引用 |
 | knowledge-base.html | GET | `/api/knowledge/preview/{id}` | 文档在线预览 |
 
@@ -111,8 +119,9 @@ Authorization: Bearer <login/register 返回的 token>
 
 | 服务 | 方法 | API | 说明 |
 |---|---|---|---|
-| semirisk-data-service:8081 | GET | `/api/crawler/records/today` | 查询本日爬虫记录 |
-| semirisk-data-service:8081 | POST | `/api/crawler/refresh` | 手动刷新爬虫记录 |
+| semirisk-data-service:8081 | GET | `/api/crawler/records/recent` | 查询近三天真实公开源爬虫记录 |
+| semirisk-data-service:8081 | GET | `/api/crawler/records/today` | 兼容旧路径，当前同样返回近三天真实公开源爬虫记录 |
+| semirisk-data-service:8081 | POST | `/api/crawler/refresh` | 手动实时重新爬取公开源记录 |
 | semirisk-risk-service:8082 | GET | `/api/risk-score/today` | 查询本日风险测算 |
 | semirisk-risk-service:8082 | POST | `/api/risk-score/recalculate` | 手动重算风险 |
 | semirisk-ai-service:8083 | POST | `/api/ai/models/config` | 保存 DeepSeek 模型 Endpoint 与 API Key |

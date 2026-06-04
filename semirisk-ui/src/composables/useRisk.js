@@ -5,7 +5,18 @@ export function useRisk(state, notify) {
     state.analysis = await riskApi.analysis(windowName);
   }
 
-  async function loadRiskDetail(id = 'RA-20260603-001') {
+  async function loadRiskDetail(id = state.alerts[0]?.id || '') {
+    if (!id) {
+      state.riskDetail = {
+        alertOnly: true,
+        id: '',
+        title: '请先从预警中心选择一条公开源告警',
+        titleEn: 'Select one public-source alert from Alert Center first',
+        level: '待采集',
+        status: '未选择'
+      };
+      return;
+    }
     state.riskDetail = await riskApi.detail(id);
   }
 

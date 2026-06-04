@@ -33,6 +33,7 @@ export function useSemiRiskApp() {
     uploads: [],
     logs: [],
     analysis: {},
+    selectedRiskId: '',
     riskDetail: {},
     reportTemplates: [],
     reportForm: { template: 'risk-assessment', language: '中文', format: 'PDF' },
@@ -82,7 +83,7 @@ export function useSemiRiskApp() {
     dashboard: dashboard.loadDashboard,
     upload: upload.loadUploads,
     analysis: risk.loadRiskAnalysis,
-    detail: risk.loadRiskDetail,
+    detail: () => risk.loadRiskDetail(state.selectedRiskId),
     report: reports.loadReportTemplates,
     alerts: alerts.loadAlerts,
     gis: gis.loadGis,
@@ -112,7 +113,9 @@ export function useSemiRiskApp() {
   }
 
   function openRisk(id) {
+    state.selectedRiskId = id;
     state.view = 'detail';
+    if (route.name !== 'detail') router.push('/detail');
     risk.loadRiskDetail(id);
   }
 

@@ -620,6 +620,66 @@ th { color: var(--muted); font-size: 12px; }
   font-weight: 800;
 }
 
+.alert-detail-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.alert-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.alert-detail-head p {
+  margin: 0 0 6px;
+}
+
+.alert-detail-head h3 {
+  margin: 0;
+  max-width: 920px;
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.alert-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.alert-detail-grid > div,
+.translation-card {
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, .14);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .48);
+  padding: 12px;
+}
+
+.alert-detail-grid span,
+.alert-detail-grid strong {
+  display: block;
+}
+
+.alert-detail-grid strong {
+  margin-top: 5px;
+  color: white;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.translation-card p {
+  margin: 0 0 10px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.compact-table table {
+  min-width: 860px;
+}
+
 .gis-table {
   grid-column: 1 / -1;
 }
@@ -630,6 +690,7 @@ th { color: var(--muted); font-size: 12px; }
   .sidebar { position: relative; height: auto; }
   .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cols-2, .cols-3, .cols-4 { grid-template-columns: 1fr; }
+  .alert-detail-grid { grid-template-columns: 1fr; }
   .auth-panel { grid-template-columns: 1fr; }
   .gis-page { grid-template-columns: 1fr; }
   .gis-map-panel { min-height: auto; }

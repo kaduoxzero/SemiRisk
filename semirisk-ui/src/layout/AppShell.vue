@@ -36,8 +36,6 @@
         </div>
         <div v-else class="toolbar">
           <span class="muted">未登录仅可访问首页风险总览</span>
-          <button class="btn" @click="$emit('auth-mode', 'login')">登录</button>
-          <button class="btn secondary" @click="$emit('auth-mode', 'register')">注册</button>
         </div>
       </header>
 

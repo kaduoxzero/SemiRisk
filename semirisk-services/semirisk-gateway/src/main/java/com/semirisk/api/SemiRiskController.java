@@ -522,14 +522,14 @@ public class SemiRiskController {
     @GetMapping("/knowledge/search")
     public ApiResponse<Map<String, Object>> knowledge(@RequestParam(required = false) String query) {
         syncPublicCrawlerRecords();
-        List<Map<String, Object>> indexedResults = knowledgeSearchIndexService.search(query, 10);
+        List<Map<String, Object>> indexedResults = knowledgeSearchIndexService.search(query, 30);
         return ApiResponse.ok(store.knowledge(query, indexedResults));
     }
 
     @PostMapping("/knowledge/ask")
     public ApiResponse<Map<String, Object>> askKnowledge(@Valid @RequestBody KnowledgeAskRequest request) {
         syncPublicCrawlerRecords();
-        List<Map<String, Object>> indexedResults = knowledgeSearchIndexService.search(request.question(), 5);
+        List<Map<String, Object>> indexedResults = knowledgeSearchIndexService.search(request.question(), 8);
         return ApiResponse.ok("AI 知识库智能体回答完成", store.askKnowledgeAgent(request.question(), indexedResults));
     }
 

@@ -36,14 +36,14 @@
 
 当前 VM 部署目录为 `/opt/semirisk`，中间件 Compose 位于 `/opt/semirisk/middleware`，部署包位于 `/opt/semirisk/packages/semirisk-middleware-deploy.tgz`。
 
-当前实现为可运行的前后端分离微服务版本。登录注册优先持久化到 MySQL，失败计数优先使用 Redis；公开源风险数据每 10 分钟刷新，知识库检索已接入 Elasticsearch `semirisk_knowledge`。
+当前实现为可运行的前后端分离微服务版本。登录注册优先持久化到 MySQL，失败计数优先使用 Redis；公开源风险数据启动/手动实时爬取并每 12 小时自动刷新，知识库检索已接入 Elasticsearch `semirisk_knowledge`。
 
 ## 模块
 
 - `semirisk-ui`：Vue 前端
 - `semirisk-common`：公共响应结构
 - `semirisk-services/semirisk-gateway`：统一 API 入口
-- `semirisk-services/semirisk-data-service`：爬虫和 10 分钟刷新记录
+- `semirisk-services/semirisk-data-service`：公开源实时爬虫和 12 小时自动刷新记录
 - `semirisk-services/semirisk-risk-service`：AI 风险测算
 - `semirisk-services/semirisk-ai-service`：AI API Key 和报告分析占位
 

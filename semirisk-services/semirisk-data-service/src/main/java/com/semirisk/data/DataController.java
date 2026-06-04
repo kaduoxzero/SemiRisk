@@ -23,10 +23,14 @@ public class DataController {
         return ApiResponse.ok(crawlerService.records());
     }
 
+    @GetMapping("/records/recent")
+    public ApiResponse<List<CrawlerRecord>> recent() {
+        return ApiResponse.ok(crawlerService.records());
+    }
+
     @PostMapping("/refresh")
     public ApiResponse<List<CrawlerRecord>> refresh() {
         crawlerService.refreshDailyRecords();
         return ApiResponse.ok("爬虫刷新完成", crawlerService.records());
     }
 }
-

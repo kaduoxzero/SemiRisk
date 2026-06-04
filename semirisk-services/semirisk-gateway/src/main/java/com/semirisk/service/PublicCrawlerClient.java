@@ -21,7 +21,7 @@ public class PublicCrawlerClient {
     public List<SemiRiskStore.CrawlerSignal> today() {
         try {
             Map<String, Object> response = restClient.get()
-                    .uri("/api/crawler/records/today")
+                    .uri("/api/crawler/records/recent")
                     .retrieve()
                     .body(Map.class);
             Object data = response == null ? null : response.get("data");
