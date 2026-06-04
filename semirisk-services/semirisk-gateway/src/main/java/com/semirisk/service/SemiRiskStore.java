@@ -32,6 +32,7 @@ public class SemiRiskStore {
     private final Map<String, UploadTask> uploadTasks = new ConcurrentHashMap<>();
     private final Map<String, ReportJob> reportJobs = new ConcurrentHashMap<>();
     private final Map<String, RiskAlert> alerts = new ConcurrentHashMap<>();
+    private final Map<String, String> publicAlertStatuses = new ConcurrentHashMap<>();
     private final Map<String, SystemUser> systemUsers = new ConcurrentHashMap<>();
     private final Map<String, AiModelConfig> aiModelConfigs = new ConcurrentHashMap<>();
     private volatile DailyRiskSnapshot dailyRiskSnapshot;
@@ -160,10 +161,14 @@ public class SemiRiskStore {
             return publicSignalAlerts().stream()
                     .filter(alert -> alert.id().equals(id))
                     .findFirst()
-                    .map(alert -> new RiskAlert(alert.id(), alert.time(), alert.level(), alert.title(), alert.source(), status, alert.target()))
+                    .map(alert -> {
+                        publicAlertStatuses.put(id, status);
+                        auditLogs.add("[INFO] public alert " + id + " marked as " + status);
+                        return new RiskAlert(alert.id(), alert.time(), alert.level(), alert.title(), alert.source(), alert.sourceUrl(), status, alert.target());
+                    })
                     .orElseThrow(() -> new IllegalArgumentException("告警不存在"));
         }
-        RiskAlert updated = new RiskAlert(current.id(), current.time(), current.level(), current.title(), current.source(), status, current.target());
+        RiskAlert updated = new RiskAlert(current.id(), current.time(), current.level(), current.title(), current.source(), current.sourceUrl(), status, current.target());
         alerts.put(id, updated);
         auditLogs.add("[INFO] alert " + id + " marked as " + status);
         return updated;
@@ -372,10 +377,12 @@ public class SemiRiskStore {
 
     public Map<String, Object> gis(String layers) {
         List<CrawlerSignal> availableSignals = availableSignals();
+        List<Map<String, Object>> points = gisPoints(availableSignals);
         return Map.of(
                 "layers", layers == null ? "heatmap,suppliers,ports,routes" : layers,
                 "regions", regionsFromSignals(availableSignals),
-                "points", gisPoints(availableSignals),
+                "points", points,
+                "routes", gisRoutes(points),
                 "updatedAt", dailyRiskSnapshot.calculatedAt().toString(),
                 "dataSource", "公开网站 RSS 条目映射到来源区域，仅用于风险空间视图"
         );
@@ -399,6 +406,42 @@ public class SemiRiskStore {
                         "summary", signal.source() + " / " + signal.dimension() + " / " + signal.fetchedAt(),
                         "url", signal.sourceUrl()
                 )).toList()
+        );
+    }
+
+    public Map<String, Object> askKnowledgeAgent(String question) {
+        String q = question == null || question.isBlank() ? "请总结当前供应链风险" : question.trim();
+        List<CrawlerSignal> candidates = availableSignals();
+        List<CrawlerSignal> matched = candidates.stream()
+                .filter(signal -> signalMatches(signal, q))
+                .toList();
+        if (matched.isEmpty()) {
+            matched = candidates.stream().limit(5).toList();
+        }
+        String answer;
+        if (matched.isEmpty()) {
+            answer = "知识库公开源暂无成功采集记录，无法给出可信问答结果。请先确认 data-service 可以访问公开 RSS 源。";
+        } else {
+            CrawlerSignal top = matched.get(0);
+            answer = "基于知识库检索到的公开源记录，当前最相关风险来自 " + top.source()
+                    + "，维度为“" + top.dimension() + "”，规则评分 " + top.riskScore()
+                    + "。建议先打开引用原文核验事实，再将高分信号转为告警工单。";
+        }
+        return Map.of(
+                "question", q,
+                "answer", answer,
+                "model", defaultAiModel,
+                "modelStatus", aiModelConfigs.containsKey(defaultAiModel) ? "API Key 已配置，可扩展为真实 DeepSeek 调用" : "未配置 API Key，当前使用本地 RAG 摘要",
+                "trace", List.of("Query Rewrite", "Knowledge Retrieval", "Risk Scoring", "Answer Synthesis"),
+                "citations", matched.stream().limit(5).map(signal -> Map.of(
+                        "id", signal.id(),
+                        "title", signal.title(),
+                        "source", signal.source(),
+                        "sourceUrl", signal.sourceUrl(),
+                        "score", signal.riskScore(),
+                        "fetchedAt", signal.fetchedAt().toString()
+                )).toList(),
+                "answeredAt", Instant.now().toString()
         );
     }
 
@@ -436,7 +479,7 @@ public class SemiRiskStore {
     private List<RiskAlert> publicAlerts(List<CrawlerSignal> signals) {
         return signals.stream()
                 .sorted(Comparator.comparing(CrawlerSignal::riskScore).reversed())
-                .map(signal -> new RiskAlert(signal.id(), signal.fetchedAt(), riskLevel(signal.riskScore()), signal.title(), signal.source(), "未处理", "risk-detail.html"))
+                .map(signal -> new RiskAlert(signal.id(), signal.fetchedAt(), riskLevel(signal.riskScore()), signal.title(), signal.source(), signal.sourceUrl(), publicAlertStatuses.getOrDefault(signal.id(), "未处理"), "risk-detail.html"))
                 .toList();
     }
 
@@ -498,6 +541,40 @@ public class SemiRiskStore {
             ));
         }
         return points;
+    }
+
+    private List<Map<String, Object>> gisRoutes(List<Map<String, Object>> points) {
+        if (points.size() < 2) {
+            return List.of();
+        }
+        List<Map<String, Object>> routes = new ArrayList<>();
+        for (int i = 0; i < points.size(); i++) {
+            Map<String, Object> from = points.get(i);
+            Map<String, Object> to = points.get((i + 1) % points.size());
+            int risk = Math.max(asInt(from.get("riskIndex")), asInt(to.get("riskIndex")));
+            routes.add(Map.of(
+                    "id", "GR-" + i,
+                    "name", from.get("name") + " -> " + to.get("name"),
+                    "fromLon", from.get("lon"),
+                    "fromLat", from.get("lat"),
+                    "toLon", to.get("lon"),
+                    "toLat", to.get("lat"),
+                    "riskIndex", risk,
+                    "sourceUrl", from.getOrDefault("sourceUrl", "")
+            ));
+        }
+        return routes;
+    }
+
+    private int asInt(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception ignored) {
+            return 0;
+        }
     }
 
     private String riskLevel(int score) {
@@ -586,7 +663,10 @@ public class SemiRiskStore {
     public record LoginState(boolean locked, int failures, Instant lockedUntil) {
     }
 
-    public record RiskAlert(String id, Instant time, String level, String title, String source, String status, String target) {
+    public record RiskAlert(String id, Instant time, String level, String title, String source, String sourceUrl, String status, String target) {
+        public RiskAlert(String id, Instant time, String level, String title, String source, String status, String target) {
+            this(id, time, level, title, source, "", status, target);
+        }
     }
 
     public record UploadTask(String id, String filename, long size, String status, Instant createdAt, int rows, List<String> warnings) {

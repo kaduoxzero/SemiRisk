@@ -57,7 +57,11 @@ export const enterpriseApi = {
 };
 
 export const knowledgeApi = {
-  search: query => request(`/api/knowledge/search?query=${encodeURIComponent(query)}`)
+  search: query => request(`/api/knowledge/search?query=${encodeURIComponent(query)}`),
+  ask: question => request('/api/knowledge/ask', {
+    method: 'POST',
+    body: JSON.stringify({ question })
+  })
 };
 
 export const systemApi = {

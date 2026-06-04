@@ -241,7 +241,11 @@ public class SemiRiskController {
     @PostMapping("/risk/events/{id}/assign")
     public ApiResponse<Map<String, Object>> assignRisk(@PathVariable String id, @RequestBody(required = false) Map<String, String> body) {
         String owner = body == null ? "默认负责人" : body.getOrDefault("owner", "默认负责人");
-        store.alert(id).ifPresent(alert -> store.updateAlertStatus(alert.id(), "处理中"));
+        try {
+            store.updateAlertStatus(id, "处理中");
+        } catch (IllegalArgumentException ignored) {
+            // Unknown risk ids still return a deterministic response for the current detail page.
+        }
         try {
             preparedRiskRepository.updateAlertStatus(id, "处理中");
             preparedRiskRepository.insertAuditLog("INFO", "risk assigned " + id + " owner=" + owner);
@@ -253,7 +257,11 @@ public class SemiRiskController {
 
     @PostMapping("/risk/events/{id}/dispatch-report")
     public ApiResponse<Map<String, Object>> dispatchReport(@PathVariable String id) {
-        store.alert(id).ifPresent(alert -> store.updateAlertStatus(alert.id(), "处理中"));
+        try {
+            store.updateAlertStatus(id, "处理中");
+        } catch (IllegalArgumentException ignored) {
+            // Unknown risk ids still return a deterministic response for the current detail page.
+        }
         try {
             preparedRiskRepository.updateAlertStatus(id, "处理中");
             preparedRiskRepository.insertAuditLog("INFO", "risk report dispatched " + id);
@@ -361,7 +369,7 @@ public class SemiRiskController {
         return alerts.stream()
                 .filter(alert -> keyword == null || keyword.isBlank() || alert.title().contains(keyword) || alert.source().contains(keyword))
                 .filter(alert -> level == null || level.isBlank() || alert.level().equals(level))
-                .filter(alert -> status == null || status.isBlank() || alert.status().equals(status))
+                .filter(alert -> status == null || status.isBlank() ? !"已忽略".equals(alert.status()) : alert.status().equals(status))
                 .toList();
     }
 
@@ -424,6 +432,12 @@ public class SemiRiskController {
     public ApiResponse<Map<String, Object>> knowledge(@RequestParam(required = false) String query) {
         syncPublicCrawlerRecords();
         return ApiResponse.ok(store.knowledge(query));
+    }
+
+    @PostMapping("/knowledge/ask")
+    public ApiResponse<Map<String, Object>> askKnowledge(@Valid @RequestBody KnowledgeAskRequest request) {
+        syncPublicCrawlerRecords();
+        return ApiResponse.ok("AI 知识库智能体回答完成", store.askKnowledgeAgent(request.question()));
     }
 
     @GetMapping(value = "/knowledge/preview/{id}", produces = "text/plain;charset=UTF-8")
@@ -559,5 +573,8 @@ public class SemiRiskController {
     }
 
     public record AiModelConfigRequest(@NotBlank String model, @NotBlank String endpoint, @NotBlank String apiKey) {
+    }
+
+    public record KnowledgeAskRequest(@NotBlank String question) {
     }
 }

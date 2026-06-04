@@ -11,9 +11,12 @@
 
       <div class="map-canvas">
         <svg class="route-network" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <path d="M32 38 C45 30 58 36 68 54" />
-          <path d="M68 54 C74 50 82 46 90 40" />
-          <path d="M32 38 C24 48 18 59 12 70" />
+          <path
+            v-for="route in visibleRoutes"
+            :key="route.id"
+            :d="routePath(route)"
+            :class="riskClass(route.riskIndex)"
+          />
         </svg>
         <div class="continent asia">亚太供应带</div>
         <div class="continent europe">欧洲港口群</div>
@@ -74,12 +77,12 @@
     </aside>
 
     <div class="panel gis-table">
-      <h3>点位清单</h3>
+      <h3>点位清单 · {{ routes.length }} 条公开源路径</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>点位</th><th>经度</th><th>纬度</th><th>风险指数</th><th>数据说明</th></tr></thead>
           <tbody>
-            <tr v-for="point in points" :key="point.name" @click="selectedPoint = point">
+            <tr v-for="point in points" :key="point.id || point.name" @click="selectedPoint = point">
               <td>{{ point.name }}</td>
               <td>{{ point.lon }}</td>
               <td>{{ point.lat }}</td>
@@ -106,7 +109,9 @@ const props = defineProps({
 
 const selectedPoint = ref(null);
 const points = computed(() => props.state.gis.points || []);
+const routes = computed(() => props.state.gis.routes || []);
 const regions = computed(() => props.state.gis.regions || []);
+const visibleRoutes = computed(() => props.state.activeLayers.includes('routes') ? routes.value : []);
 const activeLayerText = computed(() => props.state.activeLayers.map(layerName).join(' / '));
 
 watch(points, list => {
@@ -129,9 +134,26 @@ function layerName(layer) {
 }
 
 function pointStyle(point) {
-  const left = Math.min(94, Math.max(6, ((Number(point.lon) + 180) / 360) * 100));
-  const top = Math.min(86, Math.max(10, ((90 - Number(point.lat)) / 180) * 100));
+  const { x, y } = project(point.lon, point.lat);
+  const left = Math.min(94, Math.max(6, x));
+  const top = Math.min(86, Math.max(10, y));
   return { left: `${left}%`, top: `${top}%` };
+}
+
+function routePath(route) {
+  const from = project(route.fromLon, route.fromLat);
+  const to = project(route.toLon, route.toLat);
+  const curve = Math.max(5, Math.min(14, Math.abs(from.x - to.x) / 7));
+  const controlX = (from.x + to.x) / 2;
+  const controlY = Math.min(from.y, to.y) - curve;
+  return `M ${from.x.toFixed(2)} ${from.y.toFixed(2)} Q ${controlX.toFixed(2)} ${controlY.toFixed(2)} ${to.x.toFixed(2)} ${to.y.toFixed(2)}`;
+}
+
+function project(lon, lat) {
+  return {
+    x: ((Number(lon) + 180) / 360) * 100,
+    y: ((90 - Number(lat)) / 180) * 100
+  };
 }
 
 function riskClass(score) {

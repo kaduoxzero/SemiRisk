@@ -63,12 +63,16 @@
 - 点击立即生成调用 `/api/reports/jobs`
 - 轮询 `/api/reports/jobs/{id}`
 - 完成后调用 `/api/reports/{id}/download`
+- PDF、Word、PPT 选择必须分别导出 `.pdf`、`.docx`、`.pptx`
 
 ### 3.8 预警中心 `alert-center.html`
 
 - 告警列表调用 `/api/alerts`
 - 计数器调用 `/api/alerts/counts`
 - 支持关键词、等级、状态筛选
+- 默认不展示已忽略告警，切换状态为“已忽略”后可追踪历史
+- 每行展示公开源名称和原文链接
+- 复选框选择后才能执行批量处理
 - 忽略调用 `/api/alerts/{id}/ignore`
 - 批量处理调用 `/api/alerts/batch-process`
 
@@ -76,6 +80,7 @@
 
 - 图层勾选触发 `/api/gis/map`
 - 支持热力图、供应商、港口航道、物流路径图层
+- 后端返回 `points` 和 `routes`，前端需要动态渲染多条路径，不能只使用固定 SVG 线路
 - 点位详情可跳转风险详情
 
 ### 3.10 企业画像 `enterprise-profile.html`
@@ -87,6 +92,8 @@
 
 - Ctrl+K 聚焦搜索框
 - 检索调用 `/api/knowledge/search`
+- AI 问答调用 `/api/knowledge/ask`
+- 问答结果必须展示回答、检索链路、引用原文和模型状态
 - 标签点击触发一键检索
 - 预览调用 `/api/knowledge/preview/{id}`
 
@@ -110,3 +117,5 @@
 - `./script/start-ui.sh` 可启动前端
 - 登录页、上传页、告警页、报告页、系统管理页至少各有一个真实可验证交互
 - 中间件配置默认指向 `192.168.101.130`
+- 风险类页面优先使用公开源爬虫数据；公开源不可达时显示待采集或采集失败，不允许伪造实时事件
+- 告警忽略后默认列表和计数器不再重复出现该告警

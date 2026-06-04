@@ -16,7 +16,7 @@
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
 | index.html | POST | `/api/auth/login` | 账号密码登录，失败计数与锁定 |
-| Vue 首页 | POST | `/api/auth/register` | 注册账号，默认运营人员角色 |
+| Vue 首页 | POST | `/api/auth/register` | 注册账号，默认运营人员角色；邮箱必须为 QQ 邮箱 |
 | Vue 应用 | GET | `/api/auth/me` | 查询当前登录态 |
 | Vue 应用 | GET | `/api/auth/permissions/{module}` | 校验模块权限 |
 | index.html | POST | `/api/auth/logout` | 注销 Session |
@@ -59,24 +59,25 @@ Vue 前端默认通过 Vite 代理访问 Gateway：`http://localhost:5173/api ->
 | report-generation.html | GET | `/api/reports/templates` | 报告模板市场 |
 | report-generation.html | POST | `/api/reports/jobs` | 创建异步报告任务 |
 | report-generation.html | GET | `/api/reports/jobs/{id}` | 轮询报告生成进度 |
-| report-generation.html | GET | `/api/reports/{id}/download` | 下载生成报告 |
+| report-generation.html | GET | `/api/reports/{id}/download` | 下载生成报告，按任务格式返回 PDF、DOCX、PPTX |
 
 ## 7. 告警中心
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
-| alert-center.html | GET | `/api/alerts` | 告警列表，支持 `keyword`、`level`、`status` |
+| alert-center.html | GET | `/api/alerts` | 告警列表，支持 `keyword`、`level`、`status`；默认不返回已忽略公开源告警 |
 | alert-center.html | GET | `/api/alerts/counts` | 高中低危未忽略计数 |
-| alert-center.html | PUT | `/api/alerts/{id}/ignore` | 忽略告警 |
-| alert-center.html | POST | `/api/alerts/batch-process` | 批量流转为处理中 |
+| alert-center.html | PUT | `/api/alerts/{id}/ignore` | 忽略告警，公开源告警状态写入 Gateway 状态集 |
+| alert-center.html | POST | `/api/alerts/batch-process` | 批量流转选中的告警为处理中 |
 
 ## 8. GIS、企业画像、知识库
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
-| gis-map.html | GET | `/api/gis/map?layers=heatmap,suppliers` | GIS 图层与点位数据 |
+| gis-map.html | GET | `/api/gis/map?layers=heatmap,suppliers,ports,routes` | GIS 图层、点位与多条公开源路径数据 |
 | enterprise-profile.html | GET | `/api/enterprises/profile?keyword=...` | 企业画像搜索重载 |
 | knowledge-base.html | GET | `/api/knowledge/search?query=...` | RAG 检索 |
+| knowledge-base.html | POST | `/api/knowledge/ask` | AI 知识库智能体问答，返回回答、检索链路和引用 |
 | knowledge-base.html | GET | `/api/knowledge/preview/{id}` | 文档在线预览 |
 
 ## 9. 系统管理
@@ -107,6 +108,25 @@ Vue 前端默认通过 Vite 代理访问 Gateway：`http://localhost:5173/api ->
 | semirisk-alert-service:8084 | PUT | `/api/alerts/{id}/ignore` | 告警忽略 |
 | semirisk-report-service:8085 | POST | `/api/reports/jobs` | 创建报告任务 |
 | semirisk-report-service:8085 | GET | `/api/reports/jobs/{id}` | 查询报告任务进度 |
+| semirisk-report-service:8085 | GET | `/api/reports/{id}/download` | 下载 PDF、DOCX、PPTX 报告 |
+
+## 12. AI 知识库问答请求示例
+
+```http
+POST /api/knowledge/ask
+Content-Type: application/json
+
+{
+  "question": "当前半导体供应链最需要关注什么风险？"
+}
+```
+
+返回字段：
+
+- `answer`：基于公开源知识库检索生成的回答
+- `trace`：Query Rewrite、Knowledge Retrieval、Risk Scoring、Answer Synthesis
+- `citations`：引用原文标题、来源、URL、风险分
+- `modelStatus`：当前是否已配置 DeepSeek API Key
 
 ## 11. 运维与文档 API
 

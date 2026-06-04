@@ -252,6 +252,11 @@ button { cursor: pointer; }
   outline: none;
 }
 
+.input.wide {
+  flex: 1;
+  min-width: min(420px, 100%);
+}
+
 .input:focus,
 .select:focus {
   border-color: var(--primary);
@@ -368,6 +373,11 @@ th { color: var(--muted); font-size: 12px; }
   gap: 16px;
 }
 
+.compact-cards {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
 .card-option {
   padding: 14px;
   text-align: left;
@@ -394,6 +404,40 @@ th { color: var(--muted); font-size: 12px; }
 .high { color: #fecaca; }
 .mid { color: #fde68a; }
 .low { color: #bfdbfe; }
+
+.knowledge-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ai-agent-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-answer {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-answer p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.agent-trace {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-trace span {
+  border: 1px solid rgba(59, 130, 246, .24);
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, .10);
+  font-size: 12px;
+}
 
 .gis-page {
   display: grid;
@@ -455,10 +499,14 @@ th { color: var(--muted); font-size: 12px; }
 .route-network path {
   fill: none;
   stroke: rgba(96, 165, 250, .52);
-  stroke-width: .35;
+  stroke-width: .42;
   stroke-dasharray: 2 2;
   filter: drop-shadow(0 0 4px rgba(59, 130, 246, .4));
 }
+
+.route-network path.high { stroke: rgba(248, 113, 113, .78); filter: drop-shadow(0 0 5px rgba(239, 68, 68, .55)); }
+.route-network path.mid { stroke: rgba(250, 204, 21, .72); filter: drop-shadow(0 0 5px rgba(234, 179, 8, .46)); }
+.route-network path.low { stroke: rgba(96, 165, 250, .60); }
 
 .continent {
   position: absolute;

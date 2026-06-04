@@ -5,5 +5,15 @@ export function useKnowledge(state) {
     state.knowledge = await knowledgeApi.search(state.knowledgeQuery);
   }
 
-  return { searchKnowledge };
+  async function askKnowledge() {
+    if (!state.knowledgeQuestion.trim()) return;
+    state.knowledgeLoading = true;
+    try {
+      state.knowledgeAnswer = await knowledgeApi.ask(state.knowledgeQuestion);
+    } finally {
+      state.knowledgeLoading = false;
+    }
+  }
+
+  return { askKnowledge, searchKnowledge };
 }
