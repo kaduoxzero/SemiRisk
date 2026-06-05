@@ -66,7 +66,8 @@ public class WebConfig implements WebMvcConfigurer {
                         if (uri.startsWith("/api/auth/")
                                 || uri.equals("/api/dashboard/overview")
                                 || uri.equals("/api/risk-score/today")
-                                || ("GET".equalsIgnoreCase(method) && uri.startsWith("/api/reports/") && uri.endsWith("/download"))) {
+                                || (("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method))
+                                && uri.startsWith("/api/reports/") && uri.endsWith("/download"))) {
                             return true;
                         }
                         var principal = tokenAuthService.validate(request.getHeader("Authorization"));

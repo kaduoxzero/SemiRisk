@@ -30,11 +30,10 @@
     <section class="main">
       <header class="topbar">
         <h2 class="page-title">{{ currentTitle }}</h2>
-        <div v-if="session" class="toolbar">
+        <div v-if="session" class="topbar-meta">
           <span class="muted">当前用户：{{ session.displayName || session.username }} · {{ session.role }} · {{ now }}</span>
-          <button class="btn secondary" @click="$emit('logout')">退出</button>
         </div>
-        <div v-else class="toolbar">
+        <div v-else class="topbar-meta">
           <span class="muted">未登录仅可访问首页风险总览</span>
         </div>
       </header>

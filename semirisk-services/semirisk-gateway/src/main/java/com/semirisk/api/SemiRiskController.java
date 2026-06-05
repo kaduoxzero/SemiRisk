@@ -473,10 +473,10 @@ public class SemiRiskController {
         if (lastCrawlerSync.isAfter(now.minusSeconds(120))) {
             return;
         }
+        lastCrawlerSync = now;
         List<SemiRiskStore.CrawlerSignal> records = publicCrawlerClient.today();
         store.refreshDailyRiskRecords(records);
         knowledgeSearchIndexService.sync(records);
-        lastCrawlerSync = now;
     }
 
     @GetMapping("/alerts/counts")

@@ -15,9 +15,9 @@
         <p class="muted">刷新时间：{{ state.dashboard.refreshedAt }}</p>
         <button class="btn" @click="actions.recalculateRisk">立即重新测算</button>
       </div>
-      <div class="panel fixed-panel">
+      <div class="panel fixed-panel dashboard-signal-panel">
         <h3>公开源爬虫信号</h3>
-        <table>
+        <table class="dense-table">
           <tbody>
             <tr v-for="signal in visibleSignals" :key="signal.id">
               <td>

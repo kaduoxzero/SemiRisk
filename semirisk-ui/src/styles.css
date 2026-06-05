@@ -17,7 +17,7 @@
 
 body {
   margin: 0;
-  min-width: 1180px;
+  min-width: 1120px;
   min-height: 100vh;
   color: var(--foreground);
   font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
@@ -58,7 +58,7 @@ button { cursor: pointer; }
   z-index: 1;
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 258px minmax(0, 1fr);
+  grid-template-columns: 246px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -67,7 +67,7 @@ button { cursor: pointer; }
   top: 0;
   display: flex;
   flex-direction: column;
-  padding: 20px 14px;
+  padding: 18px 12px;
   border-right: 1px solid var(--line);
   background: rgba(8, 13, 24, 0.72);
   backdrop-filter: blur(16px);
@@ -78,7 +78,7 @@ button { cursor: pointer; }
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 10px 20px;
+  padding: 8px 10px 18px;
   font-weight: 900;
   letter-spacing: .08em;
 }
@@ -97,7 +97,7 @@ button { cursor: pointer; }
 
 .nav {
   display: grid;
-  gap: 7px;
+  gap: 6px;
   align-content: start;
   flex: 1;
 }
@@ -107,7 +107,7 @@ button { cursor: pointer; }
   border: 1px solid transparent;
   color: var(--muted);
   background: transparent;
-  padding: 11px 13px;
+  padding: 10px 12px;
   border-radius: 8px;
   text-align: left;
   white-space: nowrap;
@@ -140,18 +140,32 @@ button { cursor: pointer; }
 
 .main {
   min-width: 0;
-  padding: 18px 24px 30px;
+  padding: 16px 22px 28px;
 }
 
 .topbar {
-  height: 62px;
+  min-height: 58px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 18px;
+  margin-bottom: 16px;
+  padding: 0 2px;
   background: rgba(3, 7, 18, .28);
+}
+
+.topbar-meta {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 280px;
+  text-align: right;
+  line-height: 1.45;
+}
+
+.main-content {
+  max-width: 1680px;
+  margin: 0 auto;
 }
 
 .page-title {
@@ -178,7 +192,7 @@ button { cursor: pointer; }
 }
 
 .panel {
-  padding: 16px;
+  padding: 15px;
 }
 
 .panel::before,
@@ -204,6 +218,7 @@ button { cursor: pointer; }
   margin: 0 0 12px;
   font-size: 14px;
   color: white;
+  line-height: 1.35;
 }
 
 .panel:hover,
@@ -220,7 +235,7 @@ button { cursor: pointer; }
 .text-link:hover { color: white; text-decoration: underline; }
 
 .kpi {
-  min-height: 118px;
+  min-height: 104px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -228,7 +243,7 @@ button { cursor: pointer; }
 }
 
 .kpi strong {
-  font-size: 30px;
+  font-size: 28px;
   color: white;
 }
 
@@ -238,6 +253,10 @@ button { cursor: pointer; }
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.topbar .toolbar {
+  margin-bottom: 0;
 }
 
 .input,
@@ -271,9 +290,16 @@ button { cursor: pointer; }
   color: white;
   background: rgba(59, 130, 246, .18);
   box-shadow: 0 0 14px rgba(59, 130, 246, .12);
+  transition: background .18s ease, border-color .18s ease, opacity .18s ease, transform .18s ease;
 }
 
 .btn:hover { background: rgba(59, 130, 246, .3); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+  box-shadow: none;
+}
 .btn.secondary { color: #cbd5e1; background: rgba(30, 41, 59, .62); border-color: rgba(148, 163, 184, .22); }
 .btn.danger { color: #fecaca; background: rgba(239, 68, 68, .13); border-color: rgba(239, 68, 68, .34); }
 .btn.full { width: 100%; }
@@ -282,7 +308,7 @@ button { cursor: pointer; }
   display: grid;
   gap: 8px;
   margin-top: 16px;
-  padding: 12px;
+  padding: 11px;
   border: 1px solid rgba(59, 130, 246, .22);
   border-radius: 8px;
   background: rgba(15, 23, 42, .64);
@@ -291,6 +317,9 @@ button { cursor: pointer; }
 .account-name {
   color: white;
   font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .account-role {
@@ -302,8 +331,30 @@ button { cursor: pointer; }
 
 .table-wrap { overflow-x: auto; }
 table { width: 100%; min-width: 720px; border-collapse: collapse; }
-th, td { padding: 11px 10px; border-bottom: 1px solid rgba(148, 163, 184, .12); text-align: left; vertical-align: top; word-break: break-word; }
+th, td { padding: 10px 10px; border-bottom: 1px solid rgba(148, 163, 184, .12); text-align: left; vertical-align: top; word-break: break-word; }
 th { color: var(--muted); font-size: 12px; }
+
+.dense-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.dense-table td {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.dense-table td:nth-child(1) { width: 118px; }
+.dense-table td:nth-child(3) { width: 78px; text-align: right; }
+
+.dashboard-signal-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-signal-panel table {
+  flex: 1;
+}
 
 .badge {
   display: inline-flex;
@@ -339,7 +390,7 @@ th { color: var(--muted); font-size: 12px; }
 
 .auth-panel {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 2fr;
+  grid-template-columns: minmax(260px, .95fr) 2.05fr;
   align-items: center;
   gap: 16px;
 }
@@ -441,13 +492,13 @@ th { color: var(--muted); font-size: 12px; }
 
 .gis-page {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+  grid-template-columns: minmax(0, 1fr) minmax(286px, 324px);
   gap: 16px;
   align-items: start;
 }
 
 .gis-map-panel {
-  min-height: 590px;
+  min-height: 572px;
 }
 
 .gis-header {
@@ -466,7 +517,7 @@ th { color: var(--muted); font-size: 12px; }
 
 .map-canvas {
   position: relative;
-  height: 500px;
+  height: 480px;
   overflow: hidden;
   border: 1px solid rgba(59, 130, 246, .28);
   border-radius: 8px;
@@ -559,7 +610,7 @@ th { color: var(--muted); font-size: 12px; }
   z-index: 4;
   display: grid;
   gap: 4px;
-  max-width: 420px;
+  max-width: 390px;
   padding: 10px 12px;
   border: 1px solid rgba(59, 130, 246, .26);
   border-radius: 8px;
@@ -595,7 +646,7 @@ th { color: var(--muted); font-size: 12px; }
 
 .region-row {
   display: grid;
-  grid-template-columns: 72px 44px 1fr;
+  grid-template-columns: 78px 44px 1fr;
   gap: 8px;
   align-items: center;
   padding: 8px 0;
@@ -639,7 +690,7 @@ th { color: var(--muted); font-size: 12px; }
 .alert-detail-head h3 {
   margin: 0;
   max-width: 920px;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1.45;
 }
 
@@ -685,8 +736,8 @@ th { color: var(--muted); font-size: 12px; }
 }
 
 .fixed-panel {
-  min-height: 420px;
-  max-height: 560px;
+  min-height: 390px;
+  max-height: 530px;
   overflow: auto;
 }
 
@@ -724,7 +775,7 @@ th { color: var(--muted); font-size: 12px; }
 .split-detail,
 .enterprise-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 38%) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 36%) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -735,10 +786,10 @@ th { color: var(--muted); font-size: 12px; }
   grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
   margin-bottom: 8px;
-  padding: 10px;
+  padding: 9px 10px;
   border: 1px solid rgba(148, 163, 184, .12);
   border-radius: 8px;
-  color: var(--text);
+  color: var(--foreground);
   text-align: left;
   background: rgba(15, 23, 42, .44);
 }
@@ -763,15 +814,15 @@ th { color: var(--muted); font-size: 12px; }
 }
 
 .score-circle {
-  width: 128px;
-  height: 128px;
+  width: 118px;
+  height: 118px;
   display: grid;
   place-items: center;
   margin: 18px 0;
   border: 1px solid rgba(250, 204, 21, .44);
   border-radius: 999px;
   color: #fde68a;
-  font-size: 36px;
+  font-size: 34px;
   font-weight: 800;
   box-shadow: inset 0 0 28px rgba(234, 179, 8, .12), 0 0 22px rgba(234, 179, 8, .12);
 }
@@ -802,7 +853,7 @@ th { color: var(--muted); font-size: 12px; }
 }
 
 .tall-agent {
-  min-height: 620px;
+  min-height: 560px;
 }
 
 .map-canvas-3d {
@@ -824,7 +875,7 @@ th { color: var(--muted); font-size: 12px; }
 .map-popover {
   position: absolute;
   z-index: 6;
-  width: min(280px, 42vw);
+  width: min(270px, 40vw);
   padding: 10px;
   border: 1px solid rgba(59, 130, 246, .36);
   border-radius: 8px;
@@ -857,5 +908,5 @@ th { color: var(--muted); font-size: 12px; }
   .auth-panel { grid-template-columns: 1fr; }
   .gis-page { grid-template-columns: 1fr; }
   .gis-map-panel { min-height: auto; }
-  .map-canvas { height: 460px; }
+  .map-canvas { height: 430px; }
 }

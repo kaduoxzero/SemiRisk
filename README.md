@@ -4,6 +4,22 @@
 
 ## 快速启动
 
+如果本机不能直连 `192.168.101.130`，先通过中转机建立本地隧道：
+
+```bash
+SEMIRISK_SSH_JUMP_PASSWORD=*** SEMIRISK_VM_PASSWORD=*** ./script/start-vm-tunnels.sh
+VM_HOST=127.0.0.1 ./script/check-vm-middleware.sh
+```
+
+`.env.local` 中保持：
+
+```bash
+SEMIRISK_MIDDLEWARE_HOST=127.0.0.1
+SEMIRISK_ES_URL=http://127.0.0.1:9200
+```
+
+再启动项目：
+
 ```bash
 ./script/start-backend-services.sh
 ./script/start-ui.sh
@@ -36,6 +52,7 @@
 - Nacos：`192.168.101.130:8848`
 
 当前 VM 部署目录为 `/opt/semirisk`，中间件 Compose 位于 `/opt/semirisk/middleware`，部署包位于 `/opt/semirisk/packages/semirisk-middleware-deploy.tgz`。
+本机通过中转机访问 VM 时，使用 `script/start-vm-tunnels.sh` 将上述端口映射到 `127.0.0.1`。
 
 当前实现为可运行的前后端分离微服务版本。登录注册优先持久化到 MySQL，VM/MySQL 暂不可达时使用本地兜底账号；失败计数优先使用 Redis；公开源风险数据启动/手动实时爬取并每 12 小时自动刷新，知识库检索已接入 Elasticsearch `semirisk_knowledge`，AI 问答在配置 Key 后真实调用 DeepSeek。
 

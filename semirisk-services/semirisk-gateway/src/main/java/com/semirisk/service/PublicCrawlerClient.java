@@ -1,9 +1,11 @@
 package com.semirisk.service;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -14,7 +16,13 @@ public class PublicCrawlerClient {
     private final RestClient restClient;
 
     public PublicCrawlerClient(@Value("${semirisk.data-service.url}") String dataServiceUrl) {
-        this.restClient = RestClient.builder().baseUrl(dataServiceUrl).build();
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofSeconds(2));
+        requestFactory.setReadTimeout(Duration.ofSeconds(4));
+        this.restClient = RestClient.builder()
+                .baseUrl(dataServiceUrl)
+                .requestFactory(requestFactory)
+                .build();
     }
 
     @SuppressWarnings("unchecked")

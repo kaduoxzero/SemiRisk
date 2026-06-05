@@ -156,12 +156,12 @@ public class KnowledgeSearchIndexService {
                 "riskScore", signal.riskScore(),
                 "fetchedAt", signal.fetchedAt().toString()
         );
-        httpClient.send(jsonRequest("PUT", "/" + indexName + "/_doc/" + signal.id() + "?refresh=wait_for", objectMapper.writeValueAsString(document)), HttpResponse.BodyHandlers.discarding());
+        httpClient.send(jsonRequest("PUT", "/" + indexName + "/_doc/" + signal.id(), objectMapper.writeValueAsString(document)), HttpResponse.BodyHandlers.discarding());
     }
 
     private HttpRequest jsonRequest(String method, String path, String body) {
         return HttpRequest.newBuilder(URI.create(esUrl + path))
-                .timeout(Duration.ofSeconds(4))
+                .timeout(Duration.ofSeconds(2))
                 .header("Content-Type", "application/json")
                 .method(method, HttpRequest.BodyPublishers.ofString(body))
                 .build();
