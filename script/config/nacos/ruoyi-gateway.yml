@@ -1,0 +1,56 @@
+# 瀹夊叏閰嶇疆
+security:
+  # 涓嶆牎楠岀櫧鍚嶅崟
+  ignore:
+    whites:
+      - /auth/code
+      - /auth/logout
+      - /auth/login
+      - /auth/binding/*
+      - /auth/register
+      - /auth/tenant/list
+      - /resource/sms/code
+      - /resource/sse/close
+      - /*/v3/api-docs
+      - /*/error
+      - /csrf
+
+spring:
+  cloud:
+    # 缃戝叧閰嶇疆
+    gateway:
+      # 鎵撳嵃璇锋眰鏃ュ織(鑷畾涔?
+      requestLog: true
+      server:
+        webflux:
+          discovery:
+            locator:
+              lowerCaseServiceId: true
+              enabled: true
+          routes:
+            # 璁よ瘉涓績
+            - id: ruoyi-auth
+              uri: lb://ruoyi-auth
+              predicates:
+                - Path=/auth/**
+              filters:
+                - StripPrefix=1
+            # 绯荤粺妯″潡
+            - id: ruoyi-system
+              uri: lb://ruoyi-system
+              predicates:
+                - Path=/system/**,/monitor/**
+              filters:
+                - StripPrefix=1
+            # Risk module
+            - id: risk-system
+              uri: lb://ruoyi-system
+              predicates:
+                - Path=/risk/**
+            # 璧勬簮鏈嶅姟
+            - id: ruoyi-resource
+              uri: lb://ruoyi-resource
+              predicates:
+                - Path=/resource/**
+              filters:
+                - StripPrefix=1

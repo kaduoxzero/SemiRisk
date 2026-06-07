@@ -1,0 +1,146 @@
+services:
+  mysql:
+    image: mysql:8.0.42
+    container_name: mysql
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ruoyi123
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --explicit_defaults_for_timestamp=true
+      - --lower_case_table_names=1
+    volumes:
+      - ./mysql/data:/var/lib/mysql
+      - ./mysql/conf:/etc/mysql/conf.d
+
+  redis:
+    image: redis:7.2.8
+    container_name: redis
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    command: redis-server /redis/config/redis.conf
+    volumes:
+      - ./redis/conf:/redis/config
+      - ./redis/data:/redis/data
+
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: nacos
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    environment:
+      TZ: Asia/Shanghai
+      MODE: standalone
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+      SPRING_DATASOURCE_PLATFORM: mysql
+      MYSQL_SERVICE_HOST: 127.0.0.1
+      MYSQL_SERVICE_PORT: 3306
+      MYSQL_SERVICE_DB_NAME: semi_config
+      MYSQL_SERVICE_USER: root
+      MYSQL_SERVICE_PASSWORD: ruoyi123
+    volumes:
+      - ./nacos/logs:/home/nacos/logs
+
+  risk-ai:
+    build:
+      context: ../../risk-ai-service
+    image: semirisk/risk-ai-service:1.0.0
+    container_name: risk-ai-service
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/chat/completions}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseekv4-pro}
+
+  ruoyi-gateway:
+    build:
+      context: ../../ruoyi-gateway
+    image: semirisk/ruoyi-gateway:2.6.1
+    container_name: ruoyi-gateway
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - nacos
+      - redis
+    environment:
+      TZ: Asia/Shanghai
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - ./logs/ruoyi-gateway:/ruoyi/gateway/logs
+
+  ruoyi-auth:
+    build:
+      context: ../../ruoyi-auth
+    image: semirisk/ruoyi-auth:2.6.1
+    container_name: ruoyi-auth
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - nacos
+      - redis
+      - ruoyi-system
+    environment:
+      TZ: Asia/Shanghai
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - ./logs/ruoyi-auth:/ruoyi/auth/logs
+
+  ruoyi-system:
+    build:
+      context: ../../ruoyi-modules/ruoyi-system
+    image: semirisk/ruoyi-system:2.6.1
+    container_name: ruoyi-system
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - nacos
+      - redis
+      - risk-ai
+    environment:
+      TZ: Asia/Shanghai
+      JAVA_OPTS: "-Xms512m -Xmx768m -Drisk.ai.service-url=http://127.0.0.1:18088/analyze"
+    volumes:
+      - ./logs/ruoyi-system:/ruoyi/system/logs
+
+  ruoyi-resource:
+    build:
+      context: ../../ruoyi-modules/ruoyi-resource
+    image: semirisk/ruoyi-resource:2.6.1
+    container_name: ruoyi-resource
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - nacos
+      - redis
+    environment:
+      TZ: Asia/Shanghai
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - ./logs/ruoyi-resource:/ruoyi/resource/logs
+
+  nginx:
+    build:
+      context: ./frontend
+    image: semirisk/frontend-proxy:1.0.0
+    container_name: semirisk-nginx
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - ruoyi-gateway
+    environment:
+      STATIC_ROOT: /usr/share/nginx/html
+      UPSTREAM_BASE: http://127.0.0.1:8080
+      SERVER_PORT: 80
+    volumes:
+      - ../../ruoyi-ui/dist:/usr/share/nginx/html:ro

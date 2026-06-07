@@ -1,6 +1,15 @@
-HELP.md
+######################################################################
+# Build Tools
+
+.gradle
+/build/
+!gradle/wrapper/gradle-wrapper.jar
+
 target/
-*.log
+!.mvn/wrapper/maven-wrapper.jar
+
+######################################################################
+# IDE
 
 ### STS ###
 .apt_generated
@@ -9,25 +18,49 @@ target/
 .project
 .settings
 .springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
 
 ### IntelliJ IDEA ###
 .idea
 *.iws
 *.iml
 *.ipr
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
 
+### JRebel ###
+rebel.xml
 ### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
+nbproject/private/
+build/*
+nbbuild/
+nbdist/
+.nb-gradle/
 
-### VS Code ###
-.vscode/
+######################################################################
+# Others
+*.log
+*.log.gz
+*.xml.versionsBackup
+*.swp
+
+!*/build/*.java
+!*/build/*.html
+!*/build/*.xml
+
+/script/*
+!/script/deploy-semirisk.sh
+!/script/docker/
+!/script/docker/docker-compose.yml
+!/script/docker/frontend/
+!/script/docker/frontend/*
+
+.flattened-pom.xml
+.env
+.env.*
+!.env.example
+__pycache__/
+risk-ai-service/.venv/
+risk-ai-service/__pycache__/
+script/docker/logs/
+script/docker/mysql/data/
+script/docker/redis/data/
+script/docker/nacos/logs/
+!/script/health-check-semirisk.sh

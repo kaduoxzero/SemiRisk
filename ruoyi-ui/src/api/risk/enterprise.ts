@@ -1,7 +1,14 @@
 import request from '@/utils/request';
 
-// 1. 获取指定企业全景画像数据（含五维雷达图、生态链拓扑数据）
-export function getEnterpriseProfile(keyword: string) {
+export function listEnterprises(query: any) {
+  return request({
+    url: '/risk/enterprise/list',
+    method: 'get',
+    params: query
+  });
+}
+
+export function getEnterpriseProfile(keyword?: string) {
   return request({
     url: '/risk/enterprise/profile',
     method: 'get',
@@ -9,7 +16,22 @@ export function getEnterpriseProfile(keyword: string) {
   });
 }
 
-// 2. 向量知识库混合检索 (RAG 检索)
+export function addEnterprise(data: any) {
+  return request({
+    url: '/risk/enterprise',
+    method: 'post',
+    data
+  });
+}
+
+export function updateEnterprise(data: any) {
+  return request({
+    url: '/risk/enterprise',
+    method: 'put',
+    data
+  });
+}
+
 export function searchKnowledgeBase(queryStr: string) {
   return request({
     url: '/risk/enterprise/kb/search',
@@ -18,14 +40,59 @@ export function searchKnowledgeBase(queryStr: string) {
   });
 }
 
-// 3. 运行报表上传并触发清洗（使用 FormData 格式）
+export function listKnowledge(query: any) {
+  return request({
+    url: '/risk/knowledge/list',
+    method: 'get',
+    params: query
+  });
+}
+
+export function addKnowledge(data: any) {
+  return request({
+    url: '/risk/knowledge',
+    method: 'post',
+    data
+  });
+}
+
 export function uploadRunningReport(file: File) {
   const formData = new FormData();
   formData.append('file', file);
   return request({
     url: '/risk/enterprise/report/upload',
     method: 'post',
-    data: formData,
-    headers: { 'Content-Type': 'multipart/form-data' }
+    data: formData
+  });
+}
+
+export function listReports(query: any) {
+  return request({
+    url: '/risk/report/list',
+    method: 'get',
+    params: query
+  });
+}
+
+export function getReport(reportId: string | number) {
+  return request({
+    url: `/risk/report/${reportId}`,
+    method: 'get'
+  });
+}
+
+export function listDataSources(query: any) {
+  return request({
+    url: '/risk/source/list',
+    method: 'get',
+    params: query
+  });
+}
+
+export function addDataSource(data: any) {
+  return request({
+    url: '/risk/source',
+    method: 'post',
+    data
   });
 }

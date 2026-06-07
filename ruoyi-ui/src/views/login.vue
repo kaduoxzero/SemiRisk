@@ -1,359 +1,536 @@
 <template>
-  <div class="login-container bg-cyber-bg text-slate-200 min-h-screen flex items-center justify-center overflow-hidden relative">
-    <!-- SVG 科技网格背景 -->
-    <div class="fixed inset-0 pointer-events-none opacity-20 z-0">
+  <div class="login-container bg-cyber-bg min-h-screen overflow-hidden text-slate-200">
+    <div class="fixed inset-0 pointer-events-none opacity-20">
       <svg height="100%" width="100%" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse">
-            <path d="M 100 0 L 0 0 0 100" fill="none" stroke="#3b82f6" stroke-width="0.5"></path>
+            <path d="M 100 0 L 0 0 0 100" fill="none" stroke="#3b82f6" stroke-width="0.5" />
           </pattern>
         </defs>
-        <rect width="100%" height="100%" fill="url(#grid)"></rect>
+        <rect width="100%" height="100%" fill="url(#grid)" />
       </svg>
     </div>
-
-    <!-- 粒子背景组件 -->
     <cyber-particles />
 
-    <div class="relative z-10 w-full max-w-md px-6">
-      <div class="hud-card p-8 space-y-8">
-        <div class="corner-br"></div><div class="corner-bl"></div>
+    <main class="relative z-10 flex min-h-screen items-center justify-center px-4 py-8">
+      <section class="login-shell w-full max-w-[980px]">
+        <div class="hud-card login-card">
+          <div class="corner-br"></div>
+          <div class="corner-bl"></div>
 
-        <div class="text-center space-y-2">
-          <div class="flex justify-center">
-            <div class="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center border border-primary/50 shadow-[0_0_20px_rgba(59,130,246,0.5)]">
-              <Icon icon="lucide:shield-check" class="text-4xl text-primary" />
+          <div class="brand-panel">
+            <div class="brand-mark">
+              <svg-icon icon-class="lock" class-name="brand-icon" />
+            </div>
+            <h1>供应链风险智能管理系统</h1>
+            <p>智能感知 · 精准预警 · 全局掌控</p>
+            <div class="security-strip">
+              <span>验证码</span>
+              <span>加密传输</span>
+              <span>Sa-Token</span>
+              <span>IP 限流</span>
+              <span>登录审计</span>
             </div>
           </div>
-          <h1 class="text-xl font-bold tracking-tight text-white mt-4">供应链风险智能管理系统</h1>
-          <p class="text-xs text-slate-400 font-mono uppercase tracking-widest">Risk Management Hub v2.0</p>
+
+          <div class="form-panel">
+            <div class="mode-tabs" role="tablist" aria-label="认证方式">
+              <button v-for="item in modes" :key="item.value" :class="{ active: mode === item.value }" type="button" @click="switchMode(item.value)">
+                {{ item.label }}
+              </button>
+            </div>
+
+            <el-form ref="formRef" :model="form" :rules="activeRules" class="auth-form" label-position="top" @keyup.enter="submit">
+              <el-form-item v-if="tenantEnabled" label="租户" prop="tenantId">
+                <el-select v-model="form.tenantId" class="w-full" filterable placeholder="请选择租户">
+                  <el-option v-for="tenant in tenantList" :key="tenant.tenantId" :label="tenant.companyName || tenant.tenantId" :value="tenant.tenantId" />
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="用户名" prop="username">
+                <el-input v-model.trim="form.username" maxlength="30" placeholder="请输入账号" autocomplete="username">
+                  <template #prefix><svg-icon icon-class="user" /></template>
+                </el-input>
+              </el-form-item>
+
+              <div v-if="mode === 'register'" class="contact-grid">
+                <el-form-item label="邮箱" prop="email">
+                  <el-input v-model.trim="form.email" maxlength="50" placeholder="用于找回密码" autocomplete="email">
+                    <template #prefix><svg-icon icon-class="email" /></template>
+                  </el-input>
+                </el-form-item>
+                <el-form-item label="手机号" prop="phonenumber">
+                  <el-input v-model.trim="form.phonenumber" maxlength="11" placeholder="用于找回密码" autocomplete="tel">
+                    <template #prefix><svg-icon icon-class="phone" /></template>
+                  </el-input>
+                </el-form-item>
+              </div>
+
+              <el-form-item v-if="mode === 'forgot'" label="注册邮箱或手机号" prop="contact">
+                <el-input v-model.trim="form.contact" maxlength="50" placeholder="必须与数据库用户资料一致" autocomplete="email">
+                  <template #prefix><svg-icon icon-class="email" /></template>
+                </el-input>
+              </el-form-item>
+
+              <el-form-item :label="mode === 'forgot' ? '新密码' : '密码'" :prop="mode === 'forgot' ? 'newPassword' : 'password'">
+                <el-input
+                  v-model="passwordModel"
+                  maxlength="30"
+                  show-password
+                  type="password"
+                  :placeholder="mode === 'login' ? '请输入密码' : '8 位以上，含大小写、数字和特殊字符'"
+                  :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
+                >
+                  <template #prefix><svg-icon icon-class="password" /></template>
+                </el-input>
+              </el-form-item>
+
+              <el-form-item v-if="mode !== 'login'" label="确认密码" prop="confirmPassword">
+                <el-input v-model="form.confirmPassword" maxlength="30" show-password type="password" placeholder="请再次输入密码" autocomplete="new-password">
+                  <template #prefix><svg-icon icon-class="lock" /></template>
+                </el-input>
+              </el-form-item>
+
+              <el-form-item v-if="captchaEnabled" label="验证码" prop="code">
+                <div class="captcha-row">
+                  <el-input v-model.trim="form.code" maxlength="6" placeholder="请输入验证码">
+                    <template #prefix><svg-icon icon-class="validCode" /></template>
+                  </el-input>
+                  <button type="button" class="captcha-button" title="刷新验证码" @click="getCode">
+                    <img v-if="codeUrl" :src="codeUrl" alt="验证码" />
+                    <span v-else>刷新</span>
+                  </button>
+                </div>
+              </el-form-item>
+
+              <div v-if="mode === 'login'" class="form-options">
+                <el-checkbox v-model="form.rememberMe">记住账号</el-checkbox>
+                <button type="button" @click="switchMode('forgot')">忘记密码？</button>
+              </div>
+
+              <el-button class="submit-button" :loading="loading" type="primary" native-type="button" @click="submit">
+                {{ submitText }}
+                <svg-icon icon-class="caret-forward" />
+              </el-button>
+            </el-form>
+
+            <p class="security-note">
+              所有账号、密码重置和登录审计均写入真实数据库；密码通过 BCrypt 保存，登录令牌由 Sa-Token 签发。
+            </p>
+          </div>
         </div>
-
-        <!-- 登录表单 -->
-        <el-form ref="loginRef" :model="loginForm" :rules="loginRules" class="space-y-6">
-          <el-form-item prop="username">
-            <div class="relative w-full">
-              <Icon icon="lucide:user" class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 z-10" />
-              <input v-model="loginForm.username" class="cyber-input w-full pl-10 pr-4 py-2.5 rounded-lg text-sm" placeholder="请输入管理员用户名" />
-            </div>
-          </el-form-item>
-
-          <el-form-item prop="password">
-            <div class="relative w-full">
-              <Icon icon="lucide:lock" class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 z-10" />
-              <input v-model="loginForm.password" type="password" class="cyber-input w-full pl-10 pr-4 py-2.5 rounded-lg text-sm" placeholder="请输入密码" />
-            </div>
-          </el-form-item>
-
-          <!-- 保持若依原型的登录按钮事件逻辑 handleLogin -->
-          <button @click.prevent="handleLogin" class="w-full bg-primary hover:bg-blue-600 text-white font-bold py-3 rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.4)] transition-all transform active:scale-95 flex items-center justify-center space-x-2">
-            <span>进入中枢控制台</span>
-            <Icon icon="lucide:arrow-right" />
-          </button>
-        </el-form>
-      </div>
-    </div>
+      </section>
+    </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { getCodeImg, getTenantList } from '@/api/login';
-import { authRouterUrl } from '@/api/system/social/auth';
-import { useUserStore } from '@/store/modules/user';
-import { LoginData, TenantVO } from '@/api/types';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
 import { to } from 'await-to-js';
-import { HttpStatus } from '@/enums/RespEnum';
-import { useI18n } from 'vue-i18n';
-import { ref } from 'vue'
-import { Icon } from '@iconify/vue'
-import CyberParticles from '@/components/CyberParticles/index.vue'
+import { forgotPassword, getCodeImg, getTenantList, register } from '@/api/login';
+import { useUserStore } from '@/store/modules/user';
+import CyberParticles from '@/components/CyberParticles/index.vue';
+import type { TenantVO } from '@/api/types';
 
-const { proxy } = getCurrentInstance() as ComponentInternalInstance;
+type AuthMode = 'login' | 'register' | 'forgot';
 
-const title = import.meta.env.VITE_APP_TITLE;
-const userStore = useUserStore();
 const router = useRouter();
-const { t } = useI18n();
+const route = useRoute();
+const userStore = useUserStore();
 
-const loginForm = ref<LoginData>({
+const mode = ref<AuthMode>('login');
+const loading = ref(false);
+const captchaEnabled = ref(true);
+const tenantEnabled = ref(true);
+const codeUrl = ref('');
+const formRef = ref<FormInstance>();
+const tenantList = ref<TenantVO[]>([]);
+
+const form = reactive({
   tenantId: '000000',
-  username: 'admin',
-  password: 'admin123',
+  username: '',
+  password: '',
+  newPassword: '',
+  confirmPassword: '',
+  email: '',
+  phonenumber: '',
+  contact: '',
   rememberMe: false,
   code: '',
   uuid: ''
-} as LoginData);
+});
 
-const loginRules: ElFormRules = {
-  tenantId: [{ required: true, trigger: 'blur', message: t('login.rule.tenantId.required') }],
-  username: [{ required: true, trigger: 'blur', message: t('login.rule.username.required') }],
-  password: [{ required: true, trigger: 'blur', message: t('login.rule.password.required') }],
-  code: [{ required: true, trigger: 'change', message: t('login.rule.code.required') }]
-};
+const modes: Array<{ label: string; value: AuthMode }> = [
+  { label: '登录', value: 'login' },
+  { label: '注册', value: 'register' },
+  { label: '找回密码', value: 'forgot' }
+];
 
-const codeUrl = ref('');
-const loading = ref(false);
-// 验证码开关
-const captchaEnabled = ref(true);
-// 租户开关
-const tenantEnabled = ref(true);
+const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,30}$/;
 
-// 注册开关
-const register = ref(false);
-const redirect = ref('/');
-const loginRef = ref<ElFormInstance>();
-// 租户列表
-const tenantList = ref<TenantVO[]>([]);
-
-watch(
-  () => router.currentRoute.value,
-  (newRoute: any) => {
-    redirect.value = newRoute.query && newRoute.query.redirect && decodeURIComponent(newRoute.query.redirect);
-  },
-  { immediate: true }
-);
-
-const handleLogin = () => {
-  loginRef.value?.validate(async (valid: boolean, fields: any) => {
-    if (valid) {
-      loading.value = true;
-      // 勾选了需要记住密码设置在 localStorage 中设置记住用户名和密码
-      if (loginForm.value.rememberMe) {
-        localStorage.setItem('tenantId', String(loginForm.value.tenantId));
-        localStorage.setItem('username', String(loginForm.value.username));
-        localStorage.setItem('password', String(loginForm.value.password));
-        localStorage.setItem('rememberMe', String(loginForm.value.rememberMe));
-      } else {
-        // 否则移除
-        localStorage.removeItem('tenantId');
-        localStorage.removeItem('username');
-        localStorage.removeItem('password');
-        localStorage.removeItem('rememberMe');
-      }
-      // 调用action的登录方法
-      const [err] = await to(userStore.login(loginForm.value));
-      if (!err) {
-        const redirectUrl = redirect.value || '/';
-        await router.push(redirectUrl);
-        loading.value = false;
-      } else {
-        loading.value = false;
-        // 重新获取验证码
-        if (captchaEnabled.value) {
-          await getCode();
-        }
-      }
+const passwordModel = computed({
+  get: () => (mode.value === 'forgot' ? form.newPassword : form.password),
+  set: (value: string) => {
+    if (mode.value === 'forgot') {
+      form.newPassword = value;
     } else {
-      console.log('error submit!', fields);
+      form.password = value;
     }
-  });
+  }
+});
+
+const submitText = computed(() => {
+  if (mode.value === 'register') return '注册账号';
+  if (mode.value === 'forgot') return '重置密码';
+  return '进入系统';
+});
+
+const validateConfirm = (_rule: unknown, value: string, callback: (error?: Error) => void) => {
+  const target = mode.value === 'forgot' ? form.newPassword : form.password;
+  if (mode.value !== 'login' && value !== target) {
+    callback(new Error('两次输入的密码不一致'));
+    return;
+  }
+  callback();
 };
 
-/**
- * 获取验证码
- */
+const validateContact = (_rule: unknown, _value: string, callback: (error?: Error) => void) => {
+  if (mode.value === 'register' && !form.email && !form.phonenumber) {
+    callback(new Error('邮箱或手机号至少填写一个，用于后续找回密码'));
+    return;
+  }
+  callback();
+};
+
+const baseRules: FormRules = {
+  tenantId: [{ required: true, message: '请选择租户', trigger: 'change' }],
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { min: 2, max: 30, message: '用户名长度必须在 2 到 30 位之间', trigger: 'blur' }
+  ],
+  code: [{ required: true, message: '请输入验证码', trigger: 'blur' }]
+};
+
+const activeRules = computed<FormRules>(() => {
+  const passwordRule = { required: true, pattern: passwordPattern, message: '密码需 8-30 位且包含大小写字母、数字和特殊字符', trigger: 'blur' };
+  if (mode.value === 'login') {
+    return {
+      ...baseRules,
+      password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
+    };
+  }
+  if (mode.value === 'register') {
+    return {
+      ...baseRules,
+      password: [passwordRule],
+      confirmPassword: [{ required: true, message: '请确认密码', trigger: 'blur' }, { validator: validateConfirm, trigger: 'blur' }],
+      email: [{ validator: validateContact, trigger: 'blur' }, { type: 'email', message: '邮箱格式不正确', trigger: 'blur' }],
+      phonenumber: [{ validator: validateContact, trigger: 'blur' }, { pattern: /^$|^1[3-9]\d{9}$/, message: '手机号格式不正确', trigger: 'blur' }]
+    };
+  }
+  return {
+    ...baseRules,
+    contact: [{ required: true, message: '请输入注册邮箱或手机号', trigger: 'blur' }],
+    newPassword: [passwordRule],
+    confirmPassword: [{ required: true, message: '请确认新密码', trigger: 'blur' }, { validator: validateConfirm, trigger: 'blur' }]
+  };
+});
+
+const resetSensitiveFields = () => {
+  form.password = '';
+  form.newPassword = '';
+  form.confirmPassword = '';
+  form.code = '';
+  form.uuid = '';
+};
+
+const switchMode = async (next: AuthMode) => {
+  mode.value = next;
+  resetSensitiveFields();
+  formRef.value?.clearValidate();
+  await getCode();
+};
+
 const getCode = async () => {
-  const res = await getCodeImg();
-  const { data } = res;
+  const [err, res] = await to(getCodeImg());
+  if (err || !res) return;
+  const data = res.data;
   captchaEnabled.value = data.captchaEnabled === undefined ? true : data.captchaEnabled;
-  if (captchaEnabled.value) {
-    // 刷新验证码时清空输入框
-    loginForm.value.code = '';
-    codeUrl.value = 'data:image/gif;base64,' + data.img;
-    loginForm.value.uuid = data.uuid;
+  if (captchaEnabled.value && data.img) {
+    codeUrl.value = `data:image/gif;base64,${data.img}`;
+    form.uuid = data.uuid || '';
   }
 };
 
-const getLoginData = () => {
-  const tenantId = localStorage.getItem('tenantId');
-  const username = localStorage.getItem('username');
-  const password = localStorage.getItem('password');
-  const rememberMe = localStorage.getItem('rememberMe');
-  loginForm.value = {
-    tenantId: tenantId === null ? String(loginForm.value.tenantId) : tenantId,
-    username: username === null ? String(loginForm.value.username) : username,
-    password: password === null ? String(loginForm.value.password) : String(password),
-    rememberMe: rememberMe === null ? false : Boolean(rememberMe)
-  } as LoginData;
-};
-
-/**
- * 获取租户列表
- */
 const initTenantList = async () => {
-  const { data } = await getTenantList(false);
+  const [err, res] = await to(getTenantList(false));
+  if (err || !res) return;
+  const data = res.data;
   tenantEnabled.value = data.tenantEnabled === undefined ? true : data.tenantEnabled;
-  if (tenantEnabled.value) {
-    tenantList.value = data.voList;
-    if (tenantList.value != null && tenantList.value.length !== 0) {
-      loginForm.value.tenantId = tenantList.value[0].tenantId;
-    }
+  tenantList.value = data.voList || [];
+  if (tenantList.value.length > 0) {
+    form.tenantId = tenantList.value[0].tenantId;
   }
 };
 
-/**
- * 第三方登录
- * @param type
- */
-const doSocialLogin = (type: string) => {
-  authRouterUrl(type, loginForm.value.tenantId).then((res: any) => {
-    if (res.code === HttpStatus.SUCCESS) {
-      // 获取授权地址跳转
-      window.location.href = res.data;
-    } else {
-      ElMessage.error(res.msg);
+const buildPayload = () => ({
+  tenantId: form.tenantId,
+  username: form.username,
+  password: form.password,
+  newPassword: form.newPassword,
+  email: form.email,
+  phonenumber: form.phonenumber,
+  contact: form.contact,
+  rememberMe: form.rememberMe,
+  code: form.code,
+  uuid: form.uuid,
+  userType: 'sys_user'
+});
+
+const submit = () => {
+  formRef.value?.validate(async (valid) => {
+    if (!valid) return;
+    loading.value = true;
+    const payload = buildPayload();
+    const [err] = await to(mode.value === 'login' ? userStore.login(payload as any) : mode.value === 'register' ? register(payload) : forgotPassword(payload));
+    loading.value = false;
+    if (err) {
+      await getCode();
+      return;
     }
+    if (mode.value === 'login') {
+      localStorage.setItem('rememberedUser', form.rememberMe ? form.username : '');
+      await router.push((route.query.redirect as string) || '/');
+      return;
+    }
+    ElMessage.success(mode.value === 'register' ? '注册成功，请登录' : '密码已重置，请登录');
+    await switchMode('login');
   });
 };
 
 onMounted(() => {
-  getCode();
+  const remembered = localStorage.getItem('rememberedUser');
+  if (remembered) {
+    form.username = remembered;
+    form.rememberMe = true;
+  }
   initTenantList();
-  getLoginData();
+  getCode();
 });
 </script>
 
-<style lang="scss" scoped>
-.login {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100%;
-  background-image: url('../assets/images/login-background.jpg');
-  background-size: cover;
-  background-position: center;
+<style scoped lang="scss">
+.login-shell {
+  container-type: inline-size;
 }
 
-.title-box {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-
-  .title {
-    margin: 0px auto 26px auto;
-    text-align: center;
-    color: var(--el-text-color-primary);
-    font-weight: 600;
-    letter-spacing: 0.5px;
-  }
-
-  :deep(.lang-select--style) {
-    line-height: 0;
-    color: var(--el-text-color-secondary);
-  }
-}
-
-.login-form {
-  border-radius: var(--app-radius-lg);
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  width: min(420px, 90vw);
-  padding: 32px 30px 12px 30px;
-  z-index: 1;
-  box-shadow: var(--app-shadow-lg);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  .el-input {
-    height: 40px;
-    input {
-      height: 40px;
-    }
-  }
-
-  .input-icon {
-    height: 39px;
-    width: 14px;
-    margin-left: 0px;
-  }
-}
-
-.login-tip {
-  font-size: 13px;
-  text-align: center;
-  color: #bfbfbf;
-}
-
-.login-form :deep(.el-input__wrapper) {
-  background-color: rgba(255, 255, 255, 0.9);
-}
-
-.login-form :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-}
-
-.login-form :deep(.el-button--primary) {
-  border-radius: var(--app-radius-md);
-  box-shadow: 0 8px 20px rgba(59, 130, 246, 0.25);
-}
-
-.login-form :deep(.el-button.is-circle) {
-  background: rgba(15, 23, 42, 0.04);
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  color: var(--el-text-color-regular);
-}
-
-.login-form :deep(.el-button.is-circle:hover) {
-  background: rgba(59, 130, 246, 0.1);
-  border-color: rgba(59, 130, 246, 0.2);
-}
-
-.login-code {
-  width: calc(37% - 10px);
-  height: 40px;
-  float: right;
-  margin-left: 10px;
-  box-sizing: border-box;
-  border-radius: var(--app-radius-sm);
+.login-card {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(360px, 1fr);
+  gap: 0;
+  min-height: 620px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid var(--el-border-color-light);
-
-  img {
-    cursor: pointer;
-    vertical-align: middle;
-    display: block;
-    width: 100%;
-    height: 40px;
-    object-fit: cover;
-  }
 }
 
-.el-login-footer {
-  height: 40px;
-  line-height: 40px;
-  position: fixed;
-  bottom: 0;
-  width: 100%;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.75);
-  font-family: Arial, serif;
+.brand-panel,
+.form-panel {
+  padding: 44px;
+}
+
+.brand-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-right: 1px solid rgba(59, 130, 246, 0.14);
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.16), transparent 42%),
+    radial-gradient(circle at 20% 20%, rgba(34, 197, 94, 0.12), transparent 30%),
+    rgba(15, 23, 42, 0.24);
+}
+
+.brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 28px;
+  border: 1px solid rgba(59, 130, 246, 0.55);
+  border-radius: 16px;
+  background: rgba(59, 130, 246, 0.18);
+  box-shadow: 0 0 22px rgba(59, 130, 246, 0.42);
+}
+
+.brand-icon {
+  width: 38px;
+  height: 38px;
+  color: #3b82f6;
+}
+
+.brand-panel h1 {
+  margin: 0;
+  color: #fff;
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.brand-panel p {
+  margin: 14px 0 0;
+  color: #94a3b8;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.security-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 36px;
+}
+
+.security-strip span {
+  padding: 7px 10px;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 6px;
+  color: #bfdbfe;
+  background: rgba(15, 23, 42, 0.68);
   font-size: 12px;
-  letter-spacing: 1px;
 }
 
-.login-code-img {
-  height: 40px;
-  padding-left: 0;
+.form-panel {
+  background: rgba(2, 6, 23, 0.18);
 }
 
-:global(html.dark) {
-  .login-form {
-    background: rgba(17, 24, 39, 0.9);
-    border-color: rgba(148, 163, 184, 0.2);
+.mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-bottom: 28px;
+  padding: 4px;
+  border: 1px solid rgba(59, 130, 246, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mode-tabs button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 6px;
+  color: #94a3b8;
+  background: transparent;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-tabs button.active {
+  color: #fff;
+  background: #3b82f6;
+  box-shadow: 0 0 14px rgba(59, 130, 246, 0.34);
+}
+
+.auth-form :deep(.el-form-item__label) {
+  color: #cbd5e1;
+  font-weight: 600;
+}
+
+.auth-form :deep(.el-input__wrapper),
+.auth-form :deep(.el-select__wrapper) {
+  min-height: 46px;
+  border: 1px solid rgba(59, 130, 246, 0.16);
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.55);
+  box-shadow: none;
+}
+
+.auth-form :deep(.el-input__inner) {
+  color: #fff;
+}
+
+.contact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.captcha-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 126px;
+  gap: 12px;
+  width: 100%;
+}
+
+.captcha-button {
+  height: 46px;
+  overflow: hidden;
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  border-radius: 8px;
+  color: #bfdbfe;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+}
+
+.captcha-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.form-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.form-options button {
+  border: 0;
+  color: #3b82f6;
+  background: transparent;
+  cursor: pointer;
+}
+
+.submit-button {
+  width: 100%;
+  height: 46px;
+  border: 0;
+  border-radius: 8px;
+  font-weight: 800;
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.36);
+}
+
+.security-note {
+  margin: 22px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+@container (max-width: 780px) {
+  .login-card {
+    grid-template-columns: 1fr;
   }
 
-  .login-form :deep(.el-input__wrapper) {
-    background-color: rgba(17, 24, 39, 0.7);
+  .brand-panel {
+    display: none;
   }
 
-  .login-form :deep(.el-button.is-circle) {
-    background: rgba(148, 163, 184, 0.12);
-    border-color: rgba(148, 163, 184, 0.25);
-    color: #e5e7eb;
+  .form-panel {
+    padding: 28px 22px;
+  }
+}
+
+@media (max-width: 520px) {
+  .contact-grid,
+  .captcha-row {
+    grid-template-columns: 1fr;
   }
 
-  .el-login-footer {
-    color: rgba(226, 232, 240, 0.65);
+  .captcha-button {
+    width: 100%;
   }
 }
 </style>

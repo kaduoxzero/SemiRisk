@@ -1,81 +1,70 @@
 <template>
-  <div class="p-6 space-y-6 text-slate-200">
-    <div class="grid grid-cols-12 gap-6">
-      <div class="col-span-12 lg:col-span-8 hud-card p-4 space-y-4">
-        <div class="corner-br"></div><div class="corner-bl"></div>
-        <h3 class="text-xs font-bold border-b border-border pb-1 text-primary">受损风险事件基本面</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-          <div class="flex justify-between border-b border-white/5 pb-1"><span class="text-slate-500">风险归类</span><span class="text-white font-mono">EV-LOG-2026-0520</span></div>
-          <div class="flex justify-between border-b border-white/5 pb-1"><span class="text-slate-500">地理坐标</span><span>新加坡海域节点 (091X)</span></div>
-          <div class="flex justify-between border-b border-white/5 pb-1"><span class="text-slate-500">预测延误范围</span><span>4.5至6.2个运行日</span></div>
-          <div class="flex justify-between border-b border-white/5 pb-1"><span class="text-slate-500">受阻节点数</span><span class="text-danger font-bold">12家一级合作厂</span></div>
-        </div>
-      </div>
-
-      <div class="col-span-12 lg:col-span-4 hud-card p-4 space-y-2 bg-accent/5">
-        <div class="corner-br"></div><div class="corner-bl"></div>
-        <h3 class="text-xs font-bold text-accent">AI 应急策略组建议</h3>
-        <p class="text-[10px] text-slate-400 leading-normal">
-          1. 建议将未运出的3批封测原料在巴生港换单转运。<br>
-          2. 对受制约芯片备货追加 15% 生产保障系数。
-        </p>
-      </div>
+  <div class="risk-page space-y-6">
+    <div class="hud-card p-5 flex flex-wrap gap-3">
+      <div class="corner-br"></div>
+      <div class="corner-bl"></div>
+      <input v-model="eventId" class="cyber-input w-72 px-3 py-2 text-xs" placeholder="输入风险事件 ID" @keyup.enter="loadData" />
+      <button class="rounded bg-primary px-4 py-2 text-xs font-bold text-white" @click="loadData">读取详情</button>
     </div>
 
-    <!-- 拓扑关系 -->
-    <div class="hud-card p-4 h-[350px]">
-      <div class="corner-br"></div><div class="corner-bl"></div>
-      <h3 class="text-xs font-bold mb-2">多节点层级渗透网络拓扑</h3>
-      <div ref="topologyChartRef" class="w-full h-full"></div>
+    <div v-if="!detail" class="hud-card p-12 text-center text-sm text-slate-500">
+      <div class="corner-br"></div>
+      <div class="corner-bl"></div>
+      请从预警中心选择真实事件，或输入事件 ID
+    </div>
+
+    <div v-else class="grid gap-6 lg:grid-cols-3">
+      <div class="hud-card p-5 lg:col-span-2">
+        <div class="corner-br"></div>
+        <div class="corner-bl"></div>
+        <h2 class="text-lg font-bold text-white">{{ detail.eventTitle }}</h2>
+        <div class="mt-4 grid gap-3 text-xs text-slate-300 md:grid-cols-2">
+          <div>事件编号：{{ detail.eventCode || detail.eventId }}</div>
+          <div>企业：{{ detail.enterpriseName || '-' }}</div>
+          <div>分类：{{ detail.category || '-' }}</div>
+          <div>等级：{{ detail.riskLevel || '-' }}</div>
+          <div>状态：{{ detail.status || '-' }}</div>
+          <div>风险分：{{ detail.riskScore || 0 }}</div>
+          <div>来源：{{ detail.sourceName || '-' }}</div>
+          <div>发生时间：{{ detail.occurredAt || '-' }}</div>
+        </div>
+        <p class="mt-5 whitespace-pre-wrap text-sm leading-7 text-slate-300">{{ detail.description || '该真实记录暂无描述' }}</p>
+      </div>
+      <div class="hud-card p-5">
+        <div class="corner-br"></div>
+        <div class="corner-bl"></div>
+        <h3 class="text-sm font-bold text-white">处置建议</h3>
+        <textarea v-model="suggestion" class="cyber-textarea mt-4 h-40 w-full p-3 text-xs" placeholder="写入真实处置意见"></textarea>
+        <button class="mt-3 w-full rounded bg-success px-4 py-2 text-xs font-bold text-white" @click="closeEvent">标记闭环</button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
-import * as echarts from 'echarts'
+import { onMounted, ref } from 'vue';
+import { useRoute } from 'vue-router';
+import { ElMessage } from 'element-plus';
+import { getRiskEvent, handleRiskEvent } from '@/api/risk/event';
 
-const topologyChartRef = ref<HTMLDivElement | null>(null)
-const chart = shallowRef<echarts.ECharts | null>(null)
+const route = useRoute();
+const eventId = ref(String(route.query.id || ''));
+const detail = ref<any>(null);
+const suggestion = ref('');
 
-const initTopology = () => {
-  if (!topologyChartRef.value) return
-  chart.value = echarts.init(topologyChartRef.value, 'dark')
+const loadData = async () => {
+  if (!eventId.value) return;
+  const res = await getRiskEvent(eventId.value);
+  detail.value = res.data;
+  suggestion.value = detail.value?.disposalSuggestion || '';
+};
 
-  chart.value.setOption({
-    backgroundColor: 'transparent',
-    series: [{
-      type: 'graph',
-      layout: 'force',
-      data: [
-        { name: '阻断源: 新加坡劳资纠纷', symbolSize: 35, itemStyle: { color: '#ef4444' } },
-        { name: '分拨仓 A', symbolSize: 22, itemStyle: { color: '#eab308' } },
-        { name: '承运商 B', symbolSize: 22, itemStyle: { color: '#eab308' } },
-        { name: '深圳总装总厂', symbolSize: 30, itemStyle: { color: '#3b82f6' } }
-      ],
-      links: [
-        { source: '阻断源: 新加坡劳资纠纷', target: '分拨仓 A' },
-        { source: '阻断源: 新加坡劳资纠纷', target: '承运商 B' },
-        { source: '分拨仓 A', target: '深圳总装总厂' },
-        { source: '承运商 B', target: '深圳总装总厂' }
-      ],
-      roam: true,
-      label: { show: true, fontSize: 9, color: '#94a3b8' },
-      force: { repulsion: 150, edgeLength: 90 },
-      lineStyle: { width: 1.5, color: 'rgba(255,255,255,0.1)' }
-    }]
-  })
-}
+const closeEvent = async () => {
+  if (!detail.value?.eventId) return;
+  await handleRiskEvent(detail.value.eventId, 'RESOLVED', suggestion.value);
+  ElMessage.success('处置结果已写入真实业务表');
+  loadData();
+};
 
-const handleResize = () => chart.value?.resize()
-
-onMounted(() => {
-  initTopology()
-  window.addEventListener('resize', handleResize)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
-  chart.value?.dispose()
-})
+onMounted(loadData);
 </script>
