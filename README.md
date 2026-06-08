@@ -1,6 +1,14 @@
 <img src="https://foruda.gitee.com/images/1679673780944866919/d908a86f_1766278.png" width="56%" height="56%">
 <div style="height: 10px; clear: both;"></div>
 
+## SemiRisk 单体版
+
+课设演示优先使用单体版：一个 Spring Boot 进程提供前端、API 和真实数据爬取。
+
+- 使用文档：[doc/monolith-usage.md](doc/monolith-usage.md)
+- 单体模块：`semirisk-monolith`
+- 前端页面：`risk-portal`
+
 - - -
 ## 平台简介
 
