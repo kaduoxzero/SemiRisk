@@ -8,7 +8,8 @@ const state = {
   eventRows: [],
   trendRows: [],
   gisRows: [],
-  switching: false
+  switching: false,
+  auth: JSON.parse(localStorage.getItem("semirisk-auth") || "null")
 };
 
 const titles = {
@@ -219,6 +220,9 @@ async function runTask(task) {
   try {
     await task();
   } catch (error) {
+    if (!$("#login-screen")?.classList.contains("hidden")) {
+      showAuthMessage(error.message || "操作失败");
+    }
     setStatus(error.message || "操作失败", "error");
   }
 }
@@ -232,6 +236,9 @@ function bindSubmit(handler) {
 
 async function api(path, options = {}) {
   const headers = options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {};
+  if (state.auth?.token) {
+    headers.Authorization = `Bearer ${state.auth.token}`;
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: { ...headers, ...(options.headers || {}) }
@@ -244,12 +251,82 @@ async function api(path, options = {}) {
     body = "";
   }
   if (!response.ok) {
+    if (response.status === 401) {
+      logout("登录已过期，请重新登录");
+    }
     throw new Error(typeof body === "string" ? body : body.msg || `HTTP ${response.status}`);
   }
   if (body && typeof body === "object" && body.code && ![0, 200].includes(Number(body.code))) {
     throw new Error(body.msg || `接口返回 ${body.code}`);
   }
   return body;
+}
+
+async function authApi(path, payload) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || (body.code && Number(body.code) !== 200)) {
+    throw new Error(body.msg || `HTTP ${response.status}`);
+  }
+  return body.data;
+}
+
+function showAuthMessage(message, type = "error") {
+  const el = $("#auth-message");
+  if (!el) return;
+  el.textContent = message || "";
+  el.style.color = type === "success" ? "#86efac" : "#fca5a5";
+}
+
+function setAuth(auth) {
+  state.auth = auth;
+  localStorage.setItem("semirisk-auth", JSON.stringify(auth));
+}
+
+function logout(message = "") {
+  state.auth = null;
+  localStorage.removeItem("semirisk-auth");
+  $("#app-shell")?.classList.add("hidden");
+  $("#login-screen")?.classList.remove("hidden");
+  showAuthMessage(message);
+}
+
+function applyRoleVisibility() {
+  const isAdmin = state.auth?.user?.role === "ADMIN";
+  $all('[data-view="system"]').forEach((item) => item.classList.toggle("hidden", !isAdmin));
+  if (!isAdmin && state.currentView === "system") {
+    state.currentView = "dashboard";
+  }
+}
+
+function applyUserInfo() {
+  const user = state.auth?.user || {};
+  const username = user.username || "未登录";
+  const role = user.role === "ADMIN" ? "管理员" : "普通用户";
+  const email = user.email ? ` · ${user.email}` : "";
+  $("#user-avatar").textContent = username.slice(0, 1).toUpperCase();
+  $("#user-name").textContent = username;
+  $("#user-role").textContent = `${role}${email}`;
+}
+
+async function enterApp() {
+  applyRoleVisibility();
+  applyUserInfo();
+  $("#login-screen")?.classList.add("hidden");
+  $("#app-shell")?.classList.remove("hidden");
+  await switchView(state.currentView || "dashboard");
+}
+
+function switchAuthTab(tab) {
+  $all(".auth-tab").forEach((button) => button.classList.toggle("active", button.dataset.authTab === tab));
+  ["login", "register", "forgot"].forEach((name) => {
+    $(`#${name}-form`)?.classList.toggle("hidden", name !== tab);
+  });
+  showAuthMessage("");
 }
 
 function dataOf(result, fallback = null) {
@@ -340,9 +417,7 @@ async function loadDashboard() {
   renderMetric("#metric-resolved", kpis.resolved);
   renderMetric("#metric-index", kpis.currentRiskIndex);
   renderTrend("#trend-chart", state.trendRows);
-  renderMap("#dashboard-map", state.gisRows);
   renderTopRisks(events);
-  renderCategoryRisks(events);
   renderDashboardIntel(events, kpis);
   renderEventRows(events, "#latest-events");
   if (warnings.length) {
@@ -452,9 +527,35 @@ async function loadEvents() {
   state.eventTotal = totalOf(result, rows);
   renderEventRows(rows, "#event-table", true);
   $("#event-total").textContent = `共 ${formatNumber(state.eventTotal)} 条`;
-  $("#event-page").textContent = String(state.eventPage);
+  renderEventPager();
   $("#event-prev").disabled = state.eventPage <= 1;
   $("#event-next").disabled = state.eventPage * state.eventPageSize >= state.eventTotal;
+}
+
+function renderEventPager() {
+  const totalPages = Math.max(1, Math.ceil(state.eventTotal / state.eventPageSize));
+  const pages = [];
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    pages.push(1, 2, 3);
+    if (state.eventPage > 4 && state.eventPage < totalPages - 3) {
+      pages.push("left-ellipsis", state.eventPage, "right-ellipsis");
+    } else {
+      pages.push("ellipsis");
+    }
+    pages.push(totalPages - 2, totalPages - 1, totalPages);
+  }
+  $("#event-page").innerHTML = pages.map((page) => {
+    if (String(page).includes("ellipsis")) return `<span class="ellipsis">...</span>`;
+    return `<button class="page-btn ${page === state.eventPage ? "active" : ""}" data-page="${page}" type="button">${page}</button>`;
+  }).join("");
+  $all("[data-page]").forEach((button) => {
+    button.onclick = () => {
+      state.eventPage = Number(button.dataset.page);
+      switchView("events");
+    };
+  });
 }
 
 async function loadEventDetail(id, button) {
@@ -534,9 +635,60 @@ async function submitEvent(event) {
 }
 
 async function loadAnalysis() {
-  const result = await api("/risk/event/trend");
-  state.trendRows = arrayOf(dataOf(result, []));
+  const [trendResult, eventResult, kpiResult] = await Promise.all([
+    api("/risk/event/trend"),
+    api("/risk/event/list?pageNum=1&pageSize=100"),
+    api("/risk/event/kpis")
+  ]);
+  state.trendRows = arrayOf(dataOf(trendResult, []));
+  const events = rowsOf(eventResult);
+  const kpis = dataOf(kpiResult, {});
   renderTrend("#analysis-chart", state.trendRows, true);
+  renderAnalysis(events, kpis);
+}
+
+function renderAnalysis(events, kpis = {}) {
+  $("#analysis-score").textContent = formatNumber(kpis.currentRiskIndex);
+  const critical = events.filter((item) => item.riskLevel === "CRITICAL").length;
+  const warning = events.filter((item) => item.riskLevel === "WARNING").length;
+  const info = events.filter((item) => item.riskLevel === "INFO").length;
+  $("#analysis-summary").textContent = events.length
+    ? `当前样本 ${events.length} 条，CRITICAL ${critical} 条，WARNING ${warning} 条。建议优先处理高分、未闭环且存在经纬度扩散风险的事件。`
+    : "暂无真实事件，无法完成分析。";
+  renderSimpleBars("#analysis-levels", [
+    ["CRITICAL", critical],
+    ["WARNING", warning],
+    ["INFO", info]
+  ]);
+  renderTopGroup("#analysis-sources", events, (item) => item.sourceName || item.sourceType || "未知来源");
+  renderTopGroup("#analysis-enterprises", events, (item) => item.enterpriseName || "未知主体");
+  $("#analysis-actions").innerHTML = [
+    critical ? `高危事件 ${critical} 条，建议进入预警中心逐条闭环。` : "当前样本未发现高危事件。",
+    events.some((item) => item.longitude && item.latitude) ? "存在 GIS 坐标事件，建议进入 3D 地球查看空间分布。" : "当前样本暂无坐标事件。",
+    warning ? `中危事件 ${warning} 条，建议按企业聚合后进入企业画像复核。` : "当前样本中危事件较少。"
+  ].map((text) => `<article class="list-item"><p>${escapeHtml(text)}</p></article>`).join("");
+}
+
+function renderSimpleBars(selector, rows) {
+  const max = Math.max(...rows.map(([, value]) => value), 1);
+  $(selector).innerHTML = rows.map(([name, value]) => `
+    <div class="bar-row">
+      <div class="bar-label"><span>${escapeHtml(name)}</span><strong>${formatNumber(value)}</strong></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${Math.max(4, value / max * 100)}%"></div></div>
+    </div>
+  `).join("");
+}
+
+function renderTopGroup(selector, rows, keyFn) {
+  const groups = rows.reduce((acc, item) => {
+    const key = keyFn(item);
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const top = Object.entries(groups).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  $(selector).innerHTML = top.length ? top.map(([name, count]) => `
+    <article class="list-item"><h4>${escapeHtml(name)}</h4><p>${formatNumber(count)} 条事件</p></article>
+  `).join("") : empty("暂无真实聚合数据");
 }
 
 function renderTrend(selector, rows, showBars = false) {
@@ -598,7 +750,138 @@ function renderTrend(selector, rows, showBars = false) {
 async function loadGis() {
   const result = await api("/risk/event/gis/nodes");
   state.gisRows = arrayOf(dataOf(result, []));
-  renderMap("#gis-map", state.gisRows);
+  renderGlobe("#gis-map", state.gisRows);
+}
+
+function renderGlobe(selector, rows) {
+  const valid = rows
+    .map((row) => ({ ...row, longitude: Number(row.longitude), latitude: Number(row.latitude) }))
+    .filter((row) => Number.isFinite(row.longitude) && Number.isFinite(row.latitude));
+  const host = $(selector);
+  if (!valid.length) {
+    host.innerHTML = empty("暂无带经纬度的真实风险事件");
+    return;
+  }
+  host.innerHTML = `
+    <div class="globe-shell">
+      <canvas id="globe-canvas"></canvas>
+      <aside id="globe-detail" class="globe-detail">
+        <h4>点击地球风险点查看详情</h4>
+        <p>可按住鼠标水平拖动地球旋转。</p>
+      </aside>
+    </div>
+  `;
+  const canvas = $("#globe-canvas");
+  const detail = $("#globe-detail");
+  const ctx = canvas.getContext("2d");
+  const model = { rotation: 110, dragging: false, lastX: 0, points: [] };
+
+  function resize() {
+    const rect = host.getBoundingClientRect();
+    canvas.width = Math.max(320, Math.floor(rect.width || 960));
+    canvas.height = Math.max(520, Math.floor(rect.height || 560));
+    draw();
+  }
+
+  function project(row) {
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const radius = Math.min(canvas.width, canvas.height) * 0.36;
+    const lon = (row.longitude + model.rotation) * Math.PI / 180;
+    const lat = row.latitude * Math.PI / 180;
+    const x = cx + radius * Math.cos(lat) * Math.sin(lon);
+    const y = cy - radius * Math.sin(lat);
+    const z = Math.cos(lat) * Math.cos(lon);
+    return { x, y, z, radius };
+  }
+
+  function drawGrid(cx, cy, radius) {
+    ctx.strokeStyle = "rgba(59,130,246,0.18)";
+    ctx.lineWidth = 1;
+    for (let lat = -60; lat <= 60; lat += 30) {
+      const r = radius * Math.cos(lat * Math.PI / 180);
+      const y = cy - radius * Math.sin(lat * Math.PI / 180);
+      ctx.beginPath();
+      ctx.ellipse(cx, y, r, r * 0.18, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    for (let lon = 0; lon < 180; lon += 30) {
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, radius * Math.abs(Math.cos(lon * Math.PI / 180)), radius, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  function draw() {
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const radius = Math.min(canvas.width, canvas.height) * 0.36;
+    model.points = [];
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const gradient = ctx.createRadialGradient(cx - radius * 0.35, cy - radius * 0.35, radius * 0.08, cx, cy, radius);
+    gradient.addColorStop(0, "rgba(59,130,246,0.76)");
+    gradient.addColorStop(0.52, "rgba(14,165,233,0.34)");
+    gradient.addColorStop(1, "rgba(3,7,18,0.96)");
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(147,197,253,0.55)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    drawGrid(cx, cy, radius);
+
+    valid.forEach((row) => {
+      const p = project(row);
+      if (p.z < -0.08) return;
+      const score = Number(row.riskScore || 0);
+      const r = Math.max(4, Math.min(13, score / 9)) * (0.55 + Math.max(0, p.z) * 0.55);
+      const color = row.riskLevel === "CRITICAL" ? "#ef4444" : row.riskLevel === "WARNING" ? "#eab308" : "#3b82f6";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 7, 0, Math.PI * 2);
+      ctx.fillStyle = color + "33";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      model.points.push({ ...p, r: r + 8, row });
+    });
+  }
+
+  canvas.onmousedown = (event) => {
+    model.dragging = true;
+    model.lastX = event.clientX;
+  };
+  window.onmouseup = () => {
+    model.dragging = false;
+  };
+  canvas.onmousemove = (event) => {
+    if (!model.dragging) return;
+    model.rotation += (event.clientX - model.lastX) * 0.32;
+    model.lastX = event.clientX;
+    draw();
+  };
+  canvas.onclick = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const hit = model.points.find((point) => Math.hypot(point.x - x, point.y - y) <= point.r);
+    if (!hit) return;
+    detail.innerHTML = `
+      <h4>${escapeHtml(valueOrDash(hit.row.eventTitle))}</h4>
+      <p>${escapeHtml(valueOrDash(hit.row.enterpriseName))}</p>
+      <p>${levelBadge(hit.row.riskLevel)} ${statusBadge(hit.row.status)} 风险分 ${formatNumber(hit.row.riskScore)}</p>
+      <p>${escapeHtml(formatDate(hit.row.occurredAt || hit.row.createTime))}</p>
+      <button class="button primary" data-globe-detail="${hit.row.eventId}" type="button">进入风险详情</button>
+    `;
+    $("[data-globe-detail]").onclick = () => {
+      switchView("events");
+      setTimeout(() => runTask(() => loadEventDetail(hit.row.eventId)), 120);
+    };
+  };
+  resize();
+  window.addEventListener("resize", resize, { once: true });
 }
 
 function renderMap(selector, rows) {
@@ -678,9 +961,29 @@ function renderMap(selector, rows) {
 
 async function loadEnterprise() {
   const keyword = $("#enterprise-keyword").value.trim();
+  if ($("#enterprise-mode").value === "internet") {
+    $("#enterprise-profile").innerHTML = `
+      <div class="list-item">
+        <h4>互联网企业信息检索</h4>
+        <p>将通过企查查公开检索页查询：${escapeHtml(valueOrDash(keyword))}。如需自动化深度解析，应配置合法授权的企查查 API。</p>
+        <button class="button primary" id="enterprise-open-qcc" type="button">打开企查查检索</button>
+      </div>
+    `;
+    $("#enterprise-open-qcc").onclick = openQichacha;
+    return;
+  }
   const result = await api(`/risk/enterprise/profile${keyword ? `?keyword=${encodeURIComponent(keyword)}` : ""}`);
   const profile = dataOf(result, {});
   renderEnterprise(profile);
+}
+
+function openQichacha() {
+  const keyword = $("#enterprise-keyword").value.trim();
+  if (!keyword) {
+    setStatus("请输入企业名称或信用代码", "error");
+    return;
+  }
+  window.open(`https://www.qcc.com/web/search?key=${encodeURIComponent(keyword)}`, "_blank", "noopener");
 }
 
 function renderEnterprise(profile) {
@@ -732,11 +1035,15 @@ async function loadReports() {
     <article class="list-item">
       <h4>${escapeHtml(valueOrDash(item.reportTitle))}</h4>
       <p>${escapeHtml(valueOrDash(item.templateType))} · ${statusBadge(item.status)} · ${escapeHtml(valueOrDash(item.createTime))}</p>
-      <button class="link-btn" data-report="${item.reportId}" type="button">查看内容</button>
+      <button class="link-btn" data-report="${item.reportId}" type="button">查看</button>
+      <button class="link-btn" data-report-download="${item.reportId}" type="button">下载 PDF</button>
     </article>
   `).join("") : empty("暂无真实报告记录");
   $all("[data-report]").forEach((button) => {
     button.onclick = () => runTask(() => loadReportDetail(button.dataset.report));
+  });
+  $all("[data-report-download]").forEach((button) => {
+    button.onclick = () => runTask(() => downloadReport(button.dataset.reportDownload));
   });
 }
 
@@ -760,7 +1067,23 @@ async function loadReportDetail(id) {
   const report = dataOf(result, {});
   $("#report-detail-panel").classList.remove("hidden");
   $("#report-title").textContent = report.reportTitle || "报告内容";
-  $("#report-content").textContent = report.content || report.errorMessage || "暂无报告内容";
+  $("#report-content").innerHTML = `PDF 报告已生成，格式：${escapeHtml(report.formatType || "pdf")}。\n\n<button class="button primary" data-current-report-download="${escapeHtml(id)}" type="button">下载 PDF</button>`;
+  $("[data-current-report-download]").onclick = () => runTask(() => downloadReport(id));
+}
+
+async function downloadReport(id) {
+  const response = await fetch(`${API_BASE}/risk/report/${encodeURIComponent(id)}/download`, {
+    headers: { Authorization: `Bearer ${state.auth?.token || ""}` }
+  });
+  if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
+  const blob = await response.blob();
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `semirisk-report-${id}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  link.remove();
 }
 
 async function loadAlerts() {
@@ -940,6 +1263,20 @@ async function runCrawler(button) {
   });
 }
 
+async function runCrawlerUri(button) {
+  const uri = $("#crawler-uri").value.trim();
+  if (!uri) throw new Error("请输入 URI");
+  await withBusy(button, "爬取中", async () => {
+    const result = await api("/risk/crawler/run-uri", {
+      method: "POST",
+      body: JSON.stringify({ uri })
+    });
+    const data = dataOf(result, {});
+    setStatus(`URI 爬取完成：${formatNumber(data.count)} 条，限速策略：${escapeHtml(data.rateLimit)}`);
+    await Promise.all([loadSources(), loadEvents(), loadDashboard()]);
+  });
+}
+
 async function switchView(view) {
   if (state.switching) return;
   state.currentView = view;
@@ -963,13 +1300,41 @@ async function switchView(view) {
 function bindEvents() {
   const loginForm = $("#login-form");
   if (loginForm) {
-    loginForm.onsubmit = (event) => {
+    loginForm.onsubmit = bindSubmit(async (event) => {
       event.preventDefault();
-      $("#login-screen")?.classList.add("hidden");
-      $("#app-shell")?.classList.remove("hidden");
-      switchView(state.currentView || "dashboard");
-    };
+      const button = event.submitter || loginForm.querySelector("button[type='submit']");
+      await withBusy(button, "登录中", async () => {
+        const payload = Object.fromEntries(new FormData(loginForm).entries());
+        const auth = await authApi("/auth/login", payload);
+        setAuth(auth);
+        showAuthMessage("");
+        await enterApp();
+      });
+    });
   }
+  $("#register-form").onsubmit = bindSubmit(async (event) => {
+    const form = event.currentTarget;
+    const button = event.submitter || form.querySelector("button[type='submit']");
+    await withBusy(button, "注册中", async () => {
+      await authApi("/auth/register", Object.fromEntries(new FormData(form).entries()));
+      form.reset();
+      switchAuthTab("login");
+      showAuthMessage("注册成功，请登录", "success");
+    });
+  });
+  $("#forgot-form").onsubmit = bindSubmit(async (event) => {
+    const form = event.currentTarget;
+    const button = event.submitter || form.querySelector("button[type='submit']");
+    await withBusy(button, "重置中", async () => {
+      await authApi("/auth/forgot-password", Object.fromEntries(new FormData(form).entries()));
+      form.reset();
+      switchAuthTab("login");
+      showAuthMessage("密码已重置，请重新登录", "success");
+    });
+  });
+  $all(".auth-tab").forEach((button) => {
+    button.onclick = () => switchAuthTab(button.dataset.authTab);
+  });
   $("#nav-toggle").onclick = () => {
     $("#sidebar")?.classList.toggle("collapsed");
   };
@@ -1025,6 +1390,7 @@ function bindEvents() {
   $("#event-form").onsubmit = bindSubmit(submitEvent);
   $("#event-detail-close").onclick = closeEventDetail;
   $("#enterprise-search").onclick = () => switchView("enterprise");
+  $("#enterprise-qcc").onclick = openQichacha;
   $("#enterprise-keyword").onkeydown = (event) => {
     if (event.key === "Enter") switchView("enterprise");
   };
@@ -1047,10 +1413,26 @@ function bindEvents() {
   $("#knowledge-form").onsubmit = bindSubmit(submitKnowledge);
   $("#source-form").onsubmit = bindSubmit(submitSource);
   $("#crawler-run").onclick = () => runTask(() => runCrawler($("#crawler-run")));
+  $("#crawler-uri-run").onclick = () => runTask(() => runCrawlerUri($("#crawler-uri-run")));
+}
+
+async function initApp() {
+  if (!state.auth?.token) {
+    logout("");
+    return;
+  }
+  try {
+    const result = await api("/auth/me");
+    state.auth.user = dataOf(result, state.auth.user);
+    setAuth(state.auth);
+    await enterApp();
+  } catch (error) {
+    logout("登录已过期，请重新登录");
+  }
 }
 
 new ParticleSystem("particle-canvas");
 updateClock();
 setInterval(updateClock, 1000);
 bindEvents();
-switchView("dashboard");
+initApp();

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>供应链风险智能管理系统</title>
     <script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
-    <link rel="stylesheet" href="./app.css?v=cyber-20260608c" />
+    <link rel="stylesheet" href="./app.css?v=cyber-20260608e" />
   </head>
   <body>
     <canvas id="particle-canvas" aria-hidden="true"></canvas>
@@ -22,19 +22,24 @@
           <h1>供应链风险智能管理系统</h1>
           <p>智能感知 · 精准预警 · 全局掌控</p>
         </div>
+        <div class="auth-tabs">
+          <button class="auth-tab active" data-auth-tab="login" type="button">登录</button>
+          <button class="auth-tab" data-auth-tab="register" type="button">注册</button>
+          <button class="auth-tab" data-auth-tab="forgot" type="button">忘记密码</button>
+        </div>
         <form id="login-form" class="login-form">
           <label>
             <span>用户名</span>
             <span class="input-shell">
               <iconify-icon icon="lucide:user"></iconify-icon>
-              <input class="input" autocomplete="username" placeholder="请输入账号" value="admin" required />
+              <input name="username" class="input" autocomplete="username" placeholder="请输入账号" value="admin" required />
             </span>
           </label>
           <label>
             <span>密码</span>
             <span class="input-shell">
               <iconify-icon icon="lucide:lock"></iconify-icon>
-              <input class="input" autocomplete="current-password" placeholder="请输入密码" type="password" value="password" required />
+              <input name="password" class="input" autocomplete="current-password" placeholder="请输入密码" type="password" value="password" required />
             </span>
           </label>
           <div class="login-options">
@@ -46,6 +51,48 @@
             <iconify-icon icon="lucide:arrow-right"></iconify-icon>
           </button>
         </form>
+        <form id="register-form" class="login-form hidden">
+          <label>
+            <span>用户名</span>
+            <span class="input-shell">
+              <iconify-icon icon="lucide:user-plus"></iconify-icon>
+              <input name="username" class="input" autocomplete="username" placeholder="设置账号" required />
+            </span>
+          </label>
+          <label>
+            <span>邮箱</span>
+            <span class="input-shell">
+              <iconify-icon icon="lucide:mail"></iconify-icon>
+              <input name="email" class="input" autocomplete="email" placeholder="用于找回密码" type="email" />
+            </span>
+          </label>
+          <label>
+            <span>密码</span>
+            <span class="input-shell">
+              <iconify-icon icon="lucide:lock-keyhole"></iconify-icon>
+              <input name="password" class="input" autocomplete="new-password" placeholder="设置密码" type="password" required />
+            </span>
+          </label>
+          <button class="button primary login-submit" type="submit">注册普通用户</button>
+        </form>
+        <form id="forgot-form" class="login-form hidden">
+          <label>
+            <span>账号或邮箱</span>
+            <span class="input-shell">
+              <iconify-icon icon="lucide:badge-help"></iconify-icon>
+              <input name="account" class="input" placeholder="输入账号或邮箱" required />
+            </span>
+          </label>
+          <label>
+            <span>新密码</span>
+            <span class="input-shell">
+              <iconify-icon icon="lucide:key-round"></iconify-icon>
+              <input name="newPassword" class="input" autocomplete="new-password" placeholder="设置新密码" type="password" required />
+            </span>
+          </label>
+          <button class="button primary login-submit" type="submit">重置密码</button>
+        </form>
+        <p id="auth-message" class="auth-message"></p>
         <p class="version">v2.0.0 © 2026 RISK INTELLIGENCE CORE</p>
       </div>
     </section>
@@ -104,10 +151,10 @@
           </button>
         </nav>
         <div class="user-card">
-          <div class="avatar">A</div>
+          <div id="user-avatar" class="avatar">A</div>
           <div class="nav-text">
-            <p>管理员</p>
-            <span>admin@risk.com</span>
+            <p id="user-name">未登录</p>
+            <span id="user-role">--</span>
           </div>
         </div>
       </aside>
@@ -360,14 +407,44 @@
         </section>
 
         <section id="analysis" class="view">
-          <section class="panel hud-card">
-            <div class="corner-br"></div><div class="corner-bl"></div>
-            <div class="panel-header">
-              <h3><iconify-icon icon="lucide:bar-chart-3"></iconify-icon>风险趋势分析</h3>
-              <span class="muted">按接口返回日期序列绘制</span>
-            </div>
-            <div id="analysis-chart" class="chart large"></div>
-          </section>
+          <div class="analysis-grid">
+            <section class="panel hud-card analysis-score">
+              <div class="corner-br"></div><div class="corner-bl"></div>
+              <div class="panel-header">
+                <h3><iconify-icon icon="lucide:gauge"></iconify-icon>综合风险指数</h3>
+              </div>
+              <div id="analysis-score" class="score-ring">--</div>
+              <p id="analysis-summary" class="ai-summary">等待真实数据分析...</p>
+            </section>
+            <section class="panel hud-card analysis-trend">
+              <div class="corner-br"></div><div class="corner-bl"></div>
+              <div class="panel-header">
+                <h3><iconify-icon icon="lucide:bar-chart-3"></iconify-icon>风险趋势分析</h3>
+                <span class="muted">按接口返回日期序列绘制</span>
+              </div>
+              <div id="analysis-chart" class="chart"></div>
+            </section>
+            <section class="panel hud-card">
+              <div class="corner-br"></div><div class="corner-bl"></div>
+              <div class="panel-header"><h3><iconify-icon icon="lucide:pie-chart"></iconify-icon>等级分布</h3></div>
+              <div id="analysis-levels" class="bar-list"></div>
+            </section>
+            <section class="panel hud-card">
+              <div class="corner-br"></div><div class="corner-bl"></div>
+              <div class="panel-header"><h3><iconify-icon icon="lucide:route"></iconify-icon>风险源追溯</h3></div>
+              <div id="analysis-sources" class="list"></div>
+            </section>
+            <section class="panel hud-card">
+              <div class="corner-br"></div><div class="corner-bl"></div>
+              <div class="panel-header"><h3><iconify-icon icon="lucide:building-2"></iconify-icon>影响主体</h3></div>
+              <div id="analysis-enterprises" class="list"></div>
+            </section>
+            <section class="panel hud-card">
+              <div class="corner-br"></div><div class="corner-bl"></div>
+              <div class="panel-header"><h3><iconify-icon icon="lucide:clipboard-check"></iconify-icon>处置建议</h3></div>
+              <div id="analysis-actions" class="list"></div>
+            </section>
+          </div>
         </section>
 
         <section id="gis" class="view">
@@ -387,7 +464,12 @@
               <div class="corner-br"></div><div class="corner-bl"></div>
               <div class="toolbar">
                 <input id="enterprise-keyword" class="input grow" placeholder="企业名称或统一社会信用代码" />
+                <select id="enterprise-mode" class="input compact">
+                  <option value="local">本地分析</option>
+                  <option value="internet">互联网分析</option>
+                </select>
                 <button id="enterprise-search" class="button primary" type="button">检索</button>
+                <button id="enterprise-qcc" class="button" type="button">企查查</button>
               </div>
               <div id="enterprise-profile" class="profile"></div>
             </section>
@@ -422,10 +504,6 @@
                   <option>物流通道风险报告</option>
                 </select>
                 <input name="dateRange" class="input" value="全部真实数据" />
-                <select name="format" class="input">
-                  <option value="markdown">Markdown</option>
-                  <option value="text">Text</option>
-                </select>
                 <button class="button primary" type="submit">生成报告</button>
               </form>
             </section>
@@ -521,6 +599,8 @@
             </div>
             <div class="toolbar section-toolbar">
               <button id="crawler-run" class="button primary" type="button">立即爬取真实数据</button>
+              <input id="crawler-uri" class="input grow" placeholder="可选：输入 CISA KEV JSON 或 GeoJSON URI" />
+              <button id="crawler-uri-run" class="button" type="button">按 URI 爬取</button>
               <span id="crawler-status" class="muted">等待爬取状态</span>
             </div>
             <details class="create-box" open>
@@ -556,6 +636,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=cyber-20260608c"></script>
+    <script src="./app.js?v=cyber-20260608e"></script>
   </body>
 </html>

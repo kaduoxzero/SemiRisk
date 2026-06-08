@@ -24,6 +24,7 @@ import java.util.stream.Collectors;
 @Service
 public class RiskStore {
     private final ObjectMapper objectMapper;
+    private final RiskDatabase database;
     private final Path dataFile = Paths.get("data", "risk-store.json");
     private final AtomicLong eventIds = new AtomicLong(1);
     private final AtomicLong reportIds = new AtomicLong(1);
@@ -37,55 +38,60 @@ public class RiskStore {
     private int bulkDepth;
     private boolean bulkDirty;
 
-    public RiskStore(ObjectMapper objectMapper) {
+    public RiskStore(ObjectMapper objectMapper, RiskDatabase database) {
         this.objectMapper = objectMapper;
+        this.database = database;
     }
 
     @PostConstruct
     public void load() {
-        if (!Files.exists(dataFile)) {
+        SaveState state = database.loadState();
+        if (state == null && Files.exists(dataFile)) {
+            try {
+                state = objectMapper.readValue(dataFile.toFile(), SaveState.class);
+            } catch (IOException ex) {
+                throw new IllegalStateException("Failed to load legacy risk store: " + dataFile, ex);
+            }
+        }
+        if (state == null) {
             return;
         }
-        try {
-            SaveState state = objectMapper.readValue(dataFile.toFile(), SaveState.class);
-            if (state.events != null) {
-                state.events.forEach(event -> {
-                    if (event.eventId != null) {
-                        events.put(event.eventId, event);
-                        if (event.eventCode != null) {
-                            eventCodeIndex.put(event.eventCode, event.eventId);
-                        }
+        if (state.events != null) {
+            state.events.forEach(event -> {
+                if (event.eventId != null) {
+                    events.put(event.eventId, event);
+                    if (event.eventCode != null) {
+                        eventCodeIndex.put(event.eventCode, event.eventId);
                     }
-                });
-            }
-            if (state.reports != null) {
-                state.reports.forEach(report -> {
-                    if (report.reportId != null) {
-                        reports.put(report.reportId, report);
-                    }
-                });
-            }
-            if (state.knowledge != null) {
-                state.knowledge.forEach(item -> {
-                    if (item.knowledgeId != null) {
-                        knowledge.put(item.knowledgeId, item);
-                    }
-                });
-            }
-            if (state.sources != null) {
-                state.sources.forEach(source -> {
-                    if (source.sourceId != null) {
-                        sources.put(source.sourceId, source);
-                    }
-                });
-            }
-            eventIds.set(nextId(events.keySet()));
-            reportIds.set(nextId(reports.keySet()));
-            knowledgeIds.set(nextId(knowledge.keySet()));
-            sourceIds.set(nextId(sources.keySet()));
-        } catch (IOException ex) {
-            throw new IllegalStateException("Failed to load risk store: " + dataFile, ex);
+                }
+            });
         }
+        if (state.reports != null) {
+            state.reports.forEach(report -> {
+                if (report.reportId != null) {
+                    reports.put(report.reportId, report);
+                }
+            });
+        }
+        if (state.knowledge != null) {
+            state.knowledge.forEach(item -> {
+                if (item.knowledgeId != null) {
+                    knowledge.put(item.knowledgeId, item);
+                }
+            });
+        }
+        if (state.sources != null) {
+            state.sources.forEach(source -> {
+                if (source.sourceId != null) {
+                    sources.put(source.sourceId, source);
+                }
+            });
+        }
+        eventIds.set(nextId(events.keySet()));
+        reportIds.set(nextId(reports.keySet()));
+        knowledgeIds.set(nextId(knowledge.keySet()));
+        sourceIds.set(nextId(sources.keySet()));
+        saveNow();
     }
 
     public synchronized void beginBulk() {
@@ -288,17 +294,12 @@ public class RiskStore {
     }
 
     private void saveNow() {
-        try {
-            Files.createDirectories(dataFile.getParent());
-            SaveState state = new SaveState();
-            state.events = new ArrayList<>(events.values());
-            state.reports = new ArrayList<>(reports.values());
-            state.knowledge = new ArrayList<>(knowledge.values());
-            state.sources = new ArrayList<>(sources.values());
-            objectMapper.writerWithDefaultPrettyPrinter().writeValue(dataFile.toFile(), state);
-        } catch (IOException ex) {
-            throw new IllegalStateException("Failed to save risk store: " + dataFile, ex);
-        }
+        SaveState state = new SaveState();
+        state.events = new ArrayList<>(events.values());
+        state.reports = new ArrayList<>(reports.values());
+        state.knowledge = new ArrayList<>(knowledge.values());
+        state.sources = new ArrayList<>(sources.values());
+        database.saveState(state);
     }
 
     private static long nextId(Iterable<Long> ids) {

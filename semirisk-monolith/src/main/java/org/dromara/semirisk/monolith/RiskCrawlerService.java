@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,7 @@ public class RiskCrawlerService {
     private volatile Instant lastRunAt;
     private volatile String lastStatus = "WAITING";
     private volatile String lastMessage = "";
+    private final Map<String, Instant> customFetchTimes = new HashMap<>();
 
     public RiskCrawlerService(RiskStore store, CrawlerProperties properties, ObjectMapper objectMapper) {
         this.store = store;
@@ -91,9 +93,52 @@ public class RiskCrawlerService {
         return status;
     }
 
+    public synchronized Map<String, Object> crawlCustomUri(String url) throws Exception {
+        URI uri = URI.create(url);
+        if (!List.of("http", "https").contains(uri.getScheme())) {
+            throw new IllegalArgumentException("仅支持 HTTP/HTTPS URI");
+        }
+        Instant now = Instant.now();
+        Instant last = customFetchTimes.get(url);
+        if (last != null && Duration.between(last, now).getSeconds() < 60) {
+            throw new IllegalStateException("同一 URI 至少间隔 60 秒，避免高频爬取");
+        }
+        customFetchTimes.put(url, now);
+        store.beginBulk();
+        try {
+            String body = get(url);
+            JsonNode root = objectMapper.readTree(body);
+            int count;
+            String type;
+            if (root.has("vulnerabilities")) {
+                count = importCisaKev(url, root);
+                type = "CISA_KEV_COMPAT";
+            } else if (root.has("features")) {
+                count = importUsgsEarthquakes(url, root);
+                type = "GEOJSON_COMPAT";
+            } else {
+                throw new IllegalArgumentException("暂不支持该 JSON 结构，仅支持 CISA KEV 与 GeoJSON features");
+            }
+            lastRunAt = now;
+            lastStatus = "FINISHED";
+            lastMessage = "custom uri crawler finished";
+            return Map.of("uri", url, "type", type, "count", count, "rateLimit", "同一 URI 60 秒一次");
+        } finally {
+            store.endBulk();
+        }
+    }
+
     private int crawlCisaKev() throws Exception {
-        String body = get(properties.getCisaKevUrl());
+        return crawlCisaKev(properties.getCisaKevUrl());
+    }
+
+    private int crawlCisaKev(String url) throws Exception {
+        String body = get(url);
         JsonNode root = objectMapper.readTree(body);
+        return importCisaKev(url, root);
+    }
+
+    private int importCisaKev(String url, JsonNode root) {
         JsonNode rows = root.path("vulnerabilities");
         int count = 0;
         Instant syncTime = Instant.now();
@@ -114,7 +159,7 @@ public class RiskCrawlerService {
                 event.status = "UNRESOLVED";
                 event.sourceType = "CISA_KEV";
                 event.sourceName = "CISA Known Exploited Vulnerabilities";
-                event.sourceUrl = properties.getCisaKevUrl();
+                event.sourceUrl = url;
                 event.occurredAt = parseDate(text(row, "dateAdded"));
                 event.description = join(text(row, "product"), text(row, "shortDescription"));
                 event.disposalSuggestion = text(row, "requiredAction");
@@ -122,7 +167,7 @@ public class RiskCrawlerService {
                 count++;
             }
         }
-        store.upsertSource("CISA Known Exploited Vulnerabilities", "JSON", properties.getCisaKevUrl(), syncTime);
+        store.upsertSource("CISA Known Exploited Vulnerabilities", "JSON", url, syncTime);
         return count;
     }
 
@@ -141,8 +186,16 @@ public class RiskCrawlerService {
     }
 
     private int crawlUsgsEarthquakes() throws Exception {
-        String body = get(properties.getUsgsEarthquakeUrl());
+        return crawlUsgsEarthquakes(properties.getUsgsEarthquakeUrl());
+    }
+
+    private int crawlUsgsEarthquakes(String url) throws Exception {
+        String body = get(url);
         JsonNode root = objectMapper.readTree(body);
+        return importUsgsEarthquakes(url, root);
+    }
+
+    private int importUsgsEarthquakes(String url, JsonNode root) {
         JsonNode rows = root.path("features");
         int count = 0;
         Instant syncTime = Instant.now();
@@ -166,7 +219,7 @@ public class RiskCrawlerService {
                 event.status = "UNRESOLVED";
                 event.sourceType = "USGS_GEOJSON";
                 event.sourceName = "USGS Significant Earthquakes";
-                event.sourceUrl = propertiesNode.path("url").asText(properties.getUsgsEarthquakeUrl());
+                event.sourceUrl = propertiesNode.path("url").asText(url);
                 event.occurredAt = Instant.ofEpochMilli(time);
                 event.description = join(propertiesNode.path("place").asText(""), "Magnitude " + magnitude);
                 JsonNode coordinates = row.path("geometry").path("coordinates");
@@ -178,7 +231,7 @@ public class RiskCrawlerService {
                 count++;
             }
         }
-        store.upsertSource("USGS Significant Earthquakes", "GeoJSON", properties.getUsgsEarthquakeUrl(), syncTime);
+        store.upsertSource("USGS Significant Earthquakes", "GeoJSON", url, syncTime);
         return count;
     }
 

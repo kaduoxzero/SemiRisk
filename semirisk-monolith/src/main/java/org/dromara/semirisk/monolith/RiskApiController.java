@@ -9,6 +9,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -25,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Base64;
 import java.util.function.Predicate;
 
 @RestController
@@ -32,10 +36,12 @@ import java.util.function.Predicate;
 public class RiskApiController {
     private final RiskStore store;
     private final RiskCrawlerService crawlerService;
+    private final PdfReportService pdfReportService;
 
-    public RiskApiController(RiskStore store, RiskCrawlerService crawlerService) {
+    public RiskApiController(RiskStore store, RiskCrawlerService crawlerService, PdfReportService pdfReportService) {
         this.store = store;
         this.crawlerService = crawlerService;
+        this.pdfReportService = pdfReportService;
     }
 
     @GetMapping("/event/list")
@@ -142,10 +148,11 @@ public class RiskApiController {
         RiskReport report = new RiskReport();
         report.templateType = body.getOrDefault("templateType", "供应链风险研判报告");
         report.dateRange = body.getOrDefault("dateRange", "全部真实数据");
-        report.formatType = body.getOrDefault("format", "markdown");
+        report.formatType = "pdf";
         report.reportTitle = report.templateType + "-" + DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.systemDefault()).format(Instant.now());
         report.status = "FINISHED";
-        report.content = buildReportContent(report, events);
+        report.createTime = Instant.now();
+        report.content = Base64.getEncoder().encodeToString(pdfReportService.generate(report, events));
         return ApiResponse.ok(store.addReport(report));
     }
 
@@ -217,6 +224,20 @@ public class RiskApiController {
         return ApiResponse.ok(store.getReport(reportId));
     }
 
+    @GetMapping("/report/{reportId}/download")
+    public ResponseEntity<byte[]> downloadReport(@PathVariable Long reportId) {
+        RiskReport report = store.getReport(reportId);
+        if (report == null || report.content == null) {
+            return ResponseEntity.notFound().build();
+        }
+        byte[] bytes = Base64.getDecoder().decode(report.content);
+        String filename = (report.reportTitle == null ? "semirisk-report" : report.reportTitle) + ".pdf";
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename.replace("\"", "") + "\"")
+            .contentType(MediaType.APPLICATION_PDF)
+            .body(bytes);
+    }
+
     @GetMapping("/knowledge/list")
     public PageResponse<RiskKnowledge> listKnowledge(
         @RequestParam(defaultValue = "1") int pageNum,
@@ -224,12 +245,17 @@ public class RiskApiController {
         @RequestParam(required = false) String title,
         @RequestParam(required = false) String query
     ) {
-        return page(store.listKnowledge(title == null ? query : title), pageNum, pageSize);
+        String keyword = title == null ? query : title;
+        List<RiskKnowledge> rows = new ArrayList<>(store.listKnowledge(keyword));
+        rows.addAll(eventKnowledge(keyword));
+        return page(rows, pageNum, pageSize);
     }
 
     @GetMapping("/enterprise/kb/search")
     public ApiResponse<List<RiskKnowledge>> searchKnowledge(@RequestParam("query") String query) {
-        return ApiResponse.ok(store.listKnowledge(query));
+        List<RiskKnowledge> rows = new ArrayList<>(store.listKnowledge(query));
+        rows.addAll(eventKnowledge(query));
+        return ApiResponse.ok(rows);
     }
 
     @PostMapping("/knowledge")
@@ -252,6 +278,11 @@ public class RiskApiController {
     @PostMapping("/crawler/run")
     public ApiResponse<Map<String, Object>> runCrawler() {
         return ApiResponse.ok(crawlerService.crawlNow());
+    }
+
+    @PostMapping("/crawler/run-uri")
+    public ApiResponse<Map<String, Object>> runCrawlerUri(@RequestBody Map<String, String> body) throws Exception {
+        return ApiResponse.ok(crawlerService.crawlCustomUri(body.get("uri")));
     }
 
     @GetMapping("/crawler/status")
@@ -285,6 +316,39 @@ public class RiskApiController {
                     .append(event.riskScore).append("\n"));
         }
         return builder.toString();
+    }
+
+    private List<RiskKnowledge> eventKnowledge(String query) {
+        String keyword = normalize(query);
+        DateTimeFormatter day = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault());
+        return store.listEvents(event -> {
+                String date = event.occurredAt == null ? "" : day.format(event.occurredAt);
+                return keyword.isBlank()
+                    || contains(event.eventTitle, keyword)
+                    || contains(event.enterpriseName, keyword)
+                    || contains(event.sourceName, keyword)
+                    || contains(event.category, keyword)
+                    || contains(date, keyword);
+            }).stream()
+            .limit(2000)
+            .map(event -> {
+                RiskKnowledge item = new RiskKnowledge();
+                item.knowledgeId = event.eventId == null ? null : -event.eventId;
+                item.title = "风险事件知识：" + value(event.eventTitle);
+                item.category = value(event.category);
+                item.keywords = String.join(" ", value(event.enterpriseName), value(event.riskLevel), value(event.sourceName));
+                item.sourceName = value(event.sourceName);
+                item.content = "日期：" + (event.occurredAt == null ? "--" : day.format(event.occurredAt))
+                    + "；主体：" + value(event.enterpriseName)
+                    + "；等级：" + value(event.riskLevel)
+                    + "；风险分：" + (event.riskScore == null ? "--" : event.riskScore.toPlainString())
+                    + "；描述：" + value(event.description);
+                item.status = "ACTIVE";
+                item.createTime = event.createTime;
+                item.updateTime = event.createTime;
+                return item;
+            })
+            .toList();
     }
 
     private static Map<String, Integer> radar(List<RiskEvent> events) {
@@ -343,6 +407,10 @@ public class RiskApiController {
 
     private static String value(String[] cols, int index) {
         return index >= cols.length ? "" : cols[index].trim();
+    }
+
+    private static String value(String value) {
+        return value == null || value.isBlank() ? "--" : value;
     }
 
     private static boolean blank(String value) {
