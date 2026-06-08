@@ -1,11 +1,24 @@
 package com.semirisk.common;
 
+import com.lowagie.text.Document;
+import com.lowagie.text.Font;
+import com.lowagie.text.PageSize;
+import com.lowagie.text.Paragraph;
+import com.lowagie.text.Phrase;
+import com.lowagie.text.pdf.BaseFont;
+import com.lowagie.text.pdf.PdfContentByte;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
+import com.lowagie.text.pdf.PdfPageEventHelper;
+import com.lowagie.text.pdf.PdfWriter;
+
+import java.awt.Color;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -13,33 +26,21 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * 企业级风险报告生成器。
- *
- * <p>输出专业排版的 PDF / DOCX / PPTX：封面色带标题、机密标识、报告元信息、风险等级标注、
- * 带编号的小节标题与分隔线、自动分页、页眉页脚页码。中文使用 PDF 标准 CID 字体 STSong-Light，
- * 无需额外字体依赖。报告正文来自真实公开源 + 风险快照 + DeepSeek/本地 RAG 生成的内容。</p>
+ * 企业级风险报告生成器（PDF 使用 OpenPDF 正确渲染中英文，DOCX/PPTX 使用 OpenXML）。
  */
 public final class ReportFileFactory {
 
     private ReportFileFactory() {
     }
 
-    // 企业版式配色（浅色专业主题）
-    private static final float[] NAVY = {0.094f, 0.157f, 0.357f};      // 封面/标题深藏蓝
-    private static final float[] ACCENT = {0.149f, 0.388f, 0.922f};    // 强调蓝
-    private static final float[] INK = {0.106f, 0.149f, 0.231f};       // 正文近黑
-    private static final float[] GREY = {0.42f, 0.45f, 0.52f};         // 次要灰
-    private static final float[] LIGHT = {0.945f, 0.957f, 0.976f};     // 浅底
-    private static final float[] DANGER = {0.86f, 0.15f, 0.15f};
-    private static final float[] WARN = {0.78f, 0.55f, 0.05f};
-    private static final float[] OK = {0.13f, 0.55f, 0.33f};
-
-    private static final float PAGE_W = 595f;
-    private static final float PAGE_H = 842f;
-    private static final float MARGIN_L = 56f;
-    private static final float MARGIN_R = 539f;
-    private static final float CONTENT_W = MARGIN_R - MARGIN_L;
-    private static final float BOTTOM = 64f;
+    // 版式配色
+    private static final Color NAVY   = new Color(24, 40, 91);
+    private static final Color ACCENT = new Color(38, 99, 235);
+    private static final Color INK    = new Color(27, 38, 66);
+    private static final Color MUTED  = new Color(107, 114, 132);
+    private static final Color SILVER = new Color(200, 210, 225);
+    private static final Color META_BG = new Color(238, 242, 249);
+    private static final Color META_BD = new Color(214, 220, 229);
 
     private static final Pattern HEADING = Pattern.compile("^(?:[一二三四五六七八九十百]+、|\\d+[、.\\)]|【.+?】).*");
 
@@ -47,23 +48,20 @@ public final class ReportFileFactory {
         String normalized = normalizeFormat(format);
         Report report = parse(id, template, language, findings);
         return switch (normalized) {
-            case "WORD" -> new ReportFile(filename(id, "docx"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx(report));
-            case "PPT" -> new ReportFile(filename(id, "pptx"), "application/vnd.openxmlformats-officedocument.presentationml.presentation", pptx(report));
+            case "WORD" -> new ReportFile(filename(id, "docx"),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx(report));
+            case "PPT" -> new ReportFile(filename(id, "pptx"),
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation", pptx(report));
             default -> new ReportFile(filename(id, "pdf"), "application/pdf", pdf(report));
         };
     }
 
-    // ---------------------------------------------------------------------
-    // 内容模型解析
-    // ---------------------------------------------------------------------
+    // ─────────────────────────── 内容模型 ───────────────────────────
 
-    private record Section(String heading, List<String> paragraphs) {
-    }
+    private record Section(String heading, List<String> paragraphs) {}
 
     private record Report(String title, String reportId, String templateName, String language,
-                          String date, String classification, String riskLevel, String modelStatus,
-                          List<Section> sections) {
-    }
+                          String date, String riskLevel, String modelStatus, List<Section> sections) {}
 
     private static Report parse(String id, String template, String language, List<String> findings) {
         String templateName = templateName(template);
@@ -75,37 +73,22 @@ public final class ReportFileFactory {
         List<String> source = findings == null ? List.of() : findings;
         for (String raw : source) {
             String line = raw == null ? "" : raw.trim();
-            if (line.isEmpty()) {
-                continue;
-            }
-            if (line.startsWith("报告编号") || line.startsWith("写作方式")) {
-                continue;
-            }
+            if (line.isEmpty() || line.startsWith("报告编号") || line.startsWith("写作方式")) continue;
             if (line.startsWith("AI状态") || line.startsWith("AI 状态")) {
                 modelStatus = line.replaceFirst("^AI\\s*状态[:：]?", "").trim();
                 continue;
             }
-            if (line.startsWith("SemiRisk") && (line.contains("报告"))) {
-                title = line;
-                continue;
-            }
+            if (line.startsWith("SemiRisk") && line.contains("报告")) { title = line; continue; }
             if (riskLevel.isEmpty()) {
-                if (line.contains("高危")) {
-                    riskLevel = "高危";
-                } else if (line.contains("中危")) {
-                    riskLevel = "中危";
-                } else if (line.contains("低危")) {
-                    riskLevel = "低危";
-                }
+                if (line.contains("高危")) riskLevel = "高危";
+                else if (line.contains("中危")) riskLevel = "中危";
+                else if (line.contains("低危")) riskLevel = "低危";
             }
             if (HEADING.matcher(line).matches()) {
                 current = new Section(line, new ArrayList<>());
                 sections.add(current);
             } else {
-                if (current == null) {
-                    current = new Section("一、报告摘要", new ArrayList<>());
-                    sections.add(current);
-                }
+                if (current == null) { current = new Section("一、报告摘要", new ArrayList<>()); sections.add(current); }
                 current.paragraphs().add(line);
             }
         }
@@ -114,15 +97,14 @@ public final class ReportFileFactory {
             s.paragraphs().add("本报告由 SemiRisk 平台基于已采集公开源情报、风险告警与知识库 SOP 生成。");
             sections.add(s);
         }
-        return new Report(title, id, templateName, language == null || language.isBlank() ? "中文" : language,
-                LocalDate.now().toString(), "企业机密 · Confidential",
+        return new Report(title, id, templateName,
+                language == null || language.isBlank() ? "中文" : language,
+                LocalDate.now().toString(),
                 riskLevel.isEmpty() ? "待研判" : riskLevel, modelStatus, sections);
     }
 
     private static String templateName(String template) {
-        if (template == null) {
-            return "风险评估报告";
-        }
+        if (template == null) return "风险评估报告";
         return switch (template) {
             case "supply-chain" -> "供应链分析报告";
             case "enterprise-dd" -> "企业尽调报告";
@@ -131,267 +113,200 @@ public final class ReportFileFactory {
     }
 
     private static String normalizeFormat(String format) {
-        if (format == null) {
-            return "PDF";
-        }
-        String value = format.trim().toUpperCase(Locale.ROOT);
-        if (value.contains("WORD") || value.contains("DOC")) {
-            return "WORD";
-        }
-        if (value.contains("PPT") || value.contains("POWERPOINT")) {
-            return "PPT";
-        }
+        if (format == null) return "PDF";
+        String v = format.trim().toUpperCase(Locale.ROOT);
+        if (v.contains("WORD") || v.contains("DOC")) return "WORD";
+        if (v.contains("PPT") || v.contains("POWERPOINT")) return "PPT";
         return "PDF";
     }
 
-    private static String filename(String id, String extension) {
+    private static String filename(String id, String ext) {
         String safeId = id == null || id.isBlank() ? "semirisk-report" : id.replaceAll("[^A-Za-z0-9_-]", "-");
-        return safeId + "-report." + extension;
+        return safeId + "-report." + ext;
     }
 
-    // ---------------------------------------------------------------------
-    // PDF（企业版式，自动分页）
-    // ---------------------------------------------------------------------
+    // ─────────────────────────── PDF (OpenPDF) ───────────────────────────
 
     private static byte[] pdf(Report report) {
-        PdfDoc doc = new PdfDoc();
-        doc.newPage();
-        // 封面色带
-        doc.fillRect(0, PAGE_H - 132, PAGE_W, 132, NAVY);
-        doc.fillRect(0, PAGE_H - 138, PAGE_W, 6, ACCENT);
-        doc.text(MARGIN_L, PAGE_H - 64, 22, report.title(), white());
-        doc.text(MARGIN_L, PAGE_H - 92, 12, report.templateName() + " · " + report.classification(), new float[]{0.78f, 0.85f, 0.96f});
-        doc.text(MARGIN_L, PAGE_H - 114, 10, "SemiRisk 半导体供应链风险智能平台", new float[]{0.66f, 0.74f, 0.90f});
-        doc.setY(PAGE_H - 168);
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
-        // 元信息表
-        metaRow(doc, "报告编号", report.reportId(), "报告类型", report.templateName());
-        metaRow(doc, "生成日期", report.date(), "报告语言", report.language());
-        metaRow(doc, "综合风险", report.riskLevel(), "密级", report.classification());
-        doc.gapY(8);
+            // A4: top margin 150 so body starts below cover band; bottom 60 for footer
+            Document doc = new Document(PageSize.A4, 56, 56, 150, 64);
+            PdfWriter writer = PdfWriter.getInstance(doc, baos);
 
-        // 风险等级标注框
-        float[] band = levelColor(report.riskLevel());
-        doc.ensure(46);
-        float by = doc.y() - 40;
-        doc.fillRect(MARGIN_L, by, CONTENT_W, 40, LIGHT);
-        doc.fillRect(MARGIN_L, by, 5, 40, band);
-        doc.text(MARGIN_L + 16, by + 24, 12, "综合风险等级：" + report.riskLevel(), band);
-        if (!report.modelStatus().isEmpty()) {
-            doc.text(MARGIN_L + 16, by + 9, 8.5f, truncate(report.modelStatus(), 78), GREY);
-        }
-        doc.setY(by - 18);
+            BaseFont bf = cjkFont();
+            Font fTitle = new Font(bf, 21, Font.BOLD, Color.WHITE);
+            Font fSub   = new Font(bf, 11, Font.NORMAL, new Color(198, 215, 245));
+            Font fMeta  = new Font(bf,  9, Font.NORMAL, INK);
+            Font fMetaK = new Font(bf,  9, Font.BOLD,   new Color(21, 39, 106));
+            Font fH     = new Font(bf, 13, Font.BOLD,   NAVY);
+            Font fBody  = new Font(bf, 11, Font.NORMAL, INK);
+            Font fFoot  = new Font(bf,  8, Font.NORMAL, MUTED);
 
-        // 小节
-        for (Section section : report.sections()) {
-            renderHeading(doc, section.heading());
-            for (String para : section.paragraphs()) {
-                renderParagraph(doc, para);
+            // Page event: cover band on page 1, footer on all pages
+            writer.setPageEvent(new PdfPageEventHelper() {
+                @Override
+                public void onStartPage(PdfWriter w, Document d) {
+                    if (w.getPageNumber() != 1) return;
+                    PdfContentByte cb = w.getDirectContentUnder();
+                    float top = d.getPageSize().getTop();
+                    float width = d.getPageSize().getWidth();
+                    // Navy cover band
+                    cb.setColorFill(NAVY);
+                    cb.rectangle(0, top - 132, width, 132);
+                    cb.fill();
+                    // Accent bottom stripe
+                    cb.setColorFill(ACCENT);
+                    cb.rectangle(0, top - 138, width, 6);
+                    cb.fill();
+                    // Title text
+                    cb.beginText();
+                    cb.setFontAndSize(bf, 21);
+                    cb.setColorFill(Color.WHITE);
+                    cb.showTextAligned(PdfContentByte.ALIGN_LEFT, report.title(), 56, top - 68, 0);
+                    cb.setFontAndSize(bf, 11);
+                    cb.setColorFill(new Color(198, 215, 245));
+                    cb.showTextAligned(PdfContentByte.ALIGN_LEFT,
+                            report.templateName() + "  |  " + report.date(), 56, top - 92, 0);
+                    cb.setFontAndSize(bf, 9);
+                    cb.setColorFill(new Color(155, 175, 210));
+                    cb.showTextAligned(PdfContentByte.ALIGN_LEFT,
+                            "SemiRisk  半导体供应链风险智能平台", 56, top - 114, 0);
+                    cb.endText();
+                }
+
+                @Override
+                public void onEndPage(PdfWriter w, Document d) {
+                    PdfContentByte cb = w.getDirectContent();
+                    float left = d.getPageSize().getLeft() + 56;
+                    float right = d.getPageSize().getRight() - 56;
+                    float y = d.getPageSize().getBottom() + 36;
+                    // Footer line
+                    cb.setColorStroke(SILVER);
+                    cb.setLineWidth(0.5f);
+                    cb.moveTo(left, y + 12);
+                    cb.lineTo(right, y + 12);
+                    cb.stroke();
+                    // Footer text
+                    cb.beginText();
+                    cb.setFontAndSize(bf, 8);
+                    cb.setColorFill(MUTED);
+                    cb.showTextAligned(PdfContentByte.ALIGN_LEFT,
+                            "SemiRisk  ·  半导体供应链风险智能平台", left, y, 0);
+                    cb.showTextAligned(PdfContentByte.ALIGN_RIGHT,
+                            "第 " + w.getPageNumber() + " 页", right, y, 0);
+                    cb.endText();
+                }
+            });
+
+            doc.open();
+
+            // ── Meta info table ──
+            PdfPTable metaTable = new PdfPTable(4);
+            metaTable.setWidthPercentage(100);
+            metaTable.setSpacingAfter(14);
+            metaTable.setSpacingBefore(6);
+            addMetaCell(metaTable, "报告编号", report.reportId(), fMetaK, fMeta);
+            addMetaCell(metaTable, "报告类型", report.templateName(), fMetaK, fMeta);
+            addMetaCell(metaTable, "生成日期", report.date(), fMetaK, fMeta);
+            addMetaCell(metaTable, "综合风险", report.riskLevel(), fMetaK, riskFont(bf, report.riskLevel()));
+            doc.add(metaTable);
+
+            // ── Risk level banner ──
+            if (!report.riskLevel().equals("待研判")) {
+                Color band = riskColor(report.riskLevel());
+                PdfPTable bannerTable = new PdfPTable(1);
+                bannerTable.setWidthPercentage(100);
+                bannerTable.setSpacingAfter(14);
+                PdfPCell bannerCell = new PdfPCell(new Phrase("综合风险等级：" + report.riskLevel(), new Font(bf, 12, Font.BOLD, band)));
+                bannerCell.setBackgroundColor(new Color(245, 247, 252));
+                bannerCell.setBorderColorLeft(band);
+                bannerCell.setBorderWidthLeft(4);
+                bannerCell.setBorderWidthTop(0);
+                bannerCell.setBorderWidthRight(0);
+                bannerCell.setBorderWidthBottom(0);
+                bannerCell.setPadding(10);
+                bannerTable.addCell(bannerCell);
+                doc.add(bannerTable);
             }
-            doc.gapY(6);
-        }
 
-        doc.finish(report);
-        return doc.bytes();
-    }
+            // ── Sections ──
+            for (Section section : report.sections()) {
+                Paragraph h = new Paragraph(section.heading(), fH);
+                h.setSpacingBefore(12);
+                h.setSpacingAfter(4);
+                doc.add(h);
 
-    private static void metaRow(PdfDoc doc, String k1, String v1, String k2, String v2) {
-        doc.ensure(26);
-        float y = doc.y() - 22;
-        doc.fillRect(MARGIN_L, y, CONTENT_W, 22, LIGHT);
-        float half = CONTENT_W / 2f;
-        doc.text(MARGIN_L + 12, y + 7, 9.5f, k1 + "：" + v1, INK);
-        doc.text(MARGIN_L + half + 12, y + 7, 9.5f, k2 + "：" + v2, INK);
-        doc.setY(y - 4);
-    }
+                // Separator line
+                PdfPTable hr = new PdfPTable(1);
+                hr.setWidthPercentage(100);
+                hr.setSpacingAfter(8);
+                PdfPCell hrCell = new PdfPCell(new Phrase(""));
+                hrCell.setBorderColorTop(ACCENT);
+                hrCell.setBorderWidthTop(1f);
+                hrCell.setBorderWidthBottom(0);
+                hrCell.setBorderWidthLeft(0);
+                hrCell.setBorderWidthRight(0);
+                hrCell.setFixedHeight(2);
+                hr.addCell(hrCell);
+                doc.add(hr);
 
-    private static void renderHeading(PdfDoc doc, String heading) {
-        doc.ensure(34);
-        doc.gapY(6);
-        float y = doc.y() - 16;
-        doc.text(MARGIN_L, y, 13.5f, heading, NAVY);
-        doc.lineRect(MARGIN_L, y - 6, CONTENT_W, ACCENT, 1.1f);
-        doc.setY(y - 16);
-    }
-
-    private static void renderParagraph(PdfDoc doc, String para) {
-        boolean bullet = para.startsWith("•") || para.startsWith("-") || para.startsWith("·") || para.startsWith("*");
-        String text = bullet ? para.replaceFirst("^[•\\-·*]\\s*", "") : para;
-        List<String> wrapped = wrap(text, 11, CONTENT_W - (bullet ? 16 : 0));
-        for (int i = 0; i < wrapped.size(); i++) {
-            doc.ensure(17);
-            float y = doc.y() - 14;
-            float x = MARGIN_L + (bullet ? 16 : 0);
-            if (bullet && i == 0) {
-                doc.text(MARGIN_L + 2, y, 11, "•", ACCENT);
+                for (String para : section.paragraphs()) {
+                    boolean bullet = para.startsWith("•") || para.startsWith("-") || para.startsWith("·");
+                    String text = bullet ? "  • " + para.replaceFirst("^[•\\-·]\\s*", "") : para;
+                    Paragraph p = new Paragraph(text, fBody);
+                    p.setLeading(18f);
+                    p.setSpacingAfter(3);
+                    doc.add(p);
+                }
             }
-            doc.text(x, y, 11, wrapped.get(i), INK);
-            doc.setY(y - 3);
+
+            doc.close();
+            return baos.toByteArray();
+        } catch (Exception ex) {
+            throw new IllegalStateException("PDF report generation failed", ex);
         }
     }
 
-    private static float[] levelColor(String level) {
-        if (level == null) {
-            return GREY;
-        }
-        if (level.contains("高")) {
-            return DANGER;
-        }
-        if (level.contains("中")) {
-            return WARN;
-        }
-        if (level.contains("低")) {
-            return OK;
-        }
-        return GREY;
-    }
-
-    private static float[] white() {
-        return new float[]{1f, 1f, 1f};
-    }
-
-    /** 近似按字符宽度换行（CJK 约等于字号宽，ASCII 约 0.55 字号宽）。 */
-    private static List<String> wrap(String text, float size, float maxWidth) {
-        List<String> out = new ArrayList<>();
-        StringBuilder cur = new StringBuilder();
-        float w = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            float cw = (c < 128 ? 0.55f : 1.0f) * size;
-            if (w + cw > maxWidth && cur.length() > 0) {
-                out.add(cur.toString());
-                cur.setLength(0);
-                w = 0;
-            }
-            cur.append(c);
-            w += cw;
-        }
-        if (cur.length() > 0) {
-            out.add(cur.toString());
-        }
-        return out.isEmpty() ? List.of("") : out;
-    }
-
-    private static String truncate(String value, int max) {
-        if (value == null) {
-            return "";
-        }
-        return value.length() <= max ? value : value.substring(0, max) + "…";
-    }
-
-    /** 极简 PDF 写入器，支持多页、文本、填充矩形、横线，中文用 STSong-Light CID 字体。 */
-    private static final class PdfDoc {
-        private final List<StringBuilder> pages = new ArrayList<>();
-        private StringBuilder cur;
-        private float y = PAGE_H;
-
-        void newPage() {
-            cur = new StringBuilder();
-            pages.add(cur);
-            y = PAGE_H;
-        }
-
-        float y() {
-            return y;
-        }
-
-        void setY(float value) {
-            y = value;
-        }
-
-        void gapY(float d) {
-            y -= d;
-        }
-
-        void ensure(float needed) {
-            if (y - needed < BOTTOM) {
-                newPage();
-                y = PAGE_H - 56;
-            }
-        }
-
-        void text(float x, float y, float size, String value, float[] color) {
-            cur.append(String.format(Locale.ROOT, "BT %.3f %.3f %.3f rg /F1 %.1f Tf %.2f %.2f Td %s Tj ET\n",
-                    color[0], color[1], color[2], size, x, y, hexText(value)));
-        }
-
-        void fillRect(float x, float y, float w, float h, float[] color) {
-            cur.append(String.format(Locale.ROOT, "%.3f %.3f %.3f rg %.2f %.2f %.2f %.2f re f\n",
-                    color[0], color[1], color[2], x, y, w, h));
-        }
-
-        void lineRect(float x, float y, float w, float[] color, float lw) {
-            cur.append(String.format(Locale.ROOT, "%.3f %.3f %.3f RG %.2f w %.2f %.2f m %.2f %.2f l S\n",
-                    color[0], color[1], color[2], lw, x, y, x + w, y));
-        }
-
-        void finish(Report report) {
-            // 每页页眉细线 + 页脚
-            for (int i = 0; i < pages.size(); i++) {
-                StringBuilder p = pages.get(i);
-                StringBuilder footer = new StringBuilder();
-                footer.append(String.format(Locale.ROOT, "%.3f %.3f %.3f RG 0.6 w %.2f %.2f m %.2f %.2f l S\n",
-                        0.80f, 0.83f, 0.88f, MARGIN_L, 50f, MARGIN_R, 50f));
-                footer.append(String.format(Locale.ROOT, "BT %.3f %.3f %.3f rg /F1 8 Tf %.2f %.2f Td %s Tj ET\n",
-                        GREY[0], GREY[1], GREY[2], MARGIN_L, 36f, hexText("SemiRisk · 半导体供应链风险智能平台 · " + report.classification())));
-                footer.append(String.format(Locale.ROOT, "BT %.3f %.3f %.3f rg /F1 8 Tf %.2f %.2f Td %s Tj ET\n",
-                        GREY[0], GREY[1], GREY[2], MARGIN_R - 60f, 36f, hexText("第 " + (i + 1) + " / " + pages.size() + " 页")));
-                p.append(footer);
-            }
-        }
-
-        byte[] bytes() {
-            int pageCount = pages.size();
-            // 对象编号：1 Catalog, 2 Pages, 3 Font(Type0), 4 CIDFont, 5 FontDescriptor 略；
-            // 每页 2 个对象（Page + Contents），从对象 5 开始。
-            List<byte[]> objects = new ArrayList<>();
-            // 占位，稍后填充 1..4
-            int firstPageObj = 5;
-            StringBuilder kids = new StringBuilder();
-            for (int i = 0; i < pageCount; i++) {
-                kids.append(firstPageObj + i * 2).append(" 0 R ");
-            }
-            objects.add(ascii("<< /Type /Catalog /Pages 2 0 R >>"));
-            objects.add(ascii("<< /Type /Pages /Kids [" + kids.toString().trim() + "] /Count " + pageCount + " >>"));
-            objects.add(ascii("<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [4 0 R] >>"));
-            objects.add(ascii("<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> >>"));
-            for (int i = 0; i < pageCount; i++) {
-                int contentObj = firstPageObj + i * 2 + 1;
-                objects.add(ascii("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + (int) PAGE_W + " " + (int) PAGE_H
-                        + "] /Resources << /Font << /F1 3 0 R >> >> /Contents " + contentObj + " 0 R >>"));
-                byte[] content = pages.get(i).toString().getBytes(StandardCharsets.ISO_8859_1);
-                objects.add(concat(ascii("<< /Length " + content.length + " >>\nstream\n"), content, ascii("endstream")));
-            }
+    private static BaseFont cjkFont() {
+        try {
+            return BaseFont.createFont("STSong-Light", "UniGB-UCS2-H", BaseFont.NOT_EMBEDDED);
+        } catch (Exception e) {
             try {
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                write(out, "%PDF-1.4\n%âãÏÓ\n");
-                List<Integer> offsets = new ArrayList<>();
-                for (int i = 0; i < objects.size(); i++) {
-                    offsets.add(out.size());
-                    write(out, (i + 1) + " 0 obj\n");
-                    out.write(objects.get(i));
-                    write(out, "\nendobj\n");
-                }
-                int xref = out.size();
-                write(out, "xref\n0 " + (objects.size() + 1) + "\n0000000000 65535 f \n");
-                for (Integer offset : offsets) {
-                    write(out, String.format(Locale.ROOT, "%010d 00000 n \n", offset));
-                }
-                write(out, "trailer\n<< /Size " + (objects.size() + 1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n");
-                return out.toByteArray();
-            } catch (IOException ex) {
-                throw new IllegalStateException("PDF report generation failed", ex);
+                return BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.NOT_EMBEDDED);
+            } catch (Exception e2) {
+                throw new IllegalStateException("Cannot load PDF font", e2);
             }
         }
     }
 
-    private static String hexText(String value) {
-        return "<" + HexFormat.of().formatHex((value == null ? "" : value).getBytes(StandardCharsets.UTF_16BE)).toUpperCase(Locale.ROOT) + ">";
+    private static void addMetaCell(PdfPTable table, String key, String value, Font kFont, Font vFont) {
+        PdfPCell kc = new PdfPCell(new Phrase(key, kFont));
+        kc.setBackgroundColor(META_BG);
+        kc.setBorderColor(META_BD);
+        kc.setPadding(7);
+        table.addCell(kc);
+
+        PdfPCell vc = new PdfPCell(new Phrase(value, vFont));
+        vc.setBorderColor(META_BD);
+        vc.setPadding(7);
+        table.addCell(vc);
     }
 
-    // ---------------------------------------------------------------------
-    // DOCX（企业版式：标题、标题样式、元信息表格、小节）
-    // ---------------------------------------------------------------------
+    private static Color riskColor(String level) {
+        if (level == null) return MUTED;
+        if (level.contains("高")) return new Color(220, 38, 38);
+        if (level.contains("中")) return new Color(202, 138, 4);
+        if (level.contains("低")) return new Color(22, 163, 74);
+        return MUTED;
+    }
+
+    private static Font riskFont(BaseFont bf, String level) {
+        return new Font(bf, 9, Font.BOLD, riskColor(level));
+    }
+
+    // ─────────────────────────── DOCX ───────────────────────────
 
     private static byte[] docx(Report report) {
         try {
@@ -421,30 +336,28 @@ public final class ReportFileFactory {
 
     private static String wordDocument(Report report) {
         StringBuilder b = new StringBuilder();
-        // 标题
         b.append(wp(report.title(), 36, "1F2D5B", true, "center"));
-        b.append(wp(report.templateName() + " · " + report.classification(), 18, "5A6173", false, "center"));
-        // 元信息表
+        b.append(wp(report.templateName() + "  ·  " + report.date(), 18, "5A6173", false, "center"));
         b.append("<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/><w:tblBorders>")
-                .append("<w:top w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/><w:left w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/>")
-                .append("<w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/><w:right w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/>")
-                .append("<w:insideH w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/></w:tblBorders></w:tblPr>");
+                .append("<w:top w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/>")
+                .append("<w:left w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/>")
+                .append("<w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/>")
+                .append("<w:right w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/>")
+                .append("<w:insideH w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/>")
+                .append("<w:insideV w:val=\"single\" w:sz=\"4\" w:color=\"D6DCE5\"/></w:tblBorders></w:tblPr>");
         b.append(tr("报告编号", report.reportId(), "报告类型", report.templateName()));
-        b.append(tr("生成日期", report.date(), "报告语言", report.language()));
-        b.append(tr("综合风险", report.riskLevel(), "密级", report.classification()));
+        b.append(tr("生成日期", report.date(), "综合风险", report.riskLevel()));
         b.append("</w:tbl>");
         b.append(wp("", 8, "000000", false, "left"));
-        // 小节
         for (Section section : report.sections()) {
             b.append(wp(section.heading(), 24, "15276A", true, "left"));
-            for (String para : section.paragraphs()) {
-                b.append(wp(para, 21, "1B2542", false, "left"));
-            }
+            for (String para : section.paragraphs()) b.append(wp(para, 21, "1B2542", false, "left"));
         }
         return """
                 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
                 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                  <w:body>%s<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body>
+                  <w:body>%s<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>
+                  <w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body>
                 </w:document>
                 """.formatted(b);
     }
@@ -469,9 +382,7 @@ public final class ReportFileFactory {
                 + "<w:sz w:val=\"20\"/></w:rPr><w:t xml:space=\"preserve\">" + xml(text) + "</w:t></w:r></w:p></w:tc>";
     }
 
-    // ---------------------------------------------------------------------
-    // PPTX（标题页 + 内容页，较此前更清晰）
-    // ---------------------------------------------------------------------
+    // ─────────────────────────── PPTX ───────────────────────────
 
     private static byte[] pptx(Report report) {
         try {
@@ -500,7 +411,8 @@ public final class ReportFileFactory {
                         """);
                 zip(zip, "ppt/presentation.xml", """
                         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-                        <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                        <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
                           <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
                           <p:sldSz cx="12192000" cy="6858000" type="screen16x9"/>
                         </p:presentation>
@@ -516,26 +428,25 @@ public final class ReportFileFactory {
     private static String slide(Report report) {
         StringBuilder paras = new StringBuilder();
         paras.append(slidePara(report.title(), 2800, "1F2D5B", true));
-        paras.append(slidePara(report.templateName() + " · " + report.classification() + " · " + report.date(), 1400, "5A6173", false));
+        paras.append(slidePara(report.templateName() + "  ·  " + report.date(), 1400, "5A6173", false));
         int count = 0;
         for (Section section : report.sections()) {
-            if (count++ > 8) {
-                break;
-            }
+            if (count++ > 8) break;
             paras.append(slidePara(section.heading(), 1800, "15276A", true));
-            int pcount = 0;
+            int pc = 0;
             for (String para : section.paragraphs()) {
-                if (pcount++ > 2) {
-                    break;
-                }
-                paras.append(slidePara("• " + truncate(para, 70), 1200, "1B2542", false));
+                if (pc++ > 2) break;
+                String text = para.length() > 70 ? para.substring(0, 70) + "…" : para;
+                paras.append(slidePara("• " + text, 1200, "1B2542", false));
             }
         }
         return """
                 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-                <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+                <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                       xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
                   <p:cSld><p:spTree>
-                    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>
+                    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+                    <p:grpSpPr/>
                     <p:sp><p:nvSpPr><p:cNvPr id="2" name="SemiRisk Report"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
                       <p:spPr><a:xfrm><a:off x="685800" y="457200"/><a:ext cx="10820400" cy="5943600"/></a:xfrm></p:spPr>
                       <p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody>
@@ -551,6 +462,8 @@ public final class ReportFileFactory {
                 + "<a:t>" + xml(text) + "</a:t></a:r></a:p>";
     }
 
+    // ─────────────────────────── 工具方法 ───────────────────────────
+
     private static String xml(String value) {
         return value == null ? "" : value
                 .replace("&", "&amp;")
@@ -565,22 +478,5 @@ public final class ReportFileFactory {
         zip.closeEntry();
     }
 
-    private static byte[] ascii(String value) {
-        return value.getBytes(StandardCharsets.ISO_8859_1);
-    }
-
-    private static byte[] concat(byte[]... chunks) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        for (byte[] chunk : chunks) {
-            out.writeBytes(chunk);
-        }
-        return out.toByteArray();
-    }
-
-    private static void write(ByteArrayOutputStream out, String value) throws IOException {
-        out.write(value.getBytes(StandardCharsets.ISO_8859_1));
-    }
-
-    public record ReportFile(String filename, String contentType, byte[] body) {
-    }
+    public record ReportFile(String filename, String contentType, byte[] body) {}
 }
