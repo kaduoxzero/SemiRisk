@@ -416,7 +416,8 @@ public class SemiRiskController {
 
     @PostMapping("/reports/jobs")
     public ApiResponse<ReportJob> createReport(@Valid @RequestBody ReportRequest request) {
-        ReportJob job = store.createReport(request.template(), request.language(), "PDF", request.threshold());
+        String fmt = request.format() == null || request.format().isBlank() ? "PDF" : request.format().toUpperCase();
+        ReportJob job = store.createReport(request.template(), request.language(), fmt, request.threshold());
         try {
             preparedRiskRepository.upsertReportJob(job.id(), job.template(), job.language(), job.format(), job.threshold(), job.status(), job.progress(), job.step(), job.downloadUrl(), job.createdAt());
             preparedRiskRepository.insertAuditLog("INFO", "report job created " + job.id());
@@ -462,8 +463,10 @@ public class SemiRiskController {
         }
         String template = job == null ? String.valueOf(persisted.getOrDefault("template", "risk-assessment")) : job.template();
         String language = job == null ? String.valueOf(persisted.getOrDefault("language", "中文")) : job.language();
+        String format = job == null ? String.valueOf(persisted.getOrDefault("format", "PDF")) : job.format();
+        if (format == null || format.isBlank()) format = "PDF";
         List<String> findings = store.aiReportLines(id, template, language);
-        ReportFile report = ReportFileFactory.build(id, template, language, "PDF", findings);
+        ReportFile report = ReportFileFactory.build(id, template, language, format, findings);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(report.contentType()))
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + report.filename() + "\"")
