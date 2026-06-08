@@ -790,8 +790,8 @@ function renderGlobe(selector, rows) {
     <div class="globe-shell">
       <canvas id="globe-canvas"></canvas>
       <aside id="globe-detail" class="globe-detail">
-        <h4>点击地球风险点查看详情</h4>
-        <p>可按住鼠标水平拖动地球旋转。</p>
+        <h4>${formatNumber(valid.length)} 个真实风险点</h4>
+        <p>地球自动旋转，可按住鼠标水平拖动接管视角；点击亮点查看风险详情。</p>
       </aside>
     </div>
   `;
@@ -799,6 +799,26 @@ function renderGlobe(selector, rows) {
   const detail = $("#globe-detail");
   const ctx = canvas.getContext("2d");
   const model = { rotation: 110, dragging: false, lastX: 0, points: [], lastFrameAt: performance.now() };
+  const stars = Array.from({ length: 140 }, (_, index) => ({
+    x: seeded(index, 13),
+    y: seeded(index, 29),
+    r: 0.45 + seeded(index, 47) * 1.45,
+    a: 0.24 + seeded(index, 71) * 0.62
+  }));
+  const landMasses = [
+    [[-166, 70], [-132, 72], [-106, 58], [-82, 53], [-60, 46], [-54, 25], [-82, 8], [-106, 18], [-126, 34], [-151, 56]],
+    [[-82, 12], [-62, 8], [-45, -8], [-48, -28], [-62, -54], [-75, -38], [-80, -10]],
+    [[-22, 62], [5, 72], [42, 70], [82, 62], [126, 50], [150, 30], [132, 8], [96, 6], [72, 24], [42, 34], [15, 36], [-10, 42]],
+    [[-18, 34], [32, 34], [52, 10], [42, -18], [24, -35], [2, -31], [-12, -6]],
+    [[44, 30], [60, 25], [74, 10], [70, -8], [54, -8], [44, 10]],
+    [[112, -10], [154, -14], [150, -38], [118, -36], [108, -24]],
+    [[-52, 76], [-28, 70], [-34, 60], [-56, 62]]
+  ];
+
+  function seeded(index, salt) {
+    const raw = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453;
+    return raw - Math.floor(raw);
+  }
 
   function resize() {
     const rect = host.getBoundingClientRect();
@@ -810,7 +830,7 @@ function renderGlobe(selector, rows) {
   function project(row) {
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
-    const radius = Math.min(canvas.width, canvas.height) * 0.36;
+    const radius = Math.min(canvas.width, canvas.height) * 0.4;
     const lon = (row.longitude + model.rotation) * Math.PI / 180;
     const lat = row.latitude * Math.PI / 180;
     const x = cx + radius * Math.cos(lat) * Math.sin(lon);
@@ -819,8 +839,66 @@ function renderGlobe(selector, rows) {
     return { x, y, z, radius };
   }
 
+  function drawBackdrop() {
+    const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    bg.addColorStop(0, "rgba(2,6,23,0.98)");
+    bg.addColorStop(0.5, "rgba(3,7,18,0.92)");
+    bg.addColorStop(1, "rgba(8,13,31,0.98)");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    stars.forEach((star) => {
+      ctx.beginPath();
+      ctx.arc(star.x * canvas.width, star.y * canvas.height, star.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(191,219,254,${star.a})`;
+      ctx.fill();
+    });
+  }
+
+  function drawAtmosphere(cx, cy, radius) {
+    ctx.save();
+    ctx.shadowColor = "rgba(56,189,248,0.75)";
+    ctx.shadowBlur = 34;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius + 2, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(125,211,252,0.55)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * 1.08, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(59,130,246,0.16)";
+    ctx.lineWidth = 18;
+    ctx.stroke();
+  }
+
+  function drawLand(cx, cy, radius) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius - 1, 0, Math.PI * 2);
+    ctx.clip();
+    landMasses.forEach((shape) => {
+      const visible = shape
+        .map(([longitude, latitude]) => project({ longitude, latitude }))
+        .filter((point) => point.z > -0.16);
+      if (visible.length < 3) return;
+      ctx.beginPath();
+      visible.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.closePath();
+      ctx.fillStyle = "rgba(15,118,110,0.38)";
+      ctx.strokeStyle = "rgba(94,234,212,0.32)";
+      ctx.lineWidth = 1.2;
+      ctx.fill();
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
   function drawGrid(cx, cy, radius) {
-    ctx.strokeStyle = "rgba(59,130,246,0.18)";
+    ctx.strokeStyle = "rgba(125,211,252,0.16)";
     ctx.lineWidth = 1;
     for (let lat = -60; lat <= 60; lat += 30) {
       const r = radius * Math.cos(lat * Math.PI / 180);
@@ -839,35 +917,40 @@ function renderGlobe(selector, rows) {
   function draw() {
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
-    const radius = Math.min(canvas.width, canvas.height) * 0.36;
+    const radius = Math.min(canvas.width, canvas.height) * 0.4;
     model.points = [];
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const gradient = ctx.createRadialGradient(cx - radius * 0.35, cy - radius * 0.35, radius * 0.08, cx, cy, radius);
-    gradient.addColorStop(0, "rgba(59,130,246,0.76)");
-    gradient.addColorStop(0.52, "rgba(14,165,233,0.34)");
-    gradient.addColorStop(1, "rgba(3,7,18,0.96)");
+    drawBackdrop();
+    drawAtmosphere(cx, cy, radius);
+    const gradient = ctx.createRadialGradient(cx - radius * 0.42, cy - radius * 0.36, radius * 0.05, cx, cy, radius * 1.08);
+    gradient.addColorStop(0, "rgba(125,211,252,0.92)");
+    gradient.addColorStop(0.32, "rgba(14,165,233,0.52)");
+    gradient.addColorStop(0.72, "rgba(15,23,42,0.94)");
+    gradient.addColorStop(1, "rgba(2,6,23,0.98)");
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
     ctx.fillStyle = gradient;
     ctx.fill();
-    ctx.strokeStyle = "rgba(147,197,253,0.55)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    drawLand(cx, cy, radius);
     drawGrid(cx, cy, radius);
 
     valid.forEach((row) => {
       const p = project(row);
       if (p.z < -0.08) return;
       const score = Number(row.riskScore || 0);
-      const r = Math.max(4, Math.min(13, score / 9)) * (0.55 + Math.max(0, p.z) * 0.55);
+      const depth = 0.42 + Math.max(0, p.z) * 0.68;
+      const r = Math.max(3, Math.min(10, score / 10)) * depth;
       const color = row.riskLevel === "CRITICAL" ? "#ef4444" : row.riskLevel === "WARNING" ? "#eab308" : "#3b82f6";
       ctx.beginPath();
-      ctx.arc(p.x, p.y, r + 7, 0, Math.PI * 2);
-      ctx.fillStyle = color + "33";
+      ctx.arc(p.x, p.y, r + 9, 0, Math.PI * 2);
+      ctx.fillStyle = color + "24";
       ctx.fill();
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.fillStyle = color;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(1.4, r * 0.32), 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.82)";
       ctx.fill();
       model.points.push({ ...p, r: r + 8, row });
     });
