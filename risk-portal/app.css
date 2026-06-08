@@ -1427,11 +1427,11 @@ tr:hover td {
   grid-column: span 4;
 }
 
-.analysis-trend {
+.analysis-window {
   grid-column: span 8;
 }
 
-.analysis-grid > .panel:not(.analysis-score):not(.analysis-trend) {
+.analysis-grid > .panel:not(.analysis-score):not(.analysis-window) {
   grid-column: span 3;
 }
 
@@ -1546,8 +1546,8 @@ tr:hover td {
   .trend-panel,
   .events-panel,
   .analysis-score,
-  .analysis-trend,
-  .analysis-grid > .panel:not(.analysis-score):not(.analysis-trend),
+  .analysis-window,
+  .analysis-grid > .panel:not(.analysis-score):not(.analysis-window),
   .span-4,
   .span-5,
   .span-7,

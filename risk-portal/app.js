@@ -8,6 +8,7 @@ const state = {
   eventRows: [],
   trendRows: [],
   gisRows: [],
+  globeFrame: 0,
   switching: false,
   auth: JSON.parse(localStorage.getItem("semirisk-auth") || "null")
 };
@@ -643,11 +644,10 @@ async function loadAnalysis() {
   state.trendRows = arrayOf(dataOf(trendResult, []));
   const events = rowsOf(eventResult);
   const kpis = dataOf(kpiResult, {});
-  renderTrend("#analysis-chart", state.trendRows, true);
-  renderAnalysis(events, kpis);
+  renderAnalysis(events, kpis, state.trendRows);
 }
 
-function renderAnalysis(events, kpis = {}) {
+function renderAnalysis(events, kpis = {}, trendRows = []) {
   $("#analysis-score").textContent = formatNumber(kpis.currentRiskIndex);
   const critical = events.filter((item) => item.riskLevel === "CRITICAL").length;
   const warning = events.filter((item) => item.riskLevel === "WARNING").length;
@@ -660,6 +660,7 @@ function renderAnalysis(events, kpis = {}) {
     ["WARNING", warning],
     ["INFO", info]
   ]);
+  renderTrendWindows("#analysis-windows", trendRows);
   renderTopGroup("#analysis-sources", events, (item) => item.sourceName || item.sourceType || "未知来源");
   renderTopGroup("#analysis-enterprises", events, (item) => item.enterpriseName || "未知主体");
   $("#analysis-actions").innerHTML = [
@@ -667,6 +668,25 @@ function renderAnalysis(events, kpis = {}) {
     events.some((item) => item.longitude && item.latitude) ? "存在 GIS 坐标事件，建议进入 3D 地球查看空间分布。" : "当前样本暂无坐标事件。",
     warning ? `中危事件 ${warning} 条，建议按企业聚合后进入企业画像复核。` : "当前样本中危事件较少。"
   ].map((text) => `<article class="list-item"><p>${escapeHtml(text)}</p></article>`).join("");
+}
+
+function renderTrendWindows(selector, rows) {
+  const target = $(selector);
+  const windows = [...rows]
+    .map((row) => ({
+      date: row.date || "--",
+      count: Number(row.count || 0),
+      riskScore: Number(row.riskScore || 0)
+    }))
+    .filter((row) => row.count > 0 || row.riskScore > 0)
+    .sort((a, b) => b.count - a.count || b.riskScore - a.riskScore)
+    .slice(0, 5);
+  target.innerHTML = windows.length ? windows.map((row, index) => `
+    <article class="list-item">
+      <h4>${index + 1}. ${escapeHtml(row.date)}</h4>
+      <p>事件 ${formatNumber(row.count)} 条 · 风险指数 ${formatNumber(row.riskScore)} · ${row.riskScore >= 90 ? "需要优先研判" : "持续跟踪"}</p>
+    </article>
+  `).join("") : empty("暂无真实趋势窗口");
 }
 
 function renderSimpleBars(selector, rows) {
@@ -754,6 +774,10 @@ async function loadGis() {
 }
 
 function renderGlobe(selector, rows) {
+  if (state.globeFrame) {
+    cancelAnimationFrame(state.globeFrame);
+    state.globeFrame = 0;
+  }
   const valid = rows
     .map((row) => ({ ...row, longitude: Number(row.longitude), latitude: Number(row.latitude) }))
     .filter((row) => Number.isFinite(row.longitude) && Number.isFinite(row.latitude));
@@ -774,7 +798,7 @@ function renderGlobe(selector, rows) {
   const canvas = $("#globe-canvas");
   const detail = $("#globe-detail");
   const ctx = canvas.getContext("2d");
-  const model = { rotation: 110, dragging: false, lastX: 0, points: [] };
+  const model = { rotation: 110, dragging: false, lastX: 0, points: [], lastFrameAt: performance.now() };
 
   function resize() {
     const rect = host.getBoundingClientRect();
@@ -881,6 +905,20 @@ function renderGlobe(selector, rows) {
     };
   };
   resize();
+  function animate(timestamp) {
+    if (!canvas.isConnected || state.currentView !== "gis") {
+      state.globeFrame = 0;
+      return;
+    }
+    const delta = Math.min(48, timestamp - model.lastFrameAt || 16);
+    model.lastFrameAt = timestamp;
+    if (!model.dragging) {
+      model.rotation += delta * 0.006;
+      draw();
+    }
+    state.globeFrame = requestAnimationFrame(animate);
+  }
+  state.globeFrame = requestAnimationFrame(animate);
   window.addEventListener("resize", resize, { once: true });
 }
 

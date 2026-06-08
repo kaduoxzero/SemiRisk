@@ -7,8 +7,8 @@
 访问地址：
 
 ```text
-Windows 本机：http://localhost:8080/?v=cyber-20260608e
-局域网访问：http://192.168.1.101:8080/?v=cyber-20260608e
+Windows 本机：http://localhost:8080/?v=cyber-20260608f
+局域网访问：http://192.168.1.101:8080/?v=cyber-20260608f
 健康检查：http://localhost:8080/actuator/health
 ```
 
@@ -132,7 +132,7 @@ curl -X POST http://localhost:8080/prod-api/risk/crawler/run-uri \
 
 ## 7. 验收流程
 
-1. 打开 `http://localhost:8080/?v=cyber-20260608e`。
+1. 打开 `http://localhost:8080/?v=cyber-20260608f`。
 2. 使用管理员账号登录。
 3. 首页确认总风险事件、风险指数和最新事件不为空。
 4. 进入风险详情，测试查询、分页、详情、处理和闭环。
@@ -149,7 +149,7 @@ curl -X POST http://localhost:8080/prod-api/risk/crawler/run-uri \
 确认同网段访问：
 
 ```text
-http://192.168.1.101:8080/?v=cyber-20260608e
+http://192.168.1.101:8080/?v=cyber-20260608f
 ```
 
 如果仍不能访问，检查 Windows 防火墙是否允许 8080 端口入站。
