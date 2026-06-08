@@ -1,0 +1,12 @@
+services:
+  semirisk-monolith:
+    build:
+      context: ..
+      dockerfile: semirisk-monolith/Dockerfile
+    image: semirisk/monolith:1.0.0
+    container_name: semirisk-monolith
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "8080:8080"

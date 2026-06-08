@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: semirisk-monolith
+  web:
+    resources:
+      static-locations:
+        - classpath:/static/
+        - file:./risk-portal/
+        - file:../risk-portal/
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+semirisk:
+  crawler:
+    startup-enabled: true
+    fixed-delay-ms: 1800000
+    request-timeout-seconds: 20
+    cisa-kev-url: https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+    usgs-earthquake-url: https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.geojson

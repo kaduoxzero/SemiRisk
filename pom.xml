@@ -372,6 +372,7 @@
         <module>ruoyi-modules</module>
         <module>ruoyi-api</module>
         <module>ruoyi-common</module>
+        <module>semirisk-monolith</module>
     </modules>
     <packaging>pom</packaging>
 

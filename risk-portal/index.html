@@ -119,6 +119,11 @@
                 <option value="RESOLVING">处理中</option>
                 <option value="RESOLVED">已闭环</option>
               </select>
+              <select id="event-page-size" class="input compact">
+                <option value="10">10 条/页</option>
+                <option value="20" selected>20 条/页</option>
+                <option value="50">50 条/页</option>
+              </select>
               <button id="event-search" class="button primary" type="button">查询</button>
               <button id="event-reset" class="button" type="button">重置</button>
             </div>
@@ -166,6 +171,13 @@
                 <button id="event-next" class="button" type="button">下一页</button>
               </div>
             </div>
+            <div id="event-detail-panel" class="detail-panel hidden">
+              <div class="detail-header">
+                <h3 id="event-detail-title">事件详情</h3>
+                <button id="event-detail-close" class="button ghost" type="button">关闭</button>
+              </div>
+              <div id="event-detail-body" class="detail-grid"></div>
+            </div>
           </section>
         </section>
 
@@ -192,13 +204,28 @@
         </section>
 
         <section id="enterprise" class="view">
-          <section class="panel">
-            <div class="toolbar">
-              <input id="enterprise-keyword" class="input grow" placeholder="企业名称或统一社会信用代码" />
-              <button id="enterprise-search" class="button primary" type="button">检索</button>
-            </div>
-            <div id="enterprise-profile" class="profile"></div>
-          </section>
+          <div class="layout-grid">
+            <section class="panel span-8">
+              <div class="toolbar">
+                <input id="enterprise-keyword" class="input grow" placeholder="企业名称或统一社会信用代码" />
+                <button id="enterprise-search" class="button primary" type="button">检索</button>
+              </div>
+              <div id="enterprise-profile" class="profile"></div>
+            </section>
+            <section class="panel span-4">
+              <div class="panel-header">
+                <h3>经营报表导入</h3>
+                <span class="muted">CSV</span>
+              </div>
+              <form id="upload-form" class="stack">
+                <input name="file" class="input file-input" type="file" accept=".csv,text/csv" required />
+                <div class="button-row">
+                  <button class="button primary" type="submit">上传并入库</button>
+                  <button id="download-template" class="button" type="button">下载模板</button>
+                </div>
+              </form>
+            </section>
+          </div>
         </section>
 
         <section id="reports" class="view">
@@ -259,6 +286,10 @@
 
         <section id="sources" class="view">
           <section class="panel">
+            <div class="toolbar section-toolbar">
+              <button id="crawler-run" class="button primary" type="button">立即爬取真实数据</button>
+              <span id="crawler-status" class="muted">等待爬取状态</span>
+            </div>
             <details class="create-box" open>
               <summary>新增数据源</summary>
               <form id="source-form" class="form-grid">
@@ -266,6 +297,10 @@
                 <input name="sourceType" class="input" placeholder="类型" />
                 <input name="accessMode" class="input" placeholder="接入方式" />
                 <input name="endpoint" class="input wide" placeholder="地址或说明" />
+                <select name="status" class="input">
+                  <option value="ACTIVE">启用</option>
+                  <option value="INACTIVE">停用</option>
+                </select>
                 <button class="button primary" type="submit">写入数据源</button>
               </form>
             </details>
