@@ -3,51 +3,19 @@
     <div class="panel gis-map-panel">
       <div class="gis-header">
         <div>
-          <h3>全球 GIS 风险实时地图</h3>
-          <p class="muted">基于已接入公开源、VM 数据库与本地规则引擎生成，生产环境接入实时 GIS/物流源后替换。</p>
+          <h3>全球 GIS 风险 3D 地球</h3>
+          <p class="muted">公开源风险点按经纬度投射到 3D 地球，弧线表示物流/供应链关联路径。</p>
         </div>
         <button class="btn secondary" @click="actions.loadGis">刷新图层</button>
       </div>
 
-      <div
-        class="map-canvas map-canvas-3d"
-        :class="{ dragging: isDragging, paused: manualControl }"
-        :style="mapTransform"
-        @pointerdown="startDrag"
-        @pointermove="drag"
-        @pointerup="stopDrag"
-        @pointerleave="stopDrag"
-      >
-        <svg class="route-network" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <path
-            v-for="route in visibleRoutes"
-            :key="route.id"
-            :d="routePath(route)"
-            :class="riskClass(route.riskIndex)"
-          />
-        </svg>
-        <div class="continent asia">亚太供应带</div>
-        <div class="continent europe">欧洲港口群</div>
-        <div class="continent america">北美转运带</div>
-
-        <button
-          v-for="point in points"
-          :key="point.id || point.name"
-          class="risk-point"
-          :class="riskClass(point.riskIndex)"
-          :style="pointStyle(point)"
-          @click="selectedPoint = point"
-          :title="`${point.name} 风险指数 ${point.riskIndex}`"
-        >
-          <span></span>
-        </button>
-
+      <div ref="globeRef" class="globe-canvas" @pointerdown="pickPoint">
         <div class="map-status">
           <strong>{{ activeLayerText }}</strong>
           <span>{{ state.gis.updatedAt || state.dashboard.refreshedAt || '等待刷新' }}</span>
           <span>{{ state.gis.dataSource || '公开源数据待加载' }}</span>
         </div>
-        <div v-if="selectedPoint" class="map-popover" :style="pointStyle(selectedPoint)">
+        <div v-if="selectedPoint" class="globe-popover">
           <b>{{ selectedPoint.name }}</b>
           <p>风险指数：{{ selectedPoint.riskIndex }}</p>
           <p>{{ selectedPoint.analysis }}</p>
@@ -100,7 +68,7 @@
               <td>{{ point.name }}</td>
               <td>{{ point.lon }}</td>
               <td>{{ point.lat }}</td>
-              <td><span class="badge" :class="badgeClass(point.riskIndex)">{{ point.riskIndex }}</span></td>
+              <td><span class="badge" :class="riskClass(point.riskIndex)">{{ point.riskIndex }}</span></td>
               <td>{{ point.analysis }}</td>
             </tr>
             <tr v-if="!points.length">
@@ -114,68 +82,223 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue';
+import * as THREE from 'three';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 const props = defineProps({
   actions: { type: Object, required: true },
   state: { type: Object, required: true }
 });
 
+const globeRef = ref(null);
 const selectedPoint = ref(null);
-const isDragging = ref(false);
-const manualControl = ref(false);
-const rotation = ref({ x: 62, y: -22 });
-const dragStart = ref({ x: 0, y: 0, rx: 62, ry: -22 });
 const points = computed(() => props.state.gis.points || []);
 const routes = computed(() => props.state.gis.routes || []);
 const regions = computed(() => props.state.gis.regions || []);
-const visibleRoutes = computed(() => props.state.activeLayers.includes('routes') ? routes.value : []);
 const activeLayerText = computed(() => props.state.activeLayers.map(layerName).join(' / '));
-const mapTransform = computed(() => ({
-  '--rotate-x': `${rotation.value.x}deg`,
-  '--rotate-y': `${rotation.value.y}deg`
-}));
+
+let scene;
+let camera;
+let renderer;
+let globeGroup;
+let pointGroup;
+let routeGroup;
+let heatGroup;
+let animationId;
+let resizeObserver;
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const pointObjects = [];
 
 watch(points, list => {
   if (!list.length) {
     selectedPoint.value = null;
-    return;
-  }
-  if (!selectedPoint.value || !list.some(point => point.name === selectedPoint.value.name)) {
+  } else if (!selectedPoint.value || !list.some(point => point.name === selectedPoint.value.name)) {
     selectedPoint.value = list[0];
   }
-}, { immediate: true });
+  rebuildScene();
+}, { deep: true });
+
+watch(() => props.state.activeLayers.slice(), rebuildScene, { deep: true });
+watch(routes, rebuildScene, { deep: true });
+
+onMounted(async () => {
+  await nextTick();
+  initGlobe();
+  rebuildScene();
+});
+
+onUnmounted(() => {
+  cancelAnimationFrame(animationId);
+  resizeObserver?.disconnect();
+  renderer?.dispose();
+  globeRef.value?.replaceChildren();
+});
+
+function initGlobe() {
+  const host = globeRef.value;
+  if (!host) return;
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(42, host.clientWidth / host.clientHeight, 0.1, 100);
+  camera.position.set(0, 0.4, 6.4);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(host.clientWidth, host.clientHeight);
+  host.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0x9cc7ff, 1.2));
+  const key = new THREE.DirectionalLight(0xffffff, 2.1);
+  key.position.set(4, 3, 5);
+  scene.add(key);
+
+  globeGroup = new THREE.Group();
+  pointGroup = new THREE.Group();
+  routeGroup = new THREE.Group();
+  heatGroup = new THREE.Group();
+  globeGroup.add(heatGroup, routeGroup, pointGroup);
+  scene.add(globeGroup);
+
+  const earth = new THREE.Mesh(
+    new THREE.SphereGeometry(2.05, 96, 64),
+    new THREE.MeshPhongMaterial({
+      color: 0x123a6f,
+      emissive: 0x071b38,
+      shininess: 18,
+      transparent: true,
+      opacity: 0.96
+    })
+  );
+  globeGroup.add(earth);
+
+  const wire = new THREE.Mesh(
+    new THREE.SphereGeometry(2.065, 48, 32),
+    new THREE.MeshBasicMaterial({ color: 0x4ea1ff, wireframe: true, transparent: true, opacity: 0.12 })
+  );
+  globeGroup.add(wire);
+  addLatLonGrid();
+
+  resizeObserver = new ResizeObserver(() => {
+    if (!host || !renderer || !camera) return;
+    camera.aspect = host.clientWidth / host.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(host.clientWidth, host.clientHeight);
+  });
+  resizeObserver.observe(host);
+
+  animate();
+}
+
+function addLatLonGrid() {
+  for (let lat = -60; lat <= 60; lat += 30) {
+    const points3d = [];
+    for (let lon = -180; lon <= 180; lon += 6) points3d.push(latLonToVector(lon, lat, 2.075));
+    globeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points3d), gridMaterial()));
+  }
+  for (let lon = -150; lon <= 180; lon += 30) {
+    const points3d = [];
+    for (let lat = -80; lat <= 80; lat += 4) points3d.push(latLonToVector(lon, lat, 2.078));
+    globeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points3d), gridMaterial()));
+  }
+}
+
+function gridMaterial() {
+  return new THREE.LineBasicMaterial({ color: 0x7bbcff, transparent: true, opacity: 0.14 });
+}
+
+function rebuildScene() {
+  if (!globeGroup || !pointGroup || !routeGroup || !heatGroup) return;
+  clearGroup(pointGroup);
+  clearGroup(routeGroup);
+  clearGroup(heatGroup);
+  pointObjects.splice(0, pointObjects.length);
+
+  if (props.state.activeLayers.includes('heatmap')) {
+    points.value.forEach(point => heatGroup.add(heatHalo(point)));
+  }
+  if (props.state.activeLayers.includes('routes')) {
+    routes.value.forEach(route => routeGroup.add(routeArc(route)));
+  }
+  if (props.state.activeLayers.includes('suppliers') || props.state.activeLayers.includes('ports')) {
+    points.value.forEach(point => {
+      const marker = pointMarker(point);
+      pointObjects.push(marker);
+      pointGroup.add(marker);
+    });
+  }
+}
+
+function clearGroup(group) {
+  while (group.children.length) {
+    const child = group.children.pop();
+    child.geometry?.dispose();
+    child.material?.dispose();
+  }
+}
+
+function pointMarker(point) {
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(0.055, 18, 18),
+    new THREE.MeshBasicMaterial({ color: riskColor(point.riskIndex) })
+  );
+  marker.position.copy(latLonToVector(point.lon, point.lat, 2.19));
+  marker.userData.point = point;
+  return marker;
+}
+
+function heatHalo(point) {
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(point.riskIndex >= 80 ? 0.18 : 0.12, 24, 24),
+    new THREE.MeshBasicMaterial({ color: riskColor(point.riskIndex), transparent: true, opacity: point.riskIndex >= 80 ? 0.28 : 0.16 })
+  );
+  halo.position.copy(latLonToVector(point.lon, point.lat, 2.17));
+  return halo;
+}
+
+function routeArc(route) {
+  const from = latLonToVector(route.fromLon, route.fromLat, 2.18);
+  const to = latLonToVector(route.toLon, route.toLat, 2.18);
+  const mid = from.clone().add(to).normalize().multiplyScalar(2.92);
+  const curve = new THREE.QuadraticBezierCurve3(from, mid, to);
+  return new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(curve.getPoints(72)),
+    new THREE.LineBasicMaterial({ color: riskColor(route.riskIndex), transparent: true, opacity: 0.82 })
+  );
+}
+
+function latLonToVector(lon, lat, radius) {
+  const phi = (90 - Number(lat)) * Math.PI / 180;
+  const theta = (Number(lon) + 180) * Math.PI / 180;
+  return new THREE.Vector3(
+    -radius * Math.sin(phi) * Math.cos(theta),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+function pickPoint(event) {
+  if (!renderer || !camera) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hit = raycaster.intersectObjects(pointObjects)[0];
+  if (hit?.object?.userData?.point) selectedPoint.value = hit.object.userData.point;
+}
+
+function animate() {
+  animationId = requestAnimationFrame(animate);
+  if (globeGroup) globeGroup.rotation.y += 0.0035;
+  renderer?.render(scene, camera);
+}
 
 function layerName(layer) {
   return {
-    heatmap: '风险热力图',
-    suppliers: '供应商分布',
-    ports: '港口/航道',
-    routes: '物流路径'
+    heatmap: '风险热力光晕',
+    suppliers: '供应商/企业点位',
+    ports: '港口/航道节点',
+    routes: '物流路径弧线'
   }[layer] || layer;
-}
-
-function pointStyle(point) {
-  const { x, y } = project(point.lon, point.lat);
-  const left = Math.min(94, Math.max(6, x));
-  const top = Math.min(86, Math.max(10, y));
-  return { left: `${left}%`, top: `${top}%` };
-}
-
-function routePath(route) {
-  const from = project(route.fromLon, route.fromLat);
-  const to = project(route.toLon, route.toLat);
-  const curve = Math.max(5, Math.min(14, Math.abs(from.x - to.x) / 7));
-  const controlX = (from.x + to.x) / 2;
-  const controlY = Math.min(from.y, to.y) - curve;
-  return `M ${from.x.toFixed(2)} ${from.y.toFixed(2)} Q ${controlX.toFixed(2)} ${controlY.toFixed(2)} ${to.x.toFixed(2)} ${to.y.toFixed(2)}`;
-}
-
-function project(lon, lat) {
-  return {
-    x: ((Number(lon) + 180) / 360) * 100,
-    y: ((90 - Number(lat)) / 180) * 100
-  };
 }
 
 function riskClass(score) {
@@ -184,25 +307,9 @@ function riskClass(score) {
   return 'low';
 }
 
-function badgeClass(score) {
-  return riskClass(score);
-}
-
-function startDrag(event) {
-  isDragging.value = true;
-  manualControl.value = true;
-  dragStart.value = { x: event.clientX, y: event.clientY, rx: rotation.value.x, ry: rotation.value.y };
-}
-
-function drag(event) {
-  if (!isDragging.value) return;
-  rotation.value = {
-    x: Math.max(38, Math.min(76, dragStart.value.rx - (event.clientY - dragStart.value.y) * 0.25)),
-    y: dragStart.value.ry + (event.clientX - dragStart.value.x) * 0.35
-  };
-}
-
-function stopDrag() {
-  isDragging.value = false;
+function riskColor(score) {
+  if (score >= 80) return 0xff5f6d;
+  if (score >= 60) return 0xfacc15;
+  return 0x60a5fa;
 }
 </script>

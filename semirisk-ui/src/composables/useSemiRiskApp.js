@@ -48,7 +48,8 @@ export function useSemiRiskApp() {
     layers: ['heatmap', 'suppliers', 'ports', 'routes'],
     activeLayers: ['heatmap', 'suppliers', 'ports', 'routes'],
     gis: {},
-    enterpriseKeyword: '安芯半导体供应链有限公司',
+    enterpriseKeyword: '台积电',
+    enterpriseList: [],
     enterprisePage: 1,
     enterprise: {},
     knowledgeQuery: '半导体物流中断',
@@ -59,7 +60,8 @@ export function useSemiRiskApp() {
     system: {},
     systemLogPage: 1,
     systemLogDate: new Date().toISOString().slice(0, 10),
-    aiConfig: { model: 'deepseekv4-pro', endpoint: 'https://api.deepseek.com/v1', apiKey: '' }
+    aiConfig: { model: 'deepseek-v4-pro', endpoint: 'https://api.deepseek.com/v1', apiKey: '' },
+    modelPing: null
   });
 
   const allowedNavItems = computed(() => {
@@ -119,6 +121,31 @@ export function useSemiRiskApp() {
     if (route.path !== target) router.push(target);
   }
 
+  function replaceRoute(path) {
+    if (route.path !== path) router.replace(path);
+  }
+
+  async function login() {
+    const previousToken = state.session?.token || '';
+    await auth.login();
+    if (state.session?.token && state.session.token !== previousToken) {
+      replaceRoute(state.view === 'dashboard' ? '/dashboard' : `/${state.view}`);
+    }
+  }
+
+  async function register() {
+    const previousToken = state.session?.token || '';
+    await auth.register();
+    if (state.session?.token && state.session.token !== previousToken) {
+      replaceRoute(state.view === 'dashboard' ? '/dashboard' : `/${state.view}`);
+    }
+  }
+
+  async function logout() {
+    await auth.logout();
+    replaceRoute('/dashboard');
+  }
+
   function openRisk(id) {
     state.selectedRiskId = id;
     state.view = 'detail';
@@ -127,7 +154,7 @@ export function useSemiRiskApp() {
   }
 
   async function switchAccount() {
-    await auth.logout();
+    await logout();
     setAuthMode('login');
   }
 
@@ -170,6 +197,9 @@ export function useSemiRiskApp() {
     if (state.session) {
       const restored = await auth.restoreSession();
       if (!restored) {
+        state.view = 'dashboard';
+        state.authMode = 'login';
+        if (route.name !== 'dashboard') router.replace('/dashboard');
         await dashboard.loadDashboard();
         return;
       }
@@ -194,6 +224,9 @@ export function useSemiRiskApp() {
     allowedNavItems,
     actions: {
       ...auth,
+      login,
+      logout,
+      register,
       ...dashboard,
       ...upload,
       ...risk,

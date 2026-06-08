@@ -1,8 +1,9 @@
 import { uploadApi } from '../api/modules';
+import { authenticatedUrl } from '../api/client';
 
 export function useUpload(state, notify) {
   function downloadTemplate() {
-    window.open(uploadApi.templateUrl, '_blank');
+    window.open(authenticatedUrl(uploadApi.templateUrl), '_blank');
   }
 
   async function loadUploads() {
@@ -28,8 +29,14 @@ export function useUpload(state, notify) {
 
   function streamLogs() {
     state.logs = [];
-    const source = new EventSource(uploadApi.logsUrl);
-    source.addEventListener('log', event => state.logs.push(JSON.parse(event.data).message));
+    const source = new EventSource(authenticatedUrl(uploadApi.logsUrl));
+    source.addEventListener('log', event => {
+      try {
+        state.logs.push(JSON.parse(event.data).message);
+      } catch {
+        state.logs.push(String(event.data || '日志解析失败'));
+      }
+    });
     source.onerror = () => source.close();
   }
 

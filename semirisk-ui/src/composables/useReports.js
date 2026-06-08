@@ -6,7 +6,7 @@ export function useReports(state, notify) {
   }
 
   async function startReport() {
-    state.reportJob = await reportApi.createJob({ ...state.reportForm, threshold: 70 });
+    state.reportJob = await reportApi.createJob({ ...state.reportForm, format: 'PDF', threshold: 70 });
     pollReport(state.reportJob.id);
   }
 

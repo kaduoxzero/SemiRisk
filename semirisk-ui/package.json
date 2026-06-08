@@ -6,14 +6,18 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 5173"
+    "preview": "vite preview --host 0.0.0.0 --port 5173",
+    "test:e2e": "playwright test tests/semirisk-gis-check.spec.js --reporter=line"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "latest",
     "pinia": "latest",
+    "three": "^0.184.0",
     "vite": "latest",
     "vue": "latest",
     "vue-router": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  }
 }

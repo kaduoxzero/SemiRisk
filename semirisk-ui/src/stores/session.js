@@ -14,8 +14,17 @@ export const useSessionStore = defineStore('session', {
 });
 
 function readSession() {
-  const session = JSON.parse(localStorage.getItem('semiriskUser') || 'null');
-  if (!session?.token || !session?.expiresAt) return session;
+  let session;
+  try {
+    session = JSON.parse(localStorage.getItem('semiriskUser') || 'null');
+  } catch {
+    localStorage.removeItem('semiriskUser');
+    return null;
+  }
+  if (!session?.token || !session?.expiresAt) {
+    localStorage.removeItem('semiriskUser');
+    return null;
+  }
   if (new Date(session.expiresAt).getTime() <= Date.now()) {
     localStorage.removeItem('semiriskUser');
     return null;

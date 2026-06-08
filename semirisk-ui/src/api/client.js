@@ -9,13 +9,20 @@ async function ensureCsrfToken() {
   return csrfToken;
 }
 
-function authToken() {
+export function authToken() {
   try {
     const session = JSON.parse(localStorage.getItem('semiriskUser') || 'null');
     return session?.token || '';
   } catch {
     return '';
   }
+}
+
+export function authenticatedUrl(path) {
+  const token = authToken();
+  if (!token) return `${API_BASE}${path}`;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${API_BASE}${path}${separator}access_token=${encodeURIComponent(token)}`;
 }
 
 export async function request(path, options = {}) {

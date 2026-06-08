@@ -39,6 +39,20 @@
         </div>
       </div>
     </div>
+
+    <div v-if="report" class="panel ai-report-panel">
+      <div class="toolbar compact-toolbar">
+        <h3>AI 本日风险分析报告</h3>
+        <span class="badge" :class="report.aiCalled ? 'low' : 'mid'">{{ report.aiCalled ? '已调用 ' + report.model : (report.pending ? '生成中' : '本地聚合') }}</span>
+      </div>
+      <p class="muted">{{ report.modelStatus }}<span v-if="report.usage?.totalTokens"> · Token {{ report.usage.totalTokens }}</span></p>
+      <p class="report-summary">{{ report.summary }}</p>
+      <ul v-if="(report.sections || []).length" class="report-sections">
+        <li v-for="(line, idx) in report.sections" :key="idx">{{ line }}</li>
+      </ul>
+      <p v-if="report.recommendation" class="muted">处置建议：{{ report.recommendation }}</p>
+      <p class="muted">生成时间：{{ report.generatedAt }}</p>
+    </div>
   </section>
 </template>
 
@@ -53,6 +67,7 @@ const props = defineProps({
 
 const pageSize = 8;
 const signals = computed(() => props.state.dashboard.dailyRisk?.signals || []);
+const report = computed(() => props.state.dashboard.aiReport || null);
 const totalPages = computed(() => Math.max(1, Math.ceil(signals.value.length / pageSize)));
 const visibleSignals = computed(() => signals.value.slice((props.state.dashboardPage - 1) * pageSize, props.state.dashboardPage * pageSize));
 

@@ -53,6 +53,7 @@ export const gisApi = {
 };
 
 export const enterpriseApi = {
+  list: () => request('/api/enterprises'),
   profile: keyword => request(`/api/enterprises/profile?keyword=${encodeURIComponent(keyword)}`)
 };
 
@@ -69,5 +70,16 @@ export const systemApi = {
   saveAiConfig: payload => request('/api/system/models/config', {
     method: 'POST',
     body: JSON.stringify(payload)
-  })
+  }),
+  pingModel: payload => request('/api/system/models/ping', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
+  reconnect: name => request(`/api/system/datasources/${encodeURIComponent(name)}/reconnect`, { method: 'POST' }),
+  triggerAgent: name => request(`/api/system/agents/${encodeURIComponent(name)}/trigger`, { method: 'POST' })
+};
+
+export const aiApi = {
+  latestReport: () => request('/api/ai/reports/latest'),
+  refreshReport: () => request('/api/ai/reports/refresh', { method: 'POST' })
 };
