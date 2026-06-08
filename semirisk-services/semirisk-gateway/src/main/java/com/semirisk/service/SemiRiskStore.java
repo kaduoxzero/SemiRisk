@@ -619,30 +619,54 @@ public class SemiRiskStore {
 
     private String reportPrompt(String type, String language) {
         String lang = language == null || language.isBlank() ? "中文" : language;
+        String base = """
+                你是一名资深半导体供应链风险顾问，为企业高管撰写决策级风险报告。
+                要求：
+                1. 直接给出结论，不要有"以下是""根据您提供的""以下为"等引导语。
+                2. 不使用任何 Markdown 符号（不用#、*、**、-、`、---）。纯文字段落，每段以中文编号开头（一、二、三...）。
+                3. 必须明确指出是哪些具体信号/事件/政策导致了当前分数升高或降低，给出具体来源和标题。
+                4. 每条建议必须可操作，给出负责部门（采购/供应链/法务/财务/高管）和处置时限（24h/3天/7天/下季度）。
+                5. 报告长度：8-12个自然段，每段3-5句话。
+                """;
         return switch (type) {
-            case "supply-chain" -> "请用" + lang + "撰写供应链分析报告，聚焦物流路径、供应商韧性、库存影响、替代方案和协同动作。要求分段清晰，给出结论、证据、影响和处置建议。";
-            case "enterprise-dd" -> "请用" + lang + "撰写企业尽调报告，聚焦企业主体、信用风险、经营稳定性、公开源事件、合作建议和需人工核验事项。要求分段清晰。";
-            default -> "请用" + lang + "撰写风险评估报告，聚焦风险评分、公开源事实、影响范围、研判依据、处置优先级和闭环跟踪指标。要求分段清晰。";
+            case "supply-chain" -> base + "撰写语言：" + lang + "。\n报告类型：供应链韧性分析报告。聚焦：物流路径中断风险、关键供应商集中度、库存安全水位、替代采购方案和跨部门协同行动计划。";
+            case "enterprise-dd" -> base + "撰写语言：" + lang + "。\n报告类型：企业尽调风险报告。聚焦：企业主体资质、公开源负面事件、经营稳定性信号、合作风险评级（低/中/高）、具体合作条款建议和需人工补充核验的信息清单。";
+            default -> base + "撰写语言：" + lang + "。\n报告类型：综合风险评估报告。聚焦：当前综合评分的驱动因素（哪些信号拉高/拉低了分数）、各维度风险排名、未来7-30天走势研判、优先级排序的处置行动清单。";
         };
     }
 
     private List<String> reportContext(String type, List<CrawlerSignal> signals) {
         List<String> context = new ArrayList<>();
         DailyRiskSnapshot snapshot = dailyRiskSnapshot;
-        context.add("综合评分：" + snapshot.score() + " / 等级：" + snapshot.level() + " / 摘要：" + snapshot.summary());
-        context.add("报告类型：" + reportTitle(type));
+        context.add("当前综合评分：" + snapshot.score() + " | 等级：" + snapshot.level() + " | 摘要：" + snapshot.summary());
+        // Score drivers: signals above/below median
+        long high = signals.stream().filter(s -> s.riskScore() >= 70).count();
+        long mid = signals.stream().filter(s -> s.riskScore() >= 50 && s.riskScore() < 70).count();
+        long low = signals.stream().filter(s -> s.riskScore() < 50).count();
+        context.add("评分构成：高危信号 " + high + " 条（>=70分）拉高综合评分，中危 " + mid + " 条（50-69分），低危/监控 " + low + " 条（<50分）。");
+        context.add("信号总数：" + signals.size() + " 条，来源渠道：" + signals.stream().map(CrawlerSignal::source).distinct().count() + " 个。");
         switch (type) {
             case "supply-chain" -> {
-                gisRoutes(gisPoints(signals)).stream().limit(8).forEach(route -> context.add("物流路径：" + route.get("name") + " / 风险 " + route.get("riskIndex")));
-                dimensionScores(signals).forEach(item -> context.add("供应链维度：" + item.get("name") + " / 评分 " + item.get("value")));
+                gisRoutes(gisPoints(signals)).stream().limit(8).forEach(route ->
+                        context.add("物流路径：" + route.get("name") + " / 风险 " + route.get("riskIndex")));
+                dimensionScores(signals).forEach(item ->
+                        context.add("供应链维度评分：" + item.get("name") + " = " + item.get("value")));
             }
-            case "enterprise-dd" -> enterpriseRecordsForReport(5).forEach(profile -> context.add("企业画像：" + profile.get("name") + " / " + profile.get("industry") + " / 风险 " + profile.get("riskScore") + " / " + profile.get("creditLevel") + " / 工商：待接入权威源"));
+            case "enterprise-dd" ->
+                    enterpriseRecordsForReport(5).forEach(profile ->
+                            context.add("企业画像：" + profile.get("name") + " | " + profile.get("industry") + " | 风险 " + profile.get("riskScore") + " | " + profile.get("creditLevel")));
             default -> {
-                context.add("高危信号数：" + signals.stream().filter(signal -> signal.riskScore() >= 80).count());
-                context.add("中危信号数：" + signals.stream().filter(signal -> signal.riskScore() >= 60 && signal.riskScore() < 80).count());
+                // top risk drivers for the score
+                signals.stream().filter(s -> s.riskScore() >= 60).limit(5).forEach(s ->
+                        context.add("高风险驱动信号：[" + s.riskScore() + "分] " + s.source() + " | " + s.dimension() + " | " + s.title()));
             }
         }
-        signals.stream().limit(10).forEach(signal -> context.add("公开源：" + signal.riskScore() + " | " + signal.source() + " | " + signal.dimension() + " | " + signal.title() + " | " + signal.sourceUrl()));
+        // All signals with full detail for AI to reason over
+        signals.stream().limit(20).forEach(signal ->
+                context.add("公开源信号 [" + signal.riskScore() + "分] 来源：" + signal.source()
+                        + " | 维度：" + signal.dimension()
+                        + " | 标题：" + signal.title()
+                        + " | 链接：" + signal.sourceUrl()));
         context.addAll(localKnowledgeLines());
         return context;
     }
@@ -1118,7 +1142,7 @@ public class SemiRiskStore {
         profile.put("riskScore", score);
         profile.put("creditLevel", riskLevel(score));
         // 工商权威字段：无真实权威数据源，统一标注待接入，绝不伪造。
-        profile.put("business", buildBusiness(creditCode, related.isEmpty()));
+        profile.put("business", buildBusinessWithWiki(creditCode, related.isEmpty(), name));
         profile.put("radar", related.isEmpty() ? List.of() : dimensionRadar(related));
         profile.put("topology", related.isEmpty() ? List.of() : List.of("公开源情报", name, "SemiRisk 风控工作台"));
         profile.put("events", related.stream().map(signal -> signal.fetchedAt() + " " + signal.title()).toList());
@@ -1137,15 +1161,100 @@ public class SemiRiskStore {
         return profile;
     }
 
-    private Map<String, Object> buildBusiness(String creditCode, boolean noSignal) {
+    private Map<String, Object> buildBusinessWithWiki(String creditCode, boolean noSignal, String companyName) {
         Map<String, Object> business = new LinkedHashMap<>();
-        business.put("legalPerson", "待接入权威源");
-        business.put("capital", "待接入权威源");
-        business.put("founded", "待接入权威源");
-        business.put("type", "待接入权威源");
-        business.put("creditCode", creditCode);
-        business.put("status", noSignal ? "未命中公开源事件" : "已命中公开源事件");
+        // Try Wikipedia public API for real data
+        Map<String, Object> wiki = companyName != null && !companyName.isBlank() && !companyName.equals("请输入企业名称后搜索")
+                ? fetchWikipediaBusinessInfo(companyName) : Map.of();
+        business.put("成立时间", wiki.getOrDefault("成立时间", "待接入权威源"));
+        business.put("总部所在地", wiki.getOrDefault("总部所在地", "待接入权威源"));
+        business.put("行业分类", wiki.getOrDefault("行业分类", "待接入权威源"));
+        business.put("企业类型", wiki.getOrDefault("企业类型", "待接入权威源"));
+        business.put("营收（公开披露）", wiki.getOrDefault("营收（公开披露）", "待接入权威源"));
+        business.put("员工人数", wiki.getOrDefault("员工人数（公开披露）", "待接入权威源"));
+        if (wiki.containsKey("description")) business.put("公司简介", wiki.get("description"));
+        if (wiki.containsKey("wikiTitle")) business.put("维基百科词条", wiki.get("wikiTitle") + "（公开百科）");
+        business.put("统一信用代码", creditCode);
+        business.put("法人代表", "待接入权威源（工商局/企查查/天眼查）");
+        business.put("注册资本", "待接入权威源（工商局/企查查/天眼查）");
+        business.put("司法/失信数据", "待接入权威源（法院/最高人民法院失信被执行人名单）");
+        business.put("采集状态", noSignal ? "未命中公开源事件" : "已命中公开源事件");
         return business;
+    }
+
+    /**
+     * 从维基百科公开 API 获取企业真实公开信息（注册地、成立时间、行业分类等）。
+     * 维基百科 API 为公开接口，无需登录，返回 JSON。
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> fetchWikipediaBusinessInfo(String companyName) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            String encoded = URLEncoder.encode(companyName, StandardCharsets.UTF_8);
+            // Step 1: search for the page
+            HttpRequest searchReq = HttpRequest.newBuilder(
+                    URI.create("https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch="
+                            + encoded + "&format=json&srlimit=1"))
+                    .timeout(java.time.Duration.ofSeconds(6))
+                    .header("User-Agent", "SemiRisk/1.0 (supply chain risk platform; research use)")
+                    .GET().build();
+            HttpResponse<String> searchResp = httpClient.send(searchReq, HttpResponse.BodyHandlers.ofString());
+            Map<String, Object> searchBody = (Map<String, Object>) parseJson(searchResp.body());
+            List<Map<String, Object>> hits = (List<Map<String, Object>>) ((Map<?, ?>) searchBody.get("query")).get("search");
+            if (hits == null || hits.isEmpty()) return result;
+            String pageTitle = String.valueOf(hits.get(0).get("title"));
+
+            // Step 2: fetch extract + categories
+            String titleEncoded = URLEncoder.encode(pageTitle, StandardCharsets.UTF_8);
+            HttpRequest infoReq = HttpRequest.newBuilder(
+                    URI.create("https://en.wikipedia.org/w/api.php?action=query&titles=" + titleEncoded
+                            + "&prop=extracts|categories&exintro=true&explaintext=true&format=json&cllimit=10"))
+                    .timeout(java.time.Duration.ofSeconds(8))
+                    .header("User-Agent", "SemiRisk/1.0 (supply chain risk platform; research use)")
+                    .GET().build();
+            HttpResponse<String> infoResp = httpClient.send(infoReq, HttpResponse.BodyHandlers.ofString());
+            Map<String, Object> infoBody = (Map<String, Object>) parseJson(infoResp.body());
+            Map<?, ?> pages = (Map<?, ?>) ((Map<?, ?>) infoBody.get("query")).get("pages");
+            if (pages == null || pages.isEmpty()) return result;
+            Map<String, Object> page = (Map<String, Object>) pages.values().iterator().next();
+            String extract = String.valueOf(page.getOrDefault("extract", ""));
+
+            // Parse key fields from extract text
+            result.put("wikiTitle", pageTitle);
+            result.put("wikiSource", "维基百科公开百科词条（英文）");
+            extractWikiField(result, extract, "Founded", "成立时间");
+            extractWikiField(result, extract, "Headquarters", "总部所在地");
+            extractWikiField(result, extract, "Industry", "行业分类");
+            extractWikiField(result, extract, "Type", "企业类型");
+            extractWikiField(result, extract, "Revenue", "营收（公开披露）");
+            extractWikiField(result, extract, "Employees", "员工人数（公开披露）");
+            // First paragraph as description
+            String[] paras = extract.split("\n\n");
+            if (paras.length > 0 && !paras[0].isBlank()) {
+                result.put("description", truncate(paras[0].replaceAll("\\s+", " ").trim(), 200));
+            }
+        } catch (Exception ignored) {
+            // Wikipedia unreachable or no data: return empty, UI shows 待接入权威源
+        }
+        return result;
+    }
+
+    private void extractWikiField(Map<String, Object> result, String text, String enKey, String zhKey) {
+        // Look for "Key: value" patterns in the extract
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "(?i)" + java.util.regex.Pattern.quote(enKey) + "[:\\s]+([^\\n]+)").matcher(text);
+        if (m.find()) {
+            result.put(zhKey, truncate(m.group(1).trim(), 80));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object parseJson(String json) {
+        try {
+            return objectMapper.readValue(json, Object.class);
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     private Optional<Map<String, Object>> findEnterpriseRecord(String keyword) {
@@ -1226,9 +1335,12 @@ public class SemiRiskStore {
     private List<Map<String, String>> internetSearches(String keyword) {
         String encoded = URLEncoder.encode(keyword == null ? "" : keyword, StandardCharsets.UTF_8);
         return List.of(
+                Map.of("name", "企查查公开搜索", "url", "https://www.qcc.com/web/search?key=" + encoded),
+                Map.of("name", "天眼查公开搜索", "url", "https://www.tianyancha.com/cloud-other-information/companyInfo.html?keyword=" + encoded),
                 Map.of("name", "Bing 新闻", "url", "https://www.bing.com/news/search?q=" + encoded),
-                Map.of("name", "Google News", "url", "https://news.google.com/search?q=" + encoded),
-                Map.of("name", "企查查公开搜索", "url", "https://www.qcc.com/web/search?key=" + encoded)
+                Map.of("name", "路透社检索", "url", "https://www.reuters.com/search/news?blob=" + encoded),
+                Map.of("name", "SEC EDGAR 公示", "url", "https://efts.sec.gov/LATEST/search-index?q=%22" + encoded + "%22&dateRange=custom&startdt=2023-01-01"),
+                Map.of("name", "彭博行业资讯", "url", "https://www.bloomberg.com/search?query=" + encoded)
         );
     }
 
@@ -1445,10 +1557,21 @@ public class SemiRiskStore {
     }
 
     private List<String> splitAnswer(String answer) {
-        return java.util.Arrays.stream(answer.replace("\r", "\n").split("\\n+|(?<=[。！？；])"))
+        if (answer == null || answer.isBlank()) return List.of();
+        // Strip markdown: headings, bold/italic, bullets, horizontal rules
+        String cleaned = answer
+                .replaceAll("(?m)^#{1,6}\\s*", "")          // ## headings
+                .replaceAll("\\*{1,3}([^*]+)\\*{1,3}", "$1") // **bold** *italic*
+                .replaceAll("(?m)^[-*]{3,}\\s*$", "")         // --- horizontal rules
+                .replaceAll("(?m)^[-*+]\\s+", "• ")           // bullet markers → •
+                .replaceAll("`([^`]+)`", "$1")                 // `code`
+                .replaceAll("\\[([^]]+)]\\([^)]+\\)", "$1")   // [text](url)
+                .replace("\r", "\n");
+        // Skip boilerplate openers
+        return java.util.Arrays.stream(cleaned.split("\\n+|(?<=[。！？；])"))
                 .map(String::trim)
                 .filter(value -> !value.isBlank())
-                .limit(8)
+                .filter(value -> !value.matches("(?i)(以下是|根据您|根据以上|以下为|下面是|以下内容|^好的[，,]?|^当然[，,]?).*"))
                 .toList();
     }
 
@@ -1465,11 +1588,18 @@ public class SemiRiskStore {
             String apiModel = resolveDeepSeekApiModel(defaultAiModel);
             Map<String, Object> payload = Map.of(
                     "model", apiModel,
-                    "temperature", 0.2,
+                    "temperature", 0.25,
                     "stream", false,
                     "messages", List.of(
-                            Map.of("role", "system", "content", "你是 SemiRisk 半导体供应链风险智能体。只能依据给定公开源/本地知识库上下文回答，区分事实和建议，输出中文，结尾给出可执行处置建议。"),
-                            Map.of("role", "user", "content", "问题：" + question + "\n\n检索上下文：\n" + String.join("\n", contextLines))
+                            Map.of("role", "system", "content",
+                                    "你是 SemiRisk 半导体供应链风险顾问，为企业高管提供决策级分析。" +
+                                    "规则：1)绝对不输出任何Markdown符号（不用#*-`---[]()）；" +
+                                    "2)不使用'以下是''根据您提供的''以下为'等引导语，直接给出结论；" +
+                                    "3)每段以中文序号开头（一、二、三…）；" +
+                                    "4)必须引用给定上下文中的具体信号标题和分数来支撑判断；" +
+                                    "5)每条建议必须注明负责部门和时限；" +
+                                    "6)只能基于给定上下文回答，不编造数据。"),
+                            Map.of("role", "user", "content", "任务：" + question + "\n\n当前数据上下文：\n" + String.join("\n", contextLines))
                     )
             );
             HttpRequest request = HttpRequest.newBuilder(URI.create(url))
@@ -1654,44 +1784,29 @@ public class SemiRiskStore {
     }
 
     private List<Map<String, Object>> gisPoints(List<CrawlerSignal> signals) {
-        // Group by geocoded region, keep highest-risk signal per region for the marker,
-        // but also add individual points for regions with multiple signals.
-        Map<String, Map<String, Object>> regionBest = new LinkedHashMap<>();
-        List<Map<String, Object>> extras = new ArrayList<>();
+        // Every signal gets its own map point. Signals that share a geocoded region
+        // receive a deterministic hash-based offset so they spread visibly instead of stacking.
+        Map<String, Integer> regionCount = new LinkedHashMap<>();
+        List<Map<String, Object>> points = new ArrayList<>();
         for (CrawlerSignal signal : signals) {
             GeoPlace place = geocodeSignal(signal);
+            int idx = regionCount.merge(place.name(), 0, (a, b) -> a + 1);
+            // Spiral offset: each extra signal in the same region gets a small nudge
+            double angle = idx * 2.399963; // golden angle in radians → good spread
+            double radius = idx == 0 ? 0 : 0.35 + (idx % 8) * 0.28;
+            double lon = place.lon() + radius * Math.cos(angle);
+            double lat = place.lat() + radius * Math.sin(angle) * 0.6;
             Map<String, Object> point = new LinkedHashMap<>();
             point.put("id", signal.id());
             point.put("name", place.name() + " · " + signal.source());
             point.put("region", place.name());
-            point.put("lon", place.lon());
-            point.put("lat", place.lat());
+            point.put("lon", Math.round(lon * 1000.0) / 1000.0);
+            point.put("lat", Math.round(lat * 1000.0) / 1000.0);
             point.put("riskIndex", signal.riskScore());
             point.put("analysis", signal.title());
             point.put("source", signal.source());
             point.put("sourceUrl", signal.sourceUrl());
-            if (!regionBest.containsKey(place.name())) {
-                regionBest.put(place.name(), point);
-            } else {
-                int existing = asInt(regionBest.get(place.name()).get("riskIndex"));
-                if (signal.riskScore() > existing) {
-                    extras.add(regionBest.put(place.name(), point));
-                } else {
-                    extras.add(point);
-                }
-            }
-        }
-        List<Map<String, Object>> points = new ArrayList<>(regionBest.values());
-        // Include up to 20 extra signals as slightly offset points to show density
-        int extra = 0;
-        for (Map<String, Object> ep : extras) {
-            if (extra >= 20) break;
-            double lon = (double) ep.get("lon") + (extra % 3 - 1) * 0.6;
-            double lat = (double) ep.get("lat") + (extra / 3 % 3 - 1) * 0.4;
-            ep.put("lon", Math.round(lon * 100.0) / 100.0);
-            ep.put("lat", Math.round(lat * 100.0) / 100.0);
-            points.add(ep);
-            extra++;
+            points.add(point);
         }
         return points;
     }

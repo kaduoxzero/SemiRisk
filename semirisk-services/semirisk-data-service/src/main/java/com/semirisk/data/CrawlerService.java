@@ -31,8 +31,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Service
 public class CrawlerService {
 
-    private static final int RECENT_WINDOW_DAYS = 3;
-    private static final int PER_SOURCE_LIMIT = 12;
+    private static final int RECENT_WINDOW_DAYS = 30;
+    private static final int PER_SOURCE_LIMIT = 50;
 
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(4)).build();
     private final CopyOnWriteArrayList<CrawlerRecord> dailyRecords = new CopyOnWriteArrayList<>();
@@ -84,7 +84,7 @@ public class CrawlerService {
                     .limit(PER_SOURCE_LIMIT)
                     .toList();
             if (recentItems.isEmpty()) {
-                return List.of(failed(source, "近三天未发现 RSS/Atom 条目"));
+                return List.of(failed(source, "近30天未发现 RSS/Atom 条目"));
             }
             return recentItems.stream()
                     .map(item -> record(source, item))
