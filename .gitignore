@@ -9,6 +9,10 @@ dist/
 semirisk-ui/node_modules/
 semirisk-ui/dist/
 semirisk-ui/.vite/
+.DS_Store
+**/.DS_Store
+test-results/
+semirisk-ui/test-results/
 
 ### STS ###
 .apt_generated

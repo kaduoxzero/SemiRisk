@@ -52,17 +52,19 @@ Authorization: Bearer <login/register 返回的 token>
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
-| dashboard.html | GET | `/api/dashboard/overview` | KPI、热点、排行榜、材料风险、阶段状态、AI 摘要 |
+| dashboard.html | GET | `/api/dashboard/overview` | KPI、热点、排行榜、材料风险、阶段状态、AI 摘要；并内嵌 `aiReport`（真实聚合公开源 + DeepSeek 生成的本日风险报告，含 `aiCalled`/`modelStatus`/`usage`/`sections`，持久化于 `ai_report` 表） |
+| dashboard.html | GET | `/api/ai/reports/latest` | 读取本日 AI 风险报告（MySQL `ai_report` 优先，无则后台异步生成并返回待生成态） |
+| dashboard.html | POST | `/api/ai/reports/refresh` | 立即真实生成本日 AI 报告（聚合公开源 + 风险快照调用 DeepSeek） |
 
 ## 4. 数据上传
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
 | data-upload.html | GET | `/api/data/templates/{type}` | 下载 CSV 模板 |
-| data-upload.html | POST | `/api/data/uploads` | 上传文件，Multipart 字段名 `file` |
+| data-upload.html | POST | `/api/data/uploads` | 上传文件，Multipart 字段名 `file`；文件真实落 MinIO 对象存储并登记 `upload_task` |
 | data-upload.html | GET | `/api/data/uploads` | 查询上传任务队列 |
-| data-upload.html | POST | `/api/data/uploads/{id}/parse` | 触发 AI 校验和导入 |
-| data-upload.html | GET | `/api/data/uploads/logs` | SSE 推送清洗日志 |
+| data-upload.html | POST | `/api/data/uploads/{id}/parse` | 从 MinIO 取回文件，用 Apache POI / CSV 真实解析行数与字段告警并入库 |
+| data-upload.html | GET | `/api/data/uploads/logs` | SSE 推送真实处理步骤（接收、MinIO 落库、解析结果） |
 
 ## 5. 风险分析与详情
 
@@ -106,25 +108,25 @@ Authorization: Bearer <login/register 返回的 token>
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
 | gis-map.html | GET | `/api/gis/map?layers=heatmap,suppliers,ports,routes` | GIS 图层、点位与多条公开源路径数据 |
-| enterprise-profile.html | GET | `/api/enterprises/profile?keyword=...` | 企业画像搜索重载 |
-| knowledge-base.html | GET | `/api/knowledge/search?query=...` | RAG 检索，优先查询 Elasticsearch 索引 `semirisk_knowledge`，ES 不可用时回退公开源内存记录，默认最多返回 30 条 |
+| enterprise-profile.html | GET | `/api/enterprises/profile?keyword=...` | 企业画像搜索；来自公开主体观察名单 + 实时公开源事件聚合（`enterprise_record` 入库），工商权威字段统一返回「待接入权威源」不伪造 |
+| knowledge-base.html | GET | `/api/knowledge/search?query=...` | RAG 检索，合并 Elasticsearch 公开源索引与 MySQL `knowledge_doc`（公开情报/政策法规/内部知识库），`categories` 为真实分类计数 |
 | knowledge-base.html | POST | `/api/knowledge/ask` | AI 知识库智能体问答，优先使用 Elasticsearch 检索结果生成回答、检索链路和引用 |
-| knowledge-base.html | GET | `/api/knowledge/preview/{id}` | 文档在线预览 |
+| knowledge-base.html | GET | `/api/knowledge/preview/{id}` | 从 MinIO 拉取真实文档对象，或返回 `knowledge_doc` 真实正文 |
 
 ## 9. 系统管理
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
-| system-management.html | GET | `/api/system/overview` | 用户、模型、Agent、日志、数据源总览 |
+| system-management.html | GET | `/api/system/overview` | 用户、模型、Agent（真实定时任务）、日志（MySQL 审计日志）、数据源（真实健康探测）总览 |
 | system-management.html | POST | `/api/system/users` | 新增成员 |
 | system-management.html | POST | `/api/system/users/login` | 创建/更新可登录用户，支持写入密码哈希和指定 `ADMIN`/`ANALYST`/`OPERATOR` |
 | system-management.html | PUT | `/api/system/users/{id}/status` | 启用/禁用用户并踢下线 |
 | system-management.html | DELETE | `/api/system/users/{id}` | 物理删除用户 |
-| system-management.html | POST | `/api/system/models/ping` | AI 模型连通性测试 |
+| system-management.html | POST | `/api/system/models/ping` | 对模型 endpoint 真实连通性探测，返回真实可达状态与延迟 |
 | system-management.html | POST | `/api/system/models/config` | 保存 AI 模型 Endpoint 与 API Key |
 | system-management.html | GET | `/api/system/models/config` | 查询已脱敏的模型配置 |
-| system-management.html | POST | `/api/system/agents/{name}/trigger` | Agent 手动单步触发 |
-| system-management.html | POST | `/api/system/datasources/{name}/reconnect` | 数据源修复重连 |
+| system-management.html | POST | `/api/system/agents/{name}/trigger` | 真实触发对应任务（公开源爬虫同步 / AI 报告生成），返回真实执行结果 |
+| system-management.html | POST | `/api/system/datasources/{name}/reconnect` | 对中间件做真实健康探测，返回真实可达状态与延迟 |
 
 ## 10. 微服务直连 API
 
@@ -136,7 +138,7 @@ Authorization: Bearer <login/register 返回的 token>
 | semirisk-risk-service:8082 | GET | `/api/risk-score/today` | 查询本日风险测算 |
 | semirisk-risk-service:8082 | POST | `/api/risk-score/recalculate` | 手动重算风险 |
 | semirisk-ai-service:8083 | POST | `/api/ai/models/config` | 保存 DeepSeek 模型 Endpoint 与 API Key |
-| semirisk-ai-service:8083 | GET | `/api/ai/reports/latest` | 获取本日 AI 报告占位，默认模型 `deepseekv4-pro` |
+| semirisk-ai-service:8083 | GET | `/api/ai/reports/latest` | 真实生成本日 AI 报告：拉取 data-service 公开源记录并调用 DeepSeek（默认显示模型 `deepseek-v4-pro`，实际请求 `deepseek-chat`），未配置 Key 时回退基于真实记录的本地聚合摘要 |
 | semirisk-alert-service:8084 | GET | `/api/alerts` | 数据库告警查询 |
 | semirisk-alert-service:8084 | PUT | `/api/alerts/{id}/ignore` | 告警忽略 |
 | semirisk-report-service:8085 | POST | `/api/reports/jobs` | 创建报告任务 |
@@ -178,7 +180,7 @@ X-CSRF-Token: <csrf-token>
 - `citations`：引用原文标题、来源、URL、风险分
 - `modelStatus`：当前是否已配置 DeepSeek API Key
 - `aiCalled`：是否真实调用 AI
-- `usage`：模型返回的 token 使用量；`deepseekv4-pro` 当前作为显示模型，实际请求模型写入 `usage.apiModel`
+- `usage`：模型返回的 token 使用量；`deepseek-v4-pro` 当前作为显示模型，实际请求模型写入 `usage.apiModel`（解析为 `deepseek-chat`）
 
 ## 14. Elasticsearch 知识库检索
 
@@ -190,6 +192,25 @@ Gateway 在同步公开爬虫记录时会将 `status=OK` 的记录写入 ES：
 
 `/api/knowledge/search` 返回：
 
-- `searchEngine`：`Elasticsearch` 或 `LocalPublicCrawler`
+- `searchEngine`：`Elasticsearch` 或 `LocalPublicCrawler`，合并 MySQL `knowledge_doc`
 - `results[].searchScore`：ES 原始 `_score`
 - `results[].similarity`：前端展示用相关度值
+- `results[].category`：`公开情报` / `政策法规` / `内部知识库`
+
+## 15. 数据持久化（全部真实数据入库 MySQL）
+
+所有业务数据以 MySQL 为事实源，重启可恢复，中间件不可达时内存兜底；不使用任何写死的演示数据。`script/semirisk-schema.sql` 维护下列表：
+
+| 表 | 用途 |
+|---|---|
+| `auth_token` | Bearer Token 持久化（30 分钟滑动续期、重启/多实例共享） |
+| `crawler_signal` | 实时爬取的公开源信号（含 `category`：公开情报/政策法规） |
+| `risk_snapshot` | 每日 AI 风险测算快照 |
+| `knowledge_doc` | 知识库文档：公开情报 / 政策法规（爬取）/ 内部知识库 SOP |
+| `enterprise_record` | 企业画像（公开主体观察名单 + 公开源事件，工商字段待接入） |
+| `ai_report` | AI 本日风险报告 |
+| `risk_alert` | 告警与处置状态 |
+| `upload_task` | 上传任务（文件实体存 MinIO `semirisk` 桶） |
+| `system_user` / `ai_model_config` / `report_job` / `system_audit_log` | 用户、模型配置、报告任务、审计日志 |
+
+MinIO 对象存储：默认 `http://192.168.101.130:9000`，桶 `semirisk`，上传文件键 `uploads/{taskId}/{filename}`。

@@ -54,16 +54,16 @@ SEMIRISK_ES_URL=http://127.0.0.1:9200
 当前 VM 部署目录为 `/opt/semirisk`，中间件 Compose 位于 `/opt/semirisk/middleware`，部署包位于 `/opt/semirisk/packages/semirisk-middleware-deploy.tgz`。
 本机通过中转机访问 VM 时，使用 `script/start-vm-tunnels.sh` 将上述端口映射到 `127.0.0.1`。
 
-当前实现为可运行的前后端分离微服务版本。登录注册优先持久化到 MySQL，VM/MySQL 暂不可达时使用本地兜底账号；失败计数优先使用 Redis；公开源风险数据启动/手动实时爬取并每 12 小时自动刷新，知识库检索已接入 Elasticsearch `semirisk_knowledge`，AI 问答在配置 Key 后真实调用 DeepSeek。
+当前实现为可运行的前后端分离微服务版本。**所有业务数据均为真实数据并持久化到 MySQL，不使用任何虚假/写死的演示数据**：登录注册、Bearer Token、公开源爬虫信号、风险快照、告警状态、企业画像、知识库文档、AI 报告、上传任务等统一以 MySQL 为事实源，中间件暂不可达时给出明确「待采集/待接入」兜底而非伪造。公开源风险数据由 `data-service` 实时爬取（含政策法规源）并每 12 小时刷新；知识库检索接入 Elasticsearch `semirisk_knowledge`；AI 问答与本日报告在配置 Key 后真实调用 DeepSeek；上传文件真实落 MinIO 并用 Apache POI / CSV 解析；系统监控对中间件做真实健康探测。
 
 ## 模块
 
 - `semirisk-ui`：Vue 前端
-- `semirisk-common`：公共响应结构
-- `semirisk-services/semirisk-gateway`：统一 API 入口
-- `semirisk-services/semirisk-data-service`：公开源实时爬虫和 12 小时自动刷新记录
+- `semirisk-common`：公共响应结构、SQL 模板、AI/中间件默认值
+- `semirisk-services/semirisk-gateway`：统一 API 入口、持久化枢纽（Token/告警/企业/知识/AI 报告入库）、DeepSeek 调用、MinIO 存储、中间件健康探测
+- `semirisk-services/semirisk-data-service`：公开 RSS/Atom 与政策法规源实时爬虫，12 小时自动刷新
 - `semirisk-services/semirisk-risk-service`：AI 风险测算
-- `semirisk-services/semirisk-ai-service`：AI API Key 和报告分析占位
+- `semirisk-services/semirisk-ai-service`：AI API Key 管理与本日风险报告真实生成（拉取公开源 + 调用 DeepSeek）
 
 ## 验证
 
