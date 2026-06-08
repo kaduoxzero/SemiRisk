@@ -12,14 +12,14 @@ const state = {
 };
 
 const titles = {
-  dashboard: "总览",
+  dashboard: "首页风险总览",
   events: "风险事件",
-  analysis: "趋势分析",
-  gis: "GIS 分布",
+  analysis: "风险分析",
+  gis: "GIS 风险地图",
   enterprise: "企业画像",
-  reports: "AI 报告",
-  knowledge: "知识库",
-  sources: "数据源"
+  reports: "AI 报告生成",
+  knowledge: "知识库检索",
+  sources: "数据源管理"
 };
 
 const viewLoaders = {
@@ -32,6 +32,71 @@ const viewLoaders = {
   knowledge: loadKnowledge,
   sources: loadSources
 };
+
+class ParticleSystem {
+  constructor(canvasId) {
+    this.canvas = document.getElementById(canvasId);
+    if (!this.canvas) return;
+    this.ctx = this.canvas.getContext("2d");
+    this.particles = [];
+    this.colors = ["#3b82f6", "#8b5cf6", "#06b6d4"];
+    this.resize();
+    this.createParticles();
+    window.addEventListener("resize", () => this.resize());
+    requestAnimationFrame(() => this.animate());
+  }
+
+  resize() {
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+  }
+
+  createParticles() {
+    const count = Math.min(120, Math.max(60, Math.floor(window.innerWidth / 14)));
+    this.particles = Array.from({ length: count }, () => ({
+      x: Math.random() * this.canvas.width,
+      y: Math.random() * this.canvas.height,
+      size: Math.random() * 1.8 + 0.6,
+      speedX: Math.random() * 0.45 - 0.225,
+      speedY: Math.random() * 0.45 - 0.225,
+      color: this.colors[Math.floor(Math.random() * this.colors.length)]
+    }));
+  }
+
+  animate() {
+    if (!this.ctx) return;
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.particles.forEach((particle, index) => {
+      particle.x += particle.speedX;
+      particle.y += particle.speedY;
+      if (particle.x > this.canvas.width) particle.x = 0;
+      if (particle.x < 0) particle.x = this.canvas.width;
+      if (particle.y > this.canvas.height) particle.y = 0;
+      if (particle.y < 0) particle.y = this.canvas.height;
+
+      this.ctx.fillStyle = particle.color;
+      this.ctx.beginPath();
+      this.ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      for (let i = index + 1; i < this.particles.length; i += 1) {
+        const other = this.particles[i];
+        const dx = particle.x - other.x;
+        const dy = particle.y - other.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < 138) {
+          this.ctx.strokeStyle = `rgba(59, 130, 246, ${0.14 * (1 - distance / 138)})`;
+          this.ctx.lineWidth = 1;
+          this.ctx.beginPath();
+          this.ctx.moveTo(particle.x, particle.y);
+          this.ctx.lineTo(other.x, other.y);
+          this.ctx.stroke();
+        }
+      }
+    });
+    requestAnimationFrame(() => this.animate());
+  }
+}
 
 function $(selector) {
   return document.querySelector(selector);
@@ -115,11 +180,23 @@ function touchUpdated() {
   $("#last-updated").textContent = `已刷新 ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
 }
 
+function updateClock() {
+  const now = new Date();
+  const date = now.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).replace(/\//g, "-");
+  const time = now.toLocaleTimeString("zh-CN", { hour12: false });
+  const el = $("#current-time");
+  if (el) el.textContent = `${date} ${time}`;
+}
+
 function setButtonBusy(button, busy, busyText = "处理中") {
   if (!button) return;
-  if (!button.dataset.label) button.dataset.label = button.textContent;
+  if (!button.dataset.labelHtml) button.dataset.labelHtml = button.innerHTML;
   button.disabled = busy;
-  button.textContent = busy ? busyText : button.dataset.label;
+  if (busy) {
+    button.textContent = busyText;
+  } else {
+    button.innerHTML = button.dataset.labelHtml;
+  }
 }
 
 async function withBusy(button, busyText, task) {
@@ -190,7 +267,12 @@ function empty(message) {
 }
 
 function renderMetric(selector, value) {
-  $(selector).textContent = formatNumber(value);
+  const formatted = formatNumber(value);
+  $(selector).textContent = formatted;
+  if (selector === "#metric-index") {
+    const ticker = $("#header-risk-index");
+    if (ticker) ticker.textContent = formatted;
+  }
 }
 
 function renderEventRows(rows, target, withActions = false) {
@@ -201,7 +283,7 @@ function renderEventRows(rows, target, withActions = false) {
   }
   tbody.innerHTML = rows.map((item) => `
     <tr>
-      <td>${escapeHtml(valueOrDash(item.occurredAt || item.createTime))}</td>
+      <td>${escapeHtml(formatDate(item.occurredAt || item.createTime))}</td>
       <td>${levelBadge(item.riskLevel)}</td>
       <td>${escapeHtml(valueOrDash(item.enterpriseName))}</td>
       <td>${escapeHtml(valueOrDash(item.eventTitle))}</td>
@@ -253,7 +335,10 @@ async function loadDashboard() {
   renderMetric("#metric-resolved", kpis.resolved);
   renderMetric("#metric-index", kpis.currentRiskIndex);
   renderTrend("#trend-chart", state.trendRows);
+  renderMap("#dashboard-map", state.gisRows);
   renderTopRisks(events);
+  renderCategoryRisks(events);
+  renderDashboardIntel(events, kpis);
   renderEventRows(events, "#latest-events");
   if (warnings.length) {
     setStatus(`部分总览数据加载失败：${warnings.join("、")}`, "error");
@@ -267,12 +352,63 @@ function renderTopRisks(rows) {
   $("#top-risk-count").textContent = `${sorted.length} 条`;
   $("#top-risk-list").innerHTML = sorted.length
     ? sorted.map((item) => `
-      <article class="list-item">
-        <h4>${escapeHtml(valueOrDash(item.eventTitle))}</h4>
-        <p>${escapeHtml(valueOrDash(item.enterpriseName))} · ${levelBadge(item.riskLevel)} · 风险分 ${formatNumber(item.riskScore)}</p>
+      <article class="rank-item">
+        <span class="rank-num">${String(sorted.indexOf(item) + 1).padStart(2, "0")}</span>
+        <div>
+          <h4 class="rank-title">${escapeHtml(valueOrDash(item.eventTitle))}</h4>
+          <p class="rank-sub">${escapeHtml(valueOrDash(item.enterpriseName))} · 风险分 ${formatNumber(item.riskScore)}</p>
+        </div>
+        ${levelBadge(item.riskLevel)}
       </article>
     `).join("")
     : empty("暂无真实风险事件");
+}
+
+function renderCategoryRisks(rows) {
+  const host = $("#category-risk-list");
+  if (!host) return;
+  const groups = rows.reduce((acc, item) => {
+    const name = item.category || item.sourceType || "未分类";
+    if (!acc[name]) acc[name] = { total: 0, count: 0 };
+    acc[name].total += Number(item.riskScore || 0);
+    acc[name].count += 1;
+    return acc;
+  }, {});
+  const sorted = Object.entries(groups)
+    .map(([name, data]) => ({ name, value: data.count ? Math.round(data.total / data.count) : 0 }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 4);
+  host.innerHTML = sorted.length
+    ? sorted.map((item) => `
+      <div class="bar-row">
+        <div class="bar-label">
+          <span>${escapeHtml(item.name)}</span>
+          <strong>${formatNumber(item.value)}%</strong>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width:${Math.max(4, Math.min(100, item.value))}%"></div></div>
+      </div>
+    `).join("")
+    : empty("暂无真实分类指数");
+}
+
+function renderDashboardIntel(rows, kpis = {}) {
+  const summary = $("#ai-summary");
+  const feed = $("#dashboard-feed");
+  if (!summary || !feed) return;
+  const sorted = [...rows].sort((a, b) => Number(b.riskScore || 0) - Number(a.riskScore || 0));
+  if (!sorted.length) {
+    summary.textContent = "暂无真实风险事件，无法生成风险摘要。";
+    feed.innerHTML = empty("暂无实时动态");
+    return;
+  }
+  const top = sorted[0];
+  summary.textContent = `基于当前真实事件聚合，系统共监测到 ${formatNumber(kpis.total)} 条风险事件，最高风险为“${valueOrDash(top.eventTitle)}”，关联主体为 ${valueOrDash(top.enterpriseName)}，风险分 ${formatNumber(top.riskScore)}。`;
+  feed.innerHTML = sorted.slice(0, 6).map((item) => `
+    <article class="timeline-item">
+      <strong>${escapeHtml(valueOrDash(item.eventTitle))}</strong>
+      <span>${escapeHtml(formatDate(item.occurredAt || item.createTime))} · ${escapeHtml(valueOrDash(item.sourceName))}</span>
+    </article>
+  `).join("");
 }
 
 async function loadEvents() {
@@ -401,20 +537,38 @@ function renderTrend(selector, rows, showBars = false) {
   const bars = showBars ? rows.map((row, index) => {
     const barWidth = Math.max(8, Math.min(28, (width - pad.left - pad.right) / rows.length - 8));
     const barHeight = height - pad.bottom - y(row.count);
-    return `<rect x="${x(index) - barWidth / 2}" y="${y(row.count)}" width="${barWidth}" height="${barHeight}" rx="3" fill="#dbe7ff"></rect>`;
+    return `<rect x="${x(index) - barWidth / 2}" y="${y(row.count)}" width="${barWidth}" height="${barHeight}" rx="3" fill="rgba(59,130,246,0.22)" stroke="rgba(59,130,246,0.34)"></rect>`;
   }).join("") : "";
   const labels = rows.map((row, index) => {
     if (rows.length > 10 && index % Math.ceil(rows.length / 8) !== 0) return "";
-    return `<text x="${x(index)}" y="${height - 16}" text-anchor="middle" font-size="11" fill="#6b778c">${escapeHtml(row.date || "")}</text>`;
+    return `<text x="${x(index)}" y="${height - 16}" text-anchor="middle" font-size="11" fill="#94a3b8">${escapeHtml(row.date || "")}</text>`;
+  }).join("");
+  const area = `${pad.left},${height - pad.bottom} ${rows.map((row, index) => `${x(index)},${y(row.riskScore)}`).join(" ")} ${width - pad.right},${height - pad.bottom}`;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const py = pad.top + ratio * (height - pad.top - pad.bottom);
+    return `<line x1="${pad.left}" y1="${py}" x2="${width - pad.right}" y2="${py}" stroke="rgba(148,163,184,0.12)"></line>`;
   }).join("");
 
   host.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="真实风险趋势">
-      <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#d2d8e4"></line>
-      <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#d2d8e4"></line>
+      <defs>
+        <linearGradient id="trend-area-${selector.replace(/[^a-z0-9]/gi, "")}" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.35"></stop>
+          <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"></stop>
+        </linearGradient>
+        <filter id="trend-glow-${selector.replace(/[^a-z0-9]/gi, "")}">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur"></feGaussianBlur>
+          <feMerge><feMergeNode in="coloredBlur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+        </filter>
+      </defs>
+      <rect x="0" y="0" width="${width}" height="${height}" fill="rgba(3,7,18,0.35)"></rect>
+      ${grid}
+      <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="rgba(148,163,184,0.22)"></line>
+      <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="rgba(148,163,184,0.22)"></line>
       ${bars}
-      <polyline points="${line}" fill="none" stroke="#1f6feb" stroke-width="3"></polyline>
-      ${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row.riskScore)}" r="4" fill="#1f6feb"><title>${escapeHtml(row.date || "")}: ${formatNumber(row.riskScore)}</title></circle>`).join("")}
+      <polygon points="${area}" fill="url(#trend-area-${selector.replace(/[^a-z0-9]/gi, "")})"></polygon>
+      <polyline points="${line}" fill="none" stroke="#3b82f6" stroke-width="3" filter="url(#trend-glow-${selector.replace(/[^a-z0-9]/gi, "")})"></polyline>
+      ${rows.map((row, index) => `<circle cx="${x(index)}" cy="${y(row.riskScore)}" r="4" fill="#06b6d4" stroke="#bfdbfe" stroke-width="1.5"><title>${escapeHtml(row.date || "")}: ${formatNumber(row.riskScore)}</title></circle>`).join("")}
       ${labels}
     </svg>
   `;
@@ -463,23 +617,39 @@ function renderMap(selector, rows) {
   const gridLines = [0, 0.25, 0.5, 0.75, 1];
   host.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="真实风险地理分布">
-      <rect x="0" y="0" width="${width}" height="${height}" fill="#f8fafc"></rect>
+      <defs>
+        <radialGradient id="map-glow-${selector.replace(/[^a-z0-9]/gi, "")}" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.28"></stop>
+          <stop offset="100%" stop-color="#030712" stop-opacity="0"></stop>
+        </radialGradient>
+        <filter id="point-glow-${selector.replace(/[^a-z0-9]/gi, "")}">
+          <feGaussianBlur stdDeviation="4" result="coloredBlur"></feGaussianBlur>
+          <feMerge><feMergeNode in="coloredBlur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+        </filter>
+      </defs>
+      <rect x="0" y="0" width="${width}" height="${height}" fill="rgba(3,7,18,0.35)"></rect>
+      <ellipse cx="${width * 0.55}" cy="${height * 0.5}" rx="${width * 0.36}" ry="${height * 0.34}" fill="url(#map-glow-${selector.replace(/[^a-z0-9]/gi, "")})"></ellipse>
       ${gridLines.map((ratio) => {
         const px = pad + ratio * (width - pad * 2);
-        return `<line x1="${px}" y1="${pad}" x2="${px}" y2="${height - pad}" stroke="#e4e8f0"></line>`;
+        return `<line x1="${px}" y1="${pad}" x2="${px}" y2="${height - pad}" stroke="rgba(59,130,246,0.16)"></line>`;
       }).join("")}
       ${gridLines.map((ratio) => {
         const py = pad + ratio * (height - pad * 2);
-        return `<line x1="${pad}" y1="${py}" x2="${width - pad}" y2="${py}" stroke="#e4e8f0"></line>`;
+        return `<line x1="${pad}" y1="${py}" x2="${width - pad}" y2="${py}" stroke="rgba(59,130,246,0.16)"></line>`;
       }).join("")}
-      <rect x="${pad}" y="${pad}" width="${width - pad * 2}" height="${height - pad * 2}" fill="none" stroke="#d2d8e4"></rect>
+      <rect x="${pad}" y="${pad}" width="${width - pad * 2}" height="${height - pad * 2}" fill="none" stroke="rgba(148,163,184,0.22)"></rect>
+      <path d="M${pad + 80} ${height * 0.48} C${width * 0.28} ${height * 0.22}, ${width * 0.58} ${height * 0.24}, ${width - pad - 90} ${height * 0.42}" fill="none" stroke="rgba(6,182,212,0.18)" stroke-width="2"></path>
+      <path d="M${pad + 120} ${height * 0.7} C${width * 0.34} ${height * 0.58}, ${width * 0.62} ${height * 0.74}, ${width - pad - 130} ${height * 0.6}" fill="none" stroke="rgba(139,92,246,0.18)" stroke-width="2"></path>
       ${valid.map((row) => {
         const score = Number(row.riskScore || 0);
         const radius = Math.max(5, Math.min(18, score / 6));
-        const color = row.riskLevel === "CRITICAL" ? "#d92d20" : row.riskLevel === "WARNING" ? "#b7791f" : "#1f6feb";
-        return `<circle cx="${x(row.longitude)}" cy="${y(row.latitude)}" r="${radius}" fill="${color}" fill-opacity="0.78">
+        const color = row.riskLevel === "CRITICAL" ? "#ef4444" : row.riskLevel === "WARNING" ? "#eab308" : "#3b82f6";
+        return `<g filter="url(#point-glow-${selector.replace(/[^a-z0-9]/gi, "")})">
+          <circle cx="${x(row.longitude)}" cy="${y(row.latitude)}" r="${radius + 7}" fill="${color}" fill-opacity="0.12"></circle>
+          <circle cx="${x(row.longitude)}" cy="${y(row.latitude)}" r="${radius}" fill="${color}" fill-opacity="0.82" stroke="#e2e8f0" stroke-opacity="0.55" stroke-width="1">
           <title>${escapeHtml(row.eventTitle || "")} / ${escapeHtml(row.enterpriseName || "")} / ${score}</title>
-        </circle>`;
+          </circle>
+        </g>`;
       }).join("")}
     </svg>
   `;
@@ -710,6 +880,18 @@ async function switchView(view) {
 }
 
 function bindEvents() {
+  const loginForm = $("#login-form");
+  if (loginForm) {
+    loginForm.onsubmit = (event) => {
+      event.preventDefault();
+      $("#login-screen")?.classList.add("hidden");
+      $("#app-shell")?.classList.remove("hidden");
+      switchView(state.currentView || "dashboard");
+    };
+  }
+  $("#nav-toggle").onclick = () => {
+    $("#sidebar")?.classList.toggle("collapsed");
+  };
   $all(".nav-item").forEach((button) => {
     button.onclick = () => switchView(button.dataset.view);
   });
@@ -775,5 +957,8 @@ function bindEvents() {
   $("#crawler-run").onclick = () => runTask(() => runCrawler($("#crawler-run")));
 }
 
+new ParticleSystem("particle-canvas");
+updateClock();
+setInterval(updateClock, 1000);
 bindEvents();
 switchView("dashboard");
