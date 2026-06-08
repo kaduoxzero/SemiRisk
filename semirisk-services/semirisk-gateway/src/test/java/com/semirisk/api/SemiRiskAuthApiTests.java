@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:mysql://127.0.0.1:1/semirisk",
@@ -30,6 +31,14 @@ class SemiRiskAuthApiTests {
 
     @Test
     @Order(1)
+    void directSpaRouteServesIndexHtml() throws Exception {
+        mockMvc.perform(get("/dashboard"))
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("/index.html"));
+    }
+
+    @Test
+    @Order(2)
     void publicDashboardCanBeReadWithoutLogin() throws Exception {
         mockMvc.perform(get("/api/dashboard/overview"))
                 .andExpect(status().isOk())
@@ -37,7 +46,7 @@ class SemiRiskAuthApiTests {
     }
 
     @Test
-    @Order(2)
+    @Order(3)
     void protectedAlertsRequiresLogin() throws Exception {
         mockMvc.perform(get("/api/alerts"))
                 .andExpect(status().isUnauthorized())
@@ -45,7 +54,7 @@ class SemiRiskAuthApiTests {
     }
 
     @Test
-    @Order(3)
+    @Order(4)
     void unsafeRequestWithoutCsrfIsRejected() throws Exception {
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -55,21 +64,27 @@ class SemiRiskAuthApiTests {
     }
 
     @Test
-    @Order(4)
+    @Order(5)
     void bootstrapAdminCanLogin() throws Exception {
         Csrf csrf = csrf();
-        mockMvc.perform(post("/api/auth/login")
+        MvcResult login = mockMvc.perform(post("/api/auth/login")
                         .header("X-CSRF-Token", csrf.token())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"kaduoxli\",\"password\":\"123qwe123\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.user.role").value("ADMIN"))
                 .andExpect(jsonPath("$.data.user.modules").isArray())
-                .andExpect(jsonPath("$.data.token").exists());
+                .andExpect(jsonPath("$.data.token").exists())
+                .andReturn();
+        String token = JsonPath.read(login.getResponse().getContentAsString(), "$.data.token");
+
+        mockMvc.perform(get("/api/alerts").param("access_token", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
     }
 
     @Test
-    @Order(5)
+    @Order(6)
     void registerCreatesTokenAndUnlocksProtectedApi() throws Exception {
         Csrf csrf = csrf();
         MvcResult register = mockMvc.perform(post("/api/auth/register")
@@ -92,7 +107,7 @@ class SemiRiskAuthApiTests {
     }
 
     @Test
-    @Order(6)
+    @Order(7)
     void wrongPasswordReturnsUnauthorized() throws Exception {
         Csrf registerCsrf = csrf();
         mockMvc.perform(post("/api/auth/register")

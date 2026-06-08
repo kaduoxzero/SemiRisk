@@ -12,7 +12,10 @@ import com.semirisk.security.PasswordHashService;
 import com.semirisk.security.RedisLoginGuardService;
 import com.semirisk.security.TokenAuthService;
 import com.semirisk.service.KnowledgeSearchIndexService;
+import com.semirisk.service.MinioStorageService;
 import com.semirisk.service.PublicCrawlerClient;
+import com.semirisk.service.HealthProbeService;
+import com.semirisk.service.UploadParseService;
 import com.semirisk.service.SemiRiskStore.ReportJob;
 import com.semirisk.service.SemiRiskStore.SystemUser;
 import com.semirisk.service.SemiRiskStore.UploadTask;
@@ -64,10 +67,13 @@ public class SemiRiskController {
     private final InputSanitizer inputSanitizer;
     private final TokenAuthService tokenAuthService;
     private final CsrfTokenService csrfTokenService;
+    private final MinioStorageService minioStorageService;
+    private final UploadParseService uploadParseService;
+    private final HealthProbeService healthProbeService;
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
     private volatile Instant lastCrawlerSync = Instant.EPOCH;
 
-    public SemiRiskController(SemiRiskStore store, PublicCrawlerClient publicCrawlerClient, KnowledgeSearchIndexService knowledgeSearchIndexService, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService, PasswordHashService passwordHashService, InputSanitizer inputSanitizer, TokenAuthService tokenAuthService, CsrfTokenService csrfTokenService) {
+    public SemiRiskController(SemiRiskStore store, PublicCrawlerClient publicCrawlerClient, KnowledgeSearchIndexService knowledgeSearchIndexService, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService, PasswordHashService passwordHashService, InputSanitizer inputSanitizer, TokenAuthService tokenAuthService, CsrfTokenService csrfTokenService, MinioStorageService minioStorageService, UploadParseService uploadParseService, HealthProbeService healthProbeService) {
         this.store = store;
         this.publicCrawlerClient = publicCrawlerClient;
         this.knowledgeSearchIndexService = knowledgeSearchIndexService;
@@ -77,6 +83,9 @@ public class SemiRiskController {
         this.inputSanitizer = inputSanitizer;
         this.tokenAuthService = tokenAuthService;
         this.csrfTokenService = csrfTokenService;
+        this.minioStorageService = minioStorageService;
+        this.uploadParseService = uploadParseService;
+        this.healthProbeService = healthProbeService;
     }
 
     @GetMapping("/auth/csrf")
@@ -258,13 +267,21 @@ public class SemiRiskController {
     @PostMapping(value = "/data/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<UploadTask> upload(@RequestParam("file") MultipartFile file) throws IOException {
         UploadTask task = store.createUpload(file);
+        String objectKey = uploadObjectKey(task.id(), task.filename());
+        boolean stored = false;
+        try {
+            minioStorageService.putObject(objectKey, file.getBytes(), file.getContentType());
+            stored = true;
+        } catch (Exception ignored) {
+            // MinIO 暂不可达时仍接收任务，前端显示明确状态。
+        }
         try {
             preparedRiskRepository.insertUploadTask(task.id(), task.filename(), task.size(), task.status(), task.rows(), task.createdAt());
-            preparedRiskRepository.insertAuditLog("INFO", "upload accepted " + task.filename());
+            preparedRiskRepository.insertAuditLog("INFO", "upload accepted " + task.filename() + (stored ? " stored=minio:" + objectKey : " stored=none"));
         } catch (Exception ignored) {
             // Local fallback keeps the project runnable before VM middleware is connected.
         }
-        return ApiResponse.ok("文件已进入 AI 清洗队列", task);
+        return ApiResponse.ok(stored ? "文件已上传至 MinIO 对象存储并进入解析队列" : "文件已进入解析队列（对象存储暂不可达）", task);
     }
 
     @GetMapping("/data/uploads")
@@ -282,32 +299,58 @@ public class SemiRiskController {
 
     @PostMapping("/data/uploads/{id}/parse")
     public ApiResponse<UploadTask> parseUpload(@PathVariable String id) {
-        UploadTask task = store.advanceUpload(id);
+        String filename = store.uploadTask(id).map(UploadTask::filename).orElseGet(() -> lookupUploadFilename(id));
+        if (filename == null || filename.isBlank()) {
+            return ApiResponse.fail("上传任务不存在或对象已过期");
+        }
+        String objectKey = uploadObjectKey(id, filename);
+        UploadParseService.ParseResult result;
+        try {
+            byte[] content = minioStorageService.getObject(objectKey);
+            result = uploadParseService.parse(filename, content);
+        } catch (Exception ex) {
+            return ApiResponse.fail("无法从对象存储读取文件进行解析：" + ex.getClass().getSimpleName());
+        }
+        UploadTask task;
+        try {
+            task = store.completeUpload(id, result.rows(), result.warnings());
+        } catch (IllegalArgumentException ex) {
+            task = new UploadTask(id, filename, 0, result.rows() > 0 ? "导入成功" : "无有效数据", Instant.now(), result.rows(), result.warnings());
+        }
         try {
             preparedRiskRepository.updateUploadTask(task.id(), task.status(), task.rows());
-            preparedRiskRepository.insertAuditLog("INFO", "upload parsed " + task.id());
+            preparedRiskRepository.insertAuditLog("INFO", "upload parsed " + task.id() + " rows=" + task.rows());
         } catch (Exception ignored) {
             // Local fallback keeps the project runnable before VM middleware is connected.
         }
-        return ApiResponse.ok("AI 校验和导入完成", task);
+        return ApiResponse.ok("AI 解析与导入完成，真实解析 " + task.rows() + " 行", task);
+    }
+
+    private String uploadObjectKey(String id, String filename) {
+        String safe = filename == null ? "file" : filename.replaceAll("[^A-Za-z0-9._\\-]+", "_");
+        return "uploads/" + id + "/" + safe;
+    }
+
+    private String lookupUploadFilename(String id) {
+        try {
+            return preparedRiskRepository.findUploadTasks(200).stream()
+                    .filter(row -> id.equals(String.valueOf(row.get("id"))))
+                    .map(row -> String.valueOf(row.get("filename")))
+                    .findFirst()
+                    .orElse(null);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     @GetMapping("/data/uploads/logs")
     public SseEmitter uploadLogs() {
         SseEmitter emitter = new SseEmitter(30_000L);
         sseExecutor.submit(() -> {
-            List<String> logs = List.of(
-                    "[INFO] 接收文件元数据，校验大小与格式",
-                    "[INFO] 解析 Excel/CSV/PDF 文档结构",
-                    "[WARN] lead_time_days 缺失，按临近均值自动插值",
-                    "[INFO] 抽取供应商、物料、航线实体",
-                    "[INFO] 建立语义关联并写入风险事件候选集",
-                    "[INFO] ETL 清洗完成"
-            );
             try {
-                for (String log : logs) {
+                for (String log : store.uploadLogLines(null)) {
                     emitter.send(SseEmitter.event().name("log").data(Map.of("time", Instant.now().toString(), "message", log)));
-                    Thread.sleep(650);
+                    Thread.sleep(360);
                 }
                 emitter.complete();
             } catch (Exception ex) {
@@ -365,15 +408,15 @@ public class SemiRiskController {
     @GetMapping("/reports/templates")
     public ApiResponse<List<Map<String, String>>> reportTemplates() {
         return ApiResponse.ok(List.of(
-                Map.of("id", "risk-assessment", "name", "风险评估报告", "scenario", "高管汇报与事件复盘"),
-                Map.of("id", "supply-chain", "name", "供应链分析报告", "scenario", "物流、库存、供应商协同评估"),
-                Map.of("id", "enterprise-dd", "name", "企业尽调报告", "scenario", "供应商准入与年审")
+                Map.of("id", "risk-assessment", "name", "风险评估报告", "scenario", "AI 研判风险评分、影响范围和闭环处置", "format", "PDF"),
+                Map.of("id", "supply-chain", "name", "供应链分析报告", "scenario", "AI 分析物流路径、供应商韧性和替代方案", "format", "PDF"),
+                Map.of("id", "enterprise-dd", "name", "企业尽调报告", "scenario", "AI 汇总企业主体、公开源事件和合作建议", "format", "PDF")
         ));
     }
 
     @PostMapping("/reports/jobs")
     public ApiResponse<ReportJob> createReport(@Valid @RequestBody ReportRequest request) {
-        ReportJob job = store.createReport(request.template(), request.language(), request.format(), request.threshold());
+        ReportJob job = store.createReport(request.template(), request.language(), "PDF", request.threshold());
         try {
             preparedRiskRepository.upsertReportJob(job.id(), job.template(), job.language(), job.format(), job.threshold(), job.status(), job.progress(), job.step(), job.downloadUrl(), job.createdAt());
             preparedRiskRepository.insertAuditLog("INFO", "report job created " + job.id());
@@ -419,11 +462,8 @@ public class SemiRiskController {
         }
         String template = job == null ? String.valueOf(persisted.getOrDefault("template", "risk-assessment")) : job.template();
         String language = job == null ? String.valueOf(persisted.getOrDefault("language", "中文")) : job.language();
-        String format = job == null ? String.valueOf(persisted.getOrDefault("format", "PDF")) : job.format();
-        List<String> findings = store.dailyRiskSnapshot().signals().stream()
-                .map(signal -> signal.source() + "：" + signal.title())
-                .toList();
-        ReportFile report = ReportFileFactory.build(id, template, language, format, findings);
+        List<String> findings = store.aiReportLines(id, template, language);
+        ReportFile report = ReportFileFactory.build(id, template, language, "PDF", findings);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(report.contentType()))
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + report.filename() + "\"")
@@ -519,6 +559,11 @@ public class SemiRiskController {
         return ApiResponse.ok(store.gis(layers));
     }
 
+    @GetMapping("/enterprises")
+    public ApiResponse<List<Map<String, Object>>> enterprises() {
+        return ApiResponse.ok(store.enterpriseCatalog());
+    }
+
     @GetMapping("/enterprises/profile")
     public ApiResponse<Map<String, Object>> enterprise(@RequestParam(required = false) String keyword) {
         syncPublicCrawlerRecords();
@@ -539,9 +584,45 @@ public class SemiRiskController {
         return ApiResponse.ok("AI 知识库智能体回答完成", store.askKnowledgeAgent(request.question(), indexedResults));
     }
 
-    @GetMapping(value = "/knowledge/preview/{id}", produces = "text/plain;charset=UTF-8")
-    public ResponseEntity<String> preview(@PathVariable String id) {
-        return ResponseEntity.ok("知识文档预览 " + id + "\n此处模拟 PDF 在线预览内容，真实环境可替换为 MinIO 文件流。");
+    @GetMapping("/knowledge/preview/{id}")
+    public ResponseEntity<byte[]> preview(@PathVariable String id) {
+        // 优先从 MinIO 取真实文档对象；其次返回知识库文档真实正文；都没有时给出明确说明。
+        try {
+            List<Map<String, Object>> docs = preparedRiskRepository.findKnowledgeDocById(id);
+            if (!docs.isEmpty()) {
+                Map<String, Object> doc = docs.get(0);
+                String objectKey = String.valueOf(doc.getOrDefault("objectKey", ""));
+                if (objectKey != null && !objectKey.isBlank() && !"null".equals(objectKey) && minioStorageService.objectExists(objectKey)) {
+                    byte[] body = minioStorageService.getObject(objectKey);
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.parseMediaType(minioStorageService.contentType(objectKey)))
+                            .body(body);
+                }
+                String text = "标题：" + doc.get("title") + "\n分类：" + doc.get("category") + "\n来源：" + doc.get("source")
+                        + "\n维度：" + doc.get("dimension") + "\n原文链接：" + doc.get("sourceUrl") + "\n\n" + doc.get("content");
+                return ResponseEntity.ok()
+                        .contentType(MediaType.parseMediaType("text/plain;charset=UTF-8"))
+                        .body(text.getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (Exception ignored) {
+            // 落到下面的统一说明。
+        }
+        String fallback = "知识文档 " + id + " 暂无可预览的对象。公开源文章请通过原文链接查看，内部/政策文档需先上传至 MinIO 对象存储。";
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/plain;charset=UTF-8"))
+                .body(fallback.getBytes(StandardCharsets.UTF_8));
+    }
+
+    @GetMapping("/ai/reports/latest")
+    public ApiResponse<Map<String, Object>> latestAiReport() {
+        syncPublicCrawlerRecords();
+        return ApiResponse.ok(store.latestAiReport());
+    }
+
+    @PostMapping("/ai/reports/refresh")
+    public ApiResponse<Map<String, Object>> refreshAiReport() {
+        syncPublicCrawlerRecords();
+        return ApiResponse.ok("AI 本日风险报告已生成", store.generateDailyAiReport());
     }
 
     @GetMapping("/system/overview")
@@ -624,8 +705,10 @@ public class SemiRiskController {
     @PostMapping("/system/models/ping")
     public ApiResponse<Map<String, Object>> modelPing(@RequestBody Map<String, String> request) {
         String model = inputSanitizer.plain(request.getOrDefault("model", "default"), 128);
-        int latency = 240 + Math.abs(model.hashCode() % 300);
-        return ApiResponse.ok("模型连通性测试成功", Map.of("model", model, "latencyMs", latency, "status", "健康"));
+        String endpoint = request.get("endpoint");
+        Map<String, Object> result = healthProbeService.probeModelEndpoint(model, endpoint);
+        boolean reachable = Boolean.TRUE.equals(result.get("reachable"));
+        return ApiResponse.ok(reachable ? "模型 endpoint 连通性测试成功" : "模型 endpoint 暂不可达", result);
     }
 
     @PostMapping("/system/models/config")
@@ -672,12 +755,35 @@ public class SemiRiskController {
 
     @PostMapping("/system/agents/{name}/trigger")
     public ApiResponse<Map<String, Object>> triggerAgent(@PathVariable String name) {
-        return ApiResponse.ok("Agent 已手动触发", Map.of("agent", name, "triggeredAt", Instant.now().toString()));
+        String lower = name == null ? "" : name.toLowerCase();
+        String result;
+        if (lower.contains("报告") || lower.contains("report")) {
+            Map<String, Object> report = store.generateDailyAiReport();
+            result = "已触发 AI 报告生成，aiCalled=" + report.getOrDefault("aiCalled", false);
+        } else {
+            List<SemiRiskStore.CrawlerSignal> records = publicCrawlerClient.today();
+            store.refreshDailyRiskRecords(records);
+            knowledgeSearchIndexService.sync(records);
+            result = "已触发公开源爬虫与风险测算，纳入 " + records.size() + " 条真实信号";
+        }
+        try {
+            preparedRiskRepository.insertAuditLog("INFO", "agent triggered " + name + " -> " + result);
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok("Agent 已手动触发", Map.of("agent", name, "result", result, "triggeredAt", Instant.now().toString()));
     }
 
     @PostMapping("/system/datasources/{name}/reconnect")
     public ApiResponse<Map<String, Object>> reconnect(@PathVariable String name) {
-        return ApiResponse.ok("数据源重连成功", Map.of("source", name, "host", "192.168.101.130"));
+        Map<String, Object> probe = healthProbeService.probeOne(name);
+        boolean reachable = Boolean.TRUE.equals(probe.get("reachable"));
+        try {
+            preparedRiskRepository.insertAuditLog(reachable ? "INFO" : "WARN", "datasource reconnect " + name + " reachable=" + reachable);
+        } catch (Exception ignored) {
+            // Local fallback keeps the project runnable before VM middleware is connected.
+        }
+        return ApiResponse.ok(reachable ? "数据源连通正常" : "数据源不可达，请检查中间件状态", probe);
     }
 
     public record LoginRequest(@NotBlank String username, @NotBlank String password, boolean rememberMe, String captchaToken) {

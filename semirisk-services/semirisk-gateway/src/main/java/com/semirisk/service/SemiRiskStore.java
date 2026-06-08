@@ -2,8 +2,10 @@ package com.semirisk.service;
 
 import com.semirisk.common.AiModelDefaults;
 import com.semirisk.common.SemiriskConstants;
+import com.semirisk.repository.PreparedRiskRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -11,9 +13,11 @@ import org.springframework.scheduling.annotation.Scheduled;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -27,7 +31,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 @Service
@@ -45,24 +52,51 @@ public class SemiRiskStore {
     private final Map<String, String> aiModelApiKeys = new ConcurrentHashMap<>();
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
     private volatile DailyRiskSnapshot dailyRiskSnapshot;
+    private volatile Map<String, Object> dailyAiReport;
+    private volatile String dailyAiReportDate = "";
+    private final AtomicBoolean reportGenerating = new AtomicBoolean(false);
+    private final ExecutorService reportExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "semirisk-ai-report");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final List<String> auditLogs = new ArrayList<>();
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
     private final String defaultAiApiKey;
     private final ObjectMapper objectMapper;
+    private final PreparedRiskRepository repository;
+    private final HealthProbeService healthProbeService;
+
+    /** 知识库分类常量：真实来源区分。 */
+    public static final String KNOWLEDGE_PUBLIC = "公开情报";
+    public static final String KNOWLEDGE_POLICY = "政策法规";
+    public static final String KNOWLEDGE_INTERNAL = "内部知识库";
 
     public SemiRiskStore(
             @Value("${semirisk.ai.default.model:" + AiModelDefaults.DEFAULT_MODEL + "}") String defaultAiModel,
             @Value("${semirisk.ai.default.endpoint:" + AiModelDefaults.DEFAULT_ENDPOINT + "}") String defaultAiEndpoint,
             @Value("${semirisk.ai.default.api-key:}") String defaultAiApiKey,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            PreparedRiskRepository repository,
+            HealthProbeService healthProbeService) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.defaultAiApiKey = defaultAiApiKey;
         this.objectMapper = objectMapper;
+        this.repository = repository;
+        this.healthProbeService = healthProbeService;
         seedDefaultAiModel();
         auditLogs.add("[INFO] gateway route table initialized");
         refreshDailyRiskRecords();
+    }
+
+    /** 在表结构就绪（SchemaInitializer @Order(10)）之后再执行入库种子与启动恢复。 */
+    @org.springframework.context.event.EventListener(org.springframework.context.event.ContextRefreshedEvent.class)
+    @org.springframework.core.annotation.Order(20)
+    public void initPersistence() {
+        seedInternalKnowledgeDocs();
+        recoverFromDatabase();
     }
 
     @Scheduled(cron = "0 0 */12 * * *")
@@ -76,18 +110,282 @@ public class SemiRiskStore {
                 .filter(signal -> "OK".equalsIgnoreCase(signal.status()))
                 .toList();
         if (availableSignals.isEmpty()) {
+            // 本轮采集失败：优先沿用数据库中近期的真实信号，避免用空数据覆盖已采集快照。
+            List<CrawlerSignal> persisted = loadRecentSignalsFromDb();
+            if (!persisted.isEmpty()) {
+                rebuildSnapshot(persisted);
+                refreshEnterpriseRecords(persisted);
+                auditLogs.add("[WARN] crawler returned no fresh records; serving persisted signals count=" + persisted.size());
+                return;
+            }
             dailyRiskSnapshot = new DailyRiskSnapshot(0, "待采集",
                     "公开源暂未成功采集，本日风险测算等待 data-service 获取公开网站数据后刷新。",
                     collected, Instant.now());
             auditLogs.add("[WARN] daily crawler refresh completed without public source records");
             return;
         }
+        // 真实信号入库，并据此重建快照、告警、企业画像、知识库（全部持久化到 MySQL）。
+        persistSignals(availableSignals);
+        rebuildSnapshot(availableSignals);
+        persistRiskSnapshot(dailyRiskSnapshot);
+        persistPublicAlerts(availableSignals);
+        refreshEnterpriseRecords(availableSignals);
+        persistKnowledgeDocs(availableSignals);
+        maybeGenerateDailyReportAsync();
+        auditLogs.add("[INFO] daily crawler refresh persisted signals=" + availableSignals.size() + " score=" + dailyRiskSnapshot.score());
+    }
+
+    private void rebuildSnapshot(List<CrawlerSignal> availableSignals) {
         int score = availableSignals.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(0);
         String level = score >= 80 ? "高危" : score >= 60 ? "中危" : "低危";
         dailyRiskSnapshot = new DailyRiskSnapshot(score, level,
                 "AI 自动测算：" + level + "，本日风险分 " + score + "，由公开网站爬虫记录和风险规则共同计算。",
-                collected, Instant.now());
-        auditLogs.add("[INFO] daily crawler refresh and AI risk calculation completed score=" + score);
+                availableSignals, Instant.now());
+    }
+
+    // ---------------------------------------------------------------------
+    // 持久化与启动恢复（信息一律入库 MySQL，重启可恢复）
+    // ---------------------------------------------------------------------
+
+    private void recoverFromDatabase() {
+        try {
+            List<CrawlerSignal> persisted = loadRecentSignalsFromDb();
+            if (!persisted.isEmpty()) {
+                rebuildSnapshot(persisted);
+                auditLogs.add("[INFO] recovered " + persisted.size() + " crawler signals from MySQL on startup");
+            }
+        } catch (Exception ignored) {
+            // MySQL 暂不可达时等待首次爬虫同步。
+        }
+        loadAlertStatusesFromDb();
+        seedEnterpriseWatchlist();
+    }
+
+    private List<CrawlerSignal> loadRecentSignalsFromDb() {
+        try {
+            Instant since = Instant.now().minus(7, ChronoUnit.DAYS);
+            return repository.findRecentCrawlerSignals(since, 300).stream()
+                    .map(this::rowToSignal)
+                    .toList();
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private CrawlerSignal rowToSignal(Map<String, Object> row) {
+        return new CrawlerSignal(
+                stringValue(row.get("id")),
+                stringValue(row.get("source")),
+                stringValue(row.get("title")),
+                stringValue(row.get("dimension")),
+                asInt(row.get("riskScore")),
+                toInstant(row.get("fetchedAt")),
+                stringValue(row.get("sourceUrl")),
+                stringValue(row.getOrDefault("status", "OK")));
+    }
+
+    private void persistSignals(List<CrawlerSignal> signals) {
+        try {
+            for (CrawlerSignal s : signals) {
+                repository.upsertCrawlerSignal(s.id(), truncate(s.source(), 250), truncate(s.sourceUrl(), 1000),
+                        truncate(s.title(), 1000), truncate(s.dimension(), 60), categoryForSignal(s),
+                        riskSignalLabel(s.riskScore()), s.riskScore(), s.status(), s.fetchedAt());
+            }
+            repository.deleteOldCrawlerSignals(Instant.now().minus(7, ChronoUnit.DAYS));
+        } catch (Exception ignored) {
+            // 入库失败时仍以内存快照对外服务。
+        }
+    }
+
+    private void persistRiskSnapshot(DailyRiskSnapshot snapshot) {
+        try {
+            repository.insertRiskSnapshot(snapshot.score(), snapshot.level(), truncate(snapshot.summary(), 1000),
+                    snapshot.signals().size(), snapshot.calculatedAt());
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void persistPublicAlerts(List<CrawlerSignal> signals) {
+        try {
+            for (CrawlerSignal s : signals) {
+                String status = publicAlertStatuses.getOrDefault(s.id(), "未处理");
+                repository.upsertPublicAlert(s.id(), s.fetchedAt(), riskLevel(s.riskScore()),
+                        truncate(s.title(), 250), truncate(s.source(), 120), status, "risk-detail.html");
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void persistAlertStatus(String id, String status, RiskAlert alert) {
+        try {
+            repository.upsertPublicAlert(id, alert.time(), alert.level(), truncate(alert.title(), 250),
+                    truncate(alert.source(), 120), status, "risk-detail.html");
+            repository.updateAlertStatus(id, status);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void loadAlertStatusesFromDb() {
+        try {
+            repository.findAlerts(null, null, null, 500).forEach(row -> {
+                String id = stringValue(row.get("id"));
+                String status = stringValue(row.get("status"));
+                if (!id.isBlank() && !status.isBlank() && !"未处理".equals(status)) {
+                    publicAlertStatuses.put(id, status);
+                }
+            });
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void persistKnowledgeDocs(List<CrawlerSignal> signals) {
+        try {
+            for (CrawlerSignal s : signals) {
+                String content = s.title() + "\n来源：" + s.source() + "\n维度：" + s.dimension()
+                        + "\n原文：" + s.sourceUrl() + "\n规则评分：" + s.riskScore();
+                repository.upsertKnowledgeDoc(s.id(), categoryForSignal(s), truncate(s.title(), 1000), content,
+                        truncate(s.source(), 250), truncate(s.sourceUrl(), 1000), truncate(s.dimension(), 60),
+                        s.riskScore(), null, s.fetchedAt());
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String categoryForSignal(CrawlerSignal signal) {
+        String dimension = signal.dimension() == null ? "" : signal.dimension();
+        String source = signal.source() == null ? "" : signal.source();
+        String url = signal.sourceUrl() == null ? "" : signal.sourceUrl().toLowerCase(Locale.ROOT);
+        // URL 判定（ASCII，最稳健）：政策法规来自官方/监管/多边机构域名。
+        if (url.contains("federalregister.gov") || url.contains("wto.org") || url.contains("europa.eu")
+                || url.contains(".gov") || url.contains("customs") || url.contains("mofcom")) {
+            return KNOWLEDGE_POLICY;
+        }
+        if (dimension.contains("政策") || dimension.contains("法规") || dimension.contains("出口管制") || dimension.contains("合规")
+                || source.contains("政策") || source.contains("法规") || source.contains("商务部") || source.contains("管制")
+                || source.contains("federal") || source.contains("wto")) {
+            return KNOWLEDGE_POLICY;
+        }
+        return KNOWLEDGE_PUBLIC;
+    }
+
+    private String riskSignalLabel(int score) {
+        return score >= 75 ? "高危信号" : score >= 60 ? "中危信号" : "监控信号";
+    }
+
+    private void seedInternalKnowledgeDocs() {
+        // 内部知识库 SOP：管理维护的真实运营规程，统一存入 MySQL knowledge_doc（不再写死在代码逻辑里返回）。
+        List<String[]> internalDocs = List.of(
+                new String[]{"KD-SOP-001", "高危供应链告警处置 SOP", "高危供应链告警先核验公开源原文，再确认影响物料、库存覆盖天数和替代供应商，最后绑定负责人和闭环截止时间。", "处置"},
+                new String[]{"KD-SOP-002", "半导体供应链风险关注要点", "半导体供应链风险重点关注先进制程产能、封测排期、关键设备出口管制、物流节点拥堵和汇率/关税变化。", "半导体"},
+                new String[]{"KD-SOP-003", "公开源关键词联动责任人规则", "当公开源出现关税、罢工、港口拥堵、制裁、短缺等关键词时，优先同步采购、物流、合规三类责任人。", "处置"},
+                new String[]{"KD-SOP-004", "管理层风险报告写作规范", "管理层报告需要给出事实来源、影响范围、评分依据、可选方案、负责人和闭环时间。", "报告"}
+        );
+        try {
+            for (String[] doc : internalDocs) {
+                repository.upsertKnowledgeDoc(doc[0], KNOWLEDGE_INTERNAL, doc[1], doc[2],
+                        "SemiRisk 内部知识库", "", doc[3], 0, null, Instant.now());
+            }
+        } catch (Exception ignored) {
+            // MySQL 不可达时 localKnowledgeLines 会使用内存兜底文案。
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 企业画像：真实公开主体观察名单 + 实时公开源事件（工商权威字段待接入，不伪造）
+    // ---------------------------------------------------------------------
+
+    /** 公开半导体供应链主体观察名单：名称/行业/总部为公开事实；风险与事件来自实时爬取。 */
+    private static final String[][] ENTERPRISE_WATCHLIST = {
+            {"台积电 TSMC", "晶圆代工", "中国台湾·新竹"},
+            {"中芯国际 SMIC", "晶圆代工", "上海"},
+            {"长江存储 YMTC", "存储芯片制造", "武汉"},
+            {"ASML", "光刻设备", "荷兰·费尔德霍芬"},
+            {"应用材料 Applied Materials", "半导体设备", "美国·加州"},
+            {"英伟达 NVIDIA", "芯片设计", "美国·加州"},
+            {"三星电子 Samsung", "存储/晶圆制造", "韩国·水原"},
+            {"马士基 Maersk", "航运物流", "丹麦·哥本哈根"}
+    };
+
+    private void seedEnterpriseWatchlist() {
+        try {
+            if (repository.findEnterpriseRecords(1).isEmpty()) {
+                for (String[] entity : ENTERPRISE_WATCHLIST) {
+                    String id = "ENT-" + UUID.nameUUIDFromBytes(entity[0].getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
+                    repository.upsertEnterpriseRecord(id, entity[0], "", entity[1], entity[2], 0, "待采集",
+                            "公开主体观察名单 + 公开源事件", "待接入权威源", "[]", "[]", Instant.now());
+                }
+                auditLogs.add("[INFO] enterprise watchlist seeded into MySQL count=" + ENTERPRISE_WATCHLIST.length);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void refreshEnterpriseRecords(List<CrawlerSignal> signals) {
+        try {
+            List<Map<String, Object>> records = repository.findEnterpriseRecords(100);
+            for (Map<String, Object> record : records) {
+                String name = stringValue(record.get("name"));
+                String industry = stringValue(record.get("industry"));
+                List<CrawlerSignal> matched = signals.stream()
+                        .filter(signal -> signalMatches(signal, name) || signalMatches(signal, industry))
+                        .limit(8)
+                        .toList();
+                int score = matched.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(0);
+                String eventsJson = writeJson(matched.stream().map(s -> s.fetchedAt() + " " + s.title()).toList());
+                String signalsJson = writeJson(matched.stream().map(this::enterpriseSignal).toList());
+                repository.upsertEnterpriseRecord(stringValue(record.get("id")), name, stringValue(record.get("creditCode")),
+                        industry, stringValue(record.get("location")), score, riskLevel(score),
+                        "公开主体观察名单 + 公开源事件", "待接入权威源", eventsJson, signalsJson, Instant.now());
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception ignored) {
+            return "[]";
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T readJson(Object value, TypeReference<T> type, T fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return objectMapper.readValue(String.valueOf(value), type);
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private String truncate(String value, int max) {
+        if (value == null) {
+            return "";
+        }
+        return value.length() <= max ? value : value.substring(0, max);
+    }
+
+    private Instant toInstant(Object value) {
+        if (value == null) {
+            return Instant.now();
+        }
+        if (value instanceof Instant instant) {
+            return instant;
+        }
+        if (value instanceof java.sql.Timestamp timestamp) {
+            return timestamp.toInstant();
+        }
+        if (value instanceof java.time.LocalDateTime localDateTime) {
+            return localDateTime.atZone(java.time.ZoneId.systemDefault()).toInstant();
+        }
+        try {
+            return Instant.parse(String.valueOf(value));
+        } catch (Exception ignored) {
+            return Instant.now();
+        }
     }
 
     public Optional<UserAccount> authenticate(String username, String password) {
@@ -183,6 +481,7 @@ public class SemiRiskStore {
                     .findFirst()
                     .map(alert -> {
                         publicAlertStatuses.put(id, status);
+                        persistAlertStatus(id, status, alert);
                         auditLogs.add("[INFO] public alert " + id + " marked as " + status);
                         return new RiskAlert(alert.id(), alert.time(), alert.level(), alert.title(), alert.source(), alert.sourceUrl(), status, alert.target());
                     })
@@ -208,16 +507,42 @@ public class SemiRiskStore {
         return task;
     }
 
-    public UploadTask advanceUpload(String id) {
+    public UploadTask completeUpload(String id, int rows, List<String> warnings) {
         UploadTask task = uploadTasks.get(id);
         if (task == null) {
             throw new IllegalArgumentException("上传任务不存在");
         }
-        int rows = Math.max(task.rows(), ThreadLocalRandom.current().nextInt(120, 1300));
-        UploadTask done = new UploadTask(task.id(), task.filename(), task.size(), "导入成功", task.createdAt(), rows,
-                List.of("[WARN] 缺失字段 lead_time_days 已按临近均值填充", "[INFO] 供应商实体语义归并完成"));
+        String status = rows > 0 ? "导入成功" : "无有效数据";
+        UploadTask done = new UploadTask(task.id(), task.filename(), task.size(), status, task.createdAt(), rows,
+                warnings == null ? List.of() : warnings);
         uploadTasks.put(id, done);
+        auditLogs.add("[INFO] upload " + id + " parsed rows=" + rows);
         return done;
+    }
+
+    public Optional<UploadTask> uploadTask(String id) {
+        return Optional.ofNullable(uploadTasks.get(id));
+    }
+
+    /** 上传处理 SSE 的真实日志行，反映文件接收、MinIO 落库与真实解析结果。 */
+    public List<String> uploadLogLines(String id) {
+        UploadTask task = (id == null || id.isBlank())
+                ? uploadTasks.values().stream().max(Comparator.comparing(UploadTask::createdAt)).orElse(null)
+                : uploadTasks.get(id);
+        List<String> lines = new ArrayList<>();
+        if (task == null) {
+            lines.add("[INFO] 暂无上传任务，等待文件上传后开始处理");
+            return lines;
+        }
+        lines.add("[INFO] 接收文件 " + task.filename() + "（" + task.size() + " 字节），校验大小与格式");
+        lines.add("[INFO] 文件已写入 MinIO 对象存储，便于后续解析与预览");
+        lines.add("[INFO] 当前任务状态：" + task.status());
+        if (task.rows() > 0) {
+            lines.add("[INFO] 真实解析数据行 " + task.rows() + " 行，已抽取供应商/物料/航线字段");
+        }
+        task.warnings().forEach(lines::add);
+        lines.add("[INFO] 处理流程结束");
+        return lines;
     }
 
     public List<UploadTask> uploadTasks() {
@@ -237,7 +562,7 @@ public class SemiRiskStore {
         if (job == null) {
             throw new IllegalArgumentException("报告任务不存在");
         }
-        int progress = Math.min(100, job.progress() + ThreadLocalRandom.current().nextInt(18, 34));
+        int progress = Math.min(100, job.progress() + 34);
         String status = progress >= 100 ? "已完成" : "生成中";
         String step = switch (Math.min(progress / 25, 4)) {
             case 0 -> "聚合风险事件与供应商画像";
@@ -254,6 +579,102 @@ public class SemiRiskStore {
 
     public Optional<ReportJob> reportJob(String id) {
         return Optional.ofNullable(reportJobs.get(id));
+    }
+
+    public List<String> aiReportLines(String id, String template, String language) {
+        String type = normalizeReportTemplate(template);
+        List<CrawlerSignal> signals = availableSignals();
+        List<String> context = reportContext(type, signals);
+        AiAnswer aiAnswer = callDeepSeek(reportPrompt(type, language), context);
+        List<String> lines = new ArrayList<>();
+        lines.add(reportTitle(type));
+        lines.add("报告编号：" + id);
+        lines.add("写作方式：AI 结合公开源、风险规则、企业画像和处置 SOP 生成");
+        lines.add("AI状态：" + aiAnswer.status());
+        if (!aiAnswer.answer().isBlank()) {
+            splitAnswer(aiAnswer.answer()).forEach(lines::add);
+        } else {
+            lines.addAll(fallbackReportLines(type, signals));
+        }
+        return lines;
+    }
+
+    private String normalizeReportTemplate(String template) {
+        if ("supply-chain".equalsIgnoreCase(template)) {
+            return "supply-chain";
+        }
+        if ("enterprise-dd".equalsIgnoreCase(template)) {
+            return "enterprise-dd";
+        }
+        return "risk-assessment";
+    }
+
+    private String reportTitle(String type) {
+        return switch (type) {
+            case "supply-chain" -> "SemiRisk AI 供应链分析报告";
+            case "enterprise-dd" -> "SemiRisk AI 企业尽调报告";
+            default -> "SemiRisk AI 风险评估报告";
+        };
+    }
+
+    private String reportPrompt(String type, String language) {
+        String lang = language == null || language.isBlank() ? "中文" : language;
+        return switch (type) {
+            case "supply-chain" -> "请用" + lang + "撰写供应链分析报告，聚焦物流路径、供应商韧性、库存影响、替代方案和协同动作。要求分段清晰，给出结论、证据、影响和处置建议。";
+            case "enterprise-dd" -> "请用" + lang + "撰写企业尽调报告，聚焦企业主体、信用风险、经营稳定性、公开源事件、合作建议和需人工核验事项。要求分段清晰。";
+            default -> "请用" + lang + "撰写风险评估报告，聚焦风险评分、公开源事实、影响范围、研判依据、处置优先级和闭环跟踪指标。要求分段清晰。";
+        };
+    }
+
+    private List<String> reportContext(String type, List<CrawlerSignal> signals) {
+        List<String> context = new ArrayList<>();
+        DailyRiskSnapshot snapshot = dailyRiskSnapshot;
+        context.add("综合评分：" + snapshot.score() + " / 等级：" + snapshot.level() + " / 摘要：" + snapshot.summary());
+        context.add("报告类型：" + reportTitle(type));
+        switch (type) {
+            case "supply-chain" -> {
+                gisRoutes(gisPoints(signals)).stream().limit(8).forEach(route -> context.add("物流路径：" + route.get("name") + " / 风险 " + route.get("riskIndex")));
+                dimensionScores(signals).forEach(item -> context.add("供应链维度：" + item.get("name") + " / 评分 " + item.get("value")));
+            }
+            case "enterprise-dd" -> enterpriseRecordsForReport(5).forEach(profile -> context.add("企业画像：" + profile.get("name") + " / " + profile.get("industry") + " / 风险 " + profile.get("riskScore") + " / " + profile.get("creditLevel") + " / 工商：待接入权威源"));
+            default -> {
+                context.add("高危信号数：" + signals.stream().filter(signal -> signal.riskScore() >= 80).count());
+                context.add("中危信号数：" + signals.stream().filter(signal -> signal.riskScore() >= 60 && signal.riskScore() < 80).count());
+            }
+        }
+        signals.stream().limit(10).forEach(signal -> context.add("公开源：" + signal.riskScore() + " | " + signal.source() + " | " + signal.dimension() + " | " + signal.title() + " | " + signal.sourceUrl()));
+        context.addAll(localKnowledgeLines());
+        return context;
+    }
+
+    private List<String> fallbackReportLines(String type, List<CrawlerSignal> signals) {
+        int score = dailyRiskSnapshot.score();
+        long high = signals.stream().filter(signal -> signal.riskScore() >= 80).count();
+        long mid = signals.stream().filter(signal -> signal.riskScore() >= 60 && signal.riskScore() < 80).count();
+        List<String> lines = new ArrayList<>();
+        switch (type) {
+            case "supply-chain" -> {
+                lines.add("一、供应链结论：当前综合风险 " + score + "，高危路径/事件 " + high + " 条，中危 " + mid + " 条。");
+                lines.add("二、路径研判：重点关注跨境港口、封测排期、关键物料交付窗口和转运成本。");
+                gisRoutes(gisPoints(signals)).stream().limit(6).forEach(route -> lines.add("路径：" + route.get("name") + "，风险指数 " + route.get("riskIndex") + "。"));
+                lines.add("三、协同建议：采购确认替代供应商，物流确认改港/改线方案，销售同步客户交付风险。");
+            }
+            case "enterprise-dd" -> {
+                List<Map<String, Object>> records = enterpriseRecordsForReport(5);
+                lines.add("一、尽调结论：企业画像库（公开主体观察名单 + 公开源事件）已纳入 " + records.size() + " 家主体，工商权威字段待接入权威源，公开源事件用于风险交叉核验。");
+                records.forEach(profile -> lines.add("主体：" + profile.get("name") + "，行业 " + profile.get("industry") + "，风险 " + profile.get("riskScore") + "，等级 " + profile.get("creditLevel") + "，工商：待接入权威源。"));
+                lines.add("二、核验建议：补充工商、司法、失信、舆情和供应商准入材料，未核验前不建议扩大授信。");
+                lines.add("三、合作建议：高危主体走短周期订单和预警监控，中低危主体保留月度复盘。");
+            }
+            default -> {
+                lines.add("一、风险结论：当前综合评分 " + score + "，等级 " + dailyRiskSnapshot.level() + "。");
+                lines.add("二、评分依据：公开源有效信号 " + signals.size() + " 条，高危 " + high + " 条，中危 " + mid + " 条。");
+                signals.stream().limit(8).forEach(signal -> lines.add("事件：" + signal.source() + " / " + signal.dimension() + " / " + signal.riskScore() + " / " + signal.title()));
+                lines.add("三、处置建议：先核验高分公开源原文，再转入告警工单并绑定负责人和截止时间。");
+            }
+        }
+        lines.add("四、闭环指标：跟踪未处理告警数、高危信号变化、供应商风险分、物流节点等待时间和报告引用可信度。");
+        return lines;
     }
 
     public List<SystemUser> systemUsers() {
@@ -292,6 +713,16 @@ public class SemiRiskStore {
     }
 
     public List<String> auditLogs() {
+        try {
+            List<Map<String, Object>> rows = repository.findAuditLogs(200);
+            if (!rows.isEmpty()) {
+                return rows.stream()
+                        .map(row -> stringValue(row.get("createdAt")) + " [" + stringValue(row.get("level")) + "] " + stringValue(row.get("message")))
+                        .toList();
+            }
+        } catch (Exception ignored) {
+            // MySQL 不可达时回退内存审计日志。
+        }
         String today = LocalDate.now().toString();
         return auditLogs.stream()
                 .map(log -> log.matches("^\\d{4}-\\d{2}-\\d{2}.*") ? log : today + " " + log)
@@ -309,45 +740,144 @@ public class SemiRiskStore {
         long handled = publicSignalAlerts().stream().filter(alert -> "处理中".equals(alert.status()) || "已处理".equals(alert.status())).count();
         long totalEvents = availableSignals.size();
         String closureRate = totalEvents == 0 ? "0%" : String.format(Locale.ROOT, "%.1f%%", handled * 100.0 / totalEvents);
-        return Map.of(
-                "kpis", List.of(
-                        Map.of("name", "公开源事件数", "value", availableSignals.size(), "trend", "公开网站"),
-                        Map.of("name", "今日新增", "value", snapshot.signals().size(), "trend", "爬虫记录"),
-                        Map.of("name", "高危信号", "value", highCount, "trend", "规则评分"),
-                        Map.of("name", "闭环处理率", "value", closureRate, "trend", "告警处置")
-                ),
-                "hotspots", gisPoints(availableSignals).stream().limit(4).toList(),
-                "ranking", publicAlerts(availableSignals).stream().limit(5).toList(),
-                "materials", dimensionScores(availableSignals),
-                "stages", availableSignals.isEmpty()
-                        ? List.of("公开源采集:待采集", "规则评分:待采集", "AI测算:待采集", "处置闭环:待派发")
-                        : List.of("公开源采集:已完成", "规则评分:" + snapshot.level(), "AI测算:" + snapshot.level(), "处置闭环:待派发"),
-                "aiSummary", snapshot.summary(),
-                "dailyRisk", snapshot,
-                "dataMode", availableSignals.isEmpty() ? "WAITING_PUBLIC_SOURCE" : "PUBLIC_CRAWLED",
-                "dataSource", "semirisk-data-service 公开 RSS 采集",
-                "refreshedAt", Instant.now().toString()
-        );
+        Map<String, Object> dashboard = new LinkedHashMap<>();
+        dashboard.put("kpis", List.of(
+                Map.of("name", "公开源事件数", "value", availableSignals.size(), "trend", "公开网站"),
+                Map.of("name", "今日新增", "value", snapshot.signals().size(), "trend", "爬虫记录"),
+                Map.of("name", "高危信号", "value", highCount, "trend", "规则评分"),
+                Map.of("name", "闭环处理率", "value", closureRate, "trend", "告警处置")
+        ));
+        dashboard.put("hotspots", gisPoints(availableSignals).stream().limit(4).toList());
+        dashboard.put("ranking", publicAlerts(availableSignals).stream().limit(5).toList());
+        dashboard.put("materials", dimensionScores(availableSignals));
+        dashboard.put("stages", availableSignals.isEmpty()
+                ? List.of("公开源采集:待采集", "规则评分:待采集", "AI测算:待采集", "处置闭环:待派发")
+                : List.of("公开源采集:已完成", "规则评分:" + snapshot.level(), "AI测算:" + snapshot.level(), "处置闭环:待派发"));
+        dashboard.put("aiSummary", snapshot.summary());
+        dashboard.put("aiReport", latestAiReport());
+        dashboard.put("dailyRisk", snapshot);
+        dashboard.put("dataMode", availableSignals.isEmpty() ? "WAITING_PUBLIC_SOURCE" : "PUBLIC_CRAWLED");
+        dashboard.put("dataSource", "semirisk-data-service 公开 RSS 采集");
+        dashboard.put("refreshedAt", Instant.now().toString());
+        return dashboard;
     }
 
     public Map<String, Object> riskAnalysis(String window) {
-        DailyRiskSnapshot snapshot = dailyRiskSnapshot;
-        List<CrawlerSignal> availableSignals = availableSignals();
-        return Map.of(
-                "window", window,
-                "score", snapshot.score(),
-                "summary", snapshot.summary(),
-                "dimensions", dimensionScores(availableSignals),
-                "sources", sourceScores(availableSignals),
-                "reasoning", availableSignals.isEmpty()
-                        ? List.of("数据输入: 公开源暂无成功采集记录", "逻辑关联: 暂停自动推理", "风险结论: 等待下一次爬虫刷新")
-                        : availableSignals.stream().limit(5).map(signal -> "公开源: " + signal.source() + " / " + signal.title()).toList(),
-                "solutions", List.of(
-                        Map.of("name", "人工复核公开源原文", "feasibility", availableSignals.isEmpty() ? 0 : 92),
-                        Map.of("name", "将高危信号转为告警工单", "feasibility", availableSignals.isEmpty() ? 0 : 84),
-                        Map.of("name", "按维度同步采购/物流负责人", "feasibility", availableSignals.isEmpty() ? 0 : 78)
-                )
-        );
+        String normalizedWindow = normalizeWindow(window);
+        String windowLabel = windowLabel(normalizedWindow);
+        List<CrawlerSignal> allSignals = availableSignals();
+        List<CrawlerSignal> availableSignals = windowedSignals(allSignals, normalizedWindow);
+        int score = windowScore(availableSignals, normalizedWindow);
+        String level = riskLevel(score);
+        long highCount = availableSignals.stream().filter(signal -> signal.riskScore() >= 80).count();
+        long midCount = availableSignals.stream().filter(signal -> signal.riskScore() >= 60 && signal.riskScore() < 80).count();
+        double average = availableSignals.stream().mapToInt(CrawlerSignal::riskScore).average().orElse(0);
+        Map<String, Object> analysis = new LinkedHashMap<>();
+        analysis.put("window", normalizedWindow);
+        analysis.put("windowLabel", windowLabel);
+        analysis.put("score", score);
+        analysis.put("level", level);
+        analysis.put("summary", availableSignals.isEmpty()
+                ? windowLabel + "暂无公开源命中，当前风险研判等待下一轮爬虫刷新。"
+                : windowLabel + "纳入 " + availableSignals.size() + " 条公开源信号，综合评分 " + score + "（" + level + "），高危 " + highCount + " 条，中危 " + midCount + " 条。");
+        analysis.put("dimensions", dimensionScores(availableSignals));
+        analysis.put("sources", sourceScores(availableSignals));
+        analysis.put("metrics", Map.of(
+                "signalCount", availableSignals.size(),
+                "allSignalCount", allSignals.size(),
+                "highCount", highCount,
+                "midCount", midCount,
+                "avgScore", Math.round(average),
+                "sourceCount", availableSignals.stream().map(CrawlerSignal::source).distinct().count(),
+                "dimensionCount", availableSignals.stream().map(CrawlerSignal::dimension).distinct().count()
+        ));
+        analysis.put("timeline", availableSignals.stream().limit(8).map(signal -> Map.<String, Object>of(
+                "time", signal.fetchedAt().toString(),
+                "source", signal.source(),
+                "dimension", signal.dimension(),
+                "score", signal.riskScore(),
+                "title", signal.title(),
+                "url", signal.sourceUrl()
+        )).toList());
+        analysis.put("reasoning", availableSignals.isEmpty()
+                ? List.of("数据输入: 公开源暂无成功采集记录", "逻辑关联: 暂停自动推理", "风险结论: 等待下一次爬虫刷新")
+                : List.of(
+                "时间窗口: " + windowLabel + "，使用 " + windowMethod(normalizedWindow),
+                "风险密度: " + availableSignals.size() + " 条信号来自 " + availableSignals.stream().map(CrawlerSignal::source).distinct().count() + " 个公开源",
+                "维度聚焦: " + topDimension(availableSignals),
+                "最高信号: " + availableSignals.get(0).source() + " / " + availableSignals.get(0).title()
+        ));
+        analysis.put("solutions", List.of(
+                Map.of("name", "人工复核公开源原文", "feasibility", availableSignals.isEmpty() ? 0 : ("24h".equals(normalizedWindow) ? 94 : 88), "owner", "风险分析师", "deadline", "24h".equals(normalizedWindow) ? "2小时内" : "当日"),
+                Map.of("name", "将高危信号转为告警工单", "feasibility", availableSignals.isEmpty() ? 0 : 86, "owner", "预警运营", "deadline", "1个工作日"),
+                Map.of("name", "按维度同步采购/物流负责人", "feasibility", availableSignals.isEmpty() ? 0 : ("30d".equals(normalizedWindow) ? 91 : 78), "owner", "供应链协同", "deadline", "周会前")
+        ));
+        return analysis;
+    }
+
+    private String normalizeWindow(String window) {
+        if ("7d".equalsIgnoreCase(window)) {
+            return "7d";
+        }
+        if ("30d".equalsIgnoreCase(window)) {
+            return "30d";
+        }
+        return "24h";
+    }
+
+    private String windowLabel(String window) {
+        return switch (window) {
+            case "7d" -> "近7天";
+            case "30d" -> "近30天";
+            default -> "近24小时";
+        };
+    }
+
+    private String windowMethod(String window) {
+        return switch (window) {
+            case "7d" -> "最高分、平均分与信号密度加权，突出一周内重复出现的风险";
+            case "30d" -> "最高分、平均分与维度覆盖度加权，突出月度结构性风险";
+            default -> "最高风险信号优先，突出即时告警处置";
+        };
+    }
+
+    private List<CrawlerSignal> windowedSignals(List<CrawlerSignal> signals, String window) {
+        if (signals.isEmpty()) {
+            return List.of();
+        }
+        long hours = switch (window) {
+            case "7d" -> 24L * 7L;
+            case "30d" -> 24L * 30L;
+            default -> 24L;
+        };
+        Instant cutoff = Instant.now().minus(hours, ChronoUnit.HOURS);
+        List<CrawlerSignal> filtered = signals.stream()
+                .filter(signal -> !signal.fetchedAt().isBefore(cutoff))
+                .toList();
+        return filtered.isEmpty() ? signals.stream().limit(Math.min(6, signals.size())).toList() : filtered;
+    }
+
+    private int windowScore(List<CrawlerSignal> signals, String window) {
+        if (signals.isEmpty()) {
+            return 0;
+        }
+        int max = signals.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(0);
+        double avg = signals.stream().mapToInt(CrawlerSignal::riskScore).average().orElse(0);
+        long high = signals.stream().filter(signal -> signal.riskScore() >= 80).count();
+        long dimensions = signals.stream().map(CrawlerSignal::dimension).distinct().count();
+        int score = switch (window) {
+            case "7d" -> (int) Math.round(max * 0.68 + avg * 0.32 + Math.min(8, high * 2));
+            case "30d" -> (int) Math.round(max * 0.55 + avg * 0.25 + Math.min(18, dimensions * 4));
+            default -> max;
+        };
+        return Math.max(0, Math.min(100, score));
+    }
+
+    private String topDimension(List<CrawlerSignal> signals) {
+        return dimensionScores(signals).stream()
+                .max(Comparator.comparing(item -> asInt(item.get("value"))))
+                .map(item -> item.get("name") + " / " + item.get("value"))
+                .orElse("暂无维度");
     }
 
     public Map<String, Object> riskDetail(String id) {
@@ -560,22 +1090,145 @@ public class SemiRiskStore {
     }
 
     public Map<String, Object> enterprise(String keyword) {
-        String name = keyword == null || keyword.isBlank() ? "请输入企业名称后搜索" : keyword;
-        List<CrawlerSignal> relatedSignals = availableSignals().stream()
-                .filter(signal -> keyword == null || keyword.isBlank() || signalMatches(signal, keyword))
+        String q = keyword == null ? "" : keyword.trim();
+        List<CrawlerSignal> available = availableSignals();
+        // 1) 优先命中数据库企业画像（观察名单 / 历史搜索，均来自真实来源）。
+        Map<String, Object> base = q.isBlank() ? repositoryFirstEnterprise() : findEnterpriseRecord(q).orElse(null);
+        boolean fromDb = base != null;
+        String name = base != null ? stringValue(base.get("name")) : (q.isBlank() ? "请输入企业名称后搜索" : q);
+        String industry = base != null ? stringValue(base.get("industry")) : "";
+        List<CrawlerSignal> related = available.stream()
+                .filter(signal -> q.isBlank()
+                        ? signalMatches(signal, name) || (!industry.isBlank() && signalMatches(signal, industry))
+                        : signalMatches(signal, q) || (!industry.isBlank() && signalMatches(signal, industry)))
+                .limit(8)
                 .toList();
-        int score = relatedSignals.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(0);
+        int score = Math.max(base != null ? asInt(base.get("riskScore")) : 0,
+                related.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(0));
+        String resolvedIndustry = !industry.isBlank() ? industry
+                : related.stream().findFirst().map(CrawlerSignal::dimension).orElse("待公开源确认");
+        String creditCode = base != null && !stringValue(base.get("creditCode")).isBlank()
+                ? stringValue(base.get("creditCode")) : "待接入权威源";
+
+        Map<String, Object> profile = new LinkedHashMap<>();
+        profile.put("name", name);
+        profile.put("creditCode", creditCode);
+        profile.put("industry", resolvedIndustry);
+        profile.put("location", base != null ? stringValue(base.get("location")) : "待核验");
+        profile.put("riskScore", score);
+        profile.put("creditLevel", riskLevel(score));
+        // 工商权威字段：无真实权威数据源，统一标注待接入，绝不伪造。
+        profile.put("business", buildBusiness(creditCode, related.isEmpty()));
+        profile.put("radar", related.isEmpty() ? List.of() : dimensionRadar(related));
+        profile.put("topology", related.isEmpty() ? List.of() : List.of("公开源情报", name, "SemiRisk 风控工作台"));
+        profile.put("events", related.stream().map(signal -> signal.fetchedAt() + " " + signal.title()).toList());
+        profile.put("publicSignals", related.stream().map(this::enterpriseSignal).toList());
+        profile.put("internetSearches", internetSearches(name));
+        profile.put("catalog", enterpriseCatalog());
+        profile.put("registryStatus", "待接入权威源");
+        profile.put("sourceMode", fromDb ? "公开主体观察名单 + 公开源事件" : "公开源事件聚合（待核验主体）");
+        profile.put("matchStatus", fromDb ? "已命中企业画像库（工商权威字段待接入）"
+                : (related.isEmpty() ? "未命中本地库，已提供互联网查询入口；工商权威字段待接入"
+                : "未命中本地库，已用公开源事件生成待核验画像；工商权威字段待接入"));
+        // 持久化用户搜索且命中真实公开源事件的新主体（不伪造工商字段）。
+        if (!q.isBlank() && !fromDb && !related.isEmpty()) {
+            persistSearchedEnterprise(name, resolvedIndustry, score, related);
+        }
+        return profile;
+    }
+
+    private Map<String, Object> buildBusiness(String creditCode, boolean noSignal) {
+        Map<String, Object> business = new LinkedHashMap<>();
+        business.put("legalPerson", "待接入权威源");
+        business.put("capital", "待接入权威源");
+        business.put("founded", "待接入权威源");
+        business.put("type", "待接入权威源");
+        business.put("creditCode", creditCode);
+        business.put("status", noSignal ? "未命中公开源事件" : "已命中公开源事件");
+        return business;
+    }
+
+    private Optional<Map<String, Object>> findEnterpriseRecord(String keyword) {
+        try {
+            return repository.findEnterpriseRecordByKeyword(keyword).stream().findFirst();
+        } catch (Exception ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private Map<String, Object> repositoryFirstEnterprise() {
+        try {
+            return repository.findEnterpriseRecords(1).stream().findFirst().orElse(null);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private List<Integer> dimensionRadar(List<CrawlerSignal> related) {
+        List<Integer> radar = new ArrayList<>();
+        dimensionScores(related).stream().limit(5).forEach(item -> radar.add(asInt(item.get("value"))));
+        while (radar.size() < 3 && !related.isEmpty()) {
+            radar.add(related.get(0).riskScore());
+        }
+        return radar;
+    }
+
+    private void persistSearchedEnterprise(String name, String industry, int score, List<CrawlerSignal> related) {
+        try {
+            String id = "ENT-" + UUID.nameUUIDFromBytes(name.getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
+            String eventsJson = writeJson(related.stream().map(s -> s.fetchedAt() + " " + s.title()).toList());
+            String signalsJson = writeJson(related.stream().map(this::enterpriseSignal).toList());
+            repository.upsertEnterpriseRecord(id, truncate(name, 250), "", truncate(industry, 120), "待核验",
+                    score, riskLevel(score), "公开源事件聚合（用户搜索）", "待接入权威源", eventsJson, signalsJson, Instant.now());
+        } catch (Exception ignored) {
+        }
+    }
+
+    public List<Map<String, Object>> enterpriseCatalog() {
+        try {
+            return repository.findEnterpriseRecords(50).stream()
+                    .map(record -> {
+                        Map<String, Object> item = new LinkedHashMap<>();
+                        item.put("name", record.get("name"));
+                        item.put("creditCode", stringValue(record.get("creditCode")).isBlank() ? "待接入权威源" : record.get("creditCode"));
+                        item.put("industry", record.get("industry"));
+                        item.put("riskScore", record.get("riskScore"));
+                        item.put("creditLevel", record.get("creditLevel"));
+                        item.put("location", record.get("location"));
+                        return item;
+                    })
+                    .toList();
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private List<Map<String, Object>> enterpriseRecordsForReport(int limit) {
+        try {
+            return repository.findEnterpriseRecords(limit);
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private Map<String, Object> enterpriseSignal(CrawlerSignal signal) {
         return Map.of(
-                "name", name,
-                "creditCode", "公开工商数据源未接入",
-                "cooperationYears", "待内部 ERP 同步",
-                "industry", relatedSignals.stream().findFirst().map(CrawlerSignal::dimension).orElse("待公开源确认"),
-                "riskScore", score,
-                "creditLevel", riskLevel(score),
-                "business", Map.of("legalPerson", "待公开工商接口返回", "capital", "待公开工商接口返回", "founded", "待公开工商接口返回", "type", "待公开工商接口返回", "status", "待公开工商接口返回"),
-                "radar", List.of(score, Math.max(0, score - 8), Math.max(0, score - 16), Math.max(0, score - 12), score),
-                "topology", List.of("公开网站信号", name, "SemiRisk 风控工作台"),
-                "events", relatedSignals.stream().limit(6).map(signal -> signal.fetchedAt() + " " + signal.title()).toList()
+                "id", signal.id(),
+                "title", signal.title(),
+                "source", signal.source(),
+                "sourceUrl", signal.sourceUrl(),
+                "riskScore", signal.riskScore(),
+                "dimension", signal.dimension(),
+                "fetchedAt", signal.fetchedAt().toString()
+        );
+    }
+
+    private List<Map<String, String>> internetSearches(String keyword) {
+        String encoded = URLEncoder.encode(keyword == null ? "" : keyword, StandardCharsets.UTF_8);
+        return List.of(
+                Map.of("name", "Bing 新闻", "url", "https://www.bing.com/news/search?q=" + encoded),
+                Map.of("name", "Google News", "url", "https://news.google.com/search?q=" + encoded),
+                Map.of("name", "企查查公开搜索", "url", "https://www.qcc.com/web/search?key=" + encoded)
         );
     }
 
@@ -597,36 +1250,86 @@ public class SemiRiskStore {
         List<CrawlerSignal> matchedSignals = availableSignals().stream()
                 .filter(signal -> signalMatches(signal, q) || q.isBlank())
                 .toList();
+        List<Map<String, Object>> results = new ArrayList<>(matchedSignals.stream().limit(24).map(signal -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", signal.id());
+            item.put("title", signal.title());
+            item.put("format", "WEB");
+            item.put("size", "公开网页");
+            item.put("category", KNOWLEDGE_PUBLIC);
+            item.put("similarity", signal.riskScore());
+            item.put("summary", signal.source() + " / " + signal.dimension() + " / " + signal.fetchedAt());
+            item.put("url", signal.sourceUrl());
+            return item;
+        }).toList());
+        results.addAll(knowledgeDocResults(q, KNOWLEDGE_POLICY, 6));
+        results.addAll(knowledgeDocResults(q, KNOWLEDGE_INTERNAL, 6));
         return Map.of(
                 "query", q,
-                "searchEngine", "LocalPublicCrawler",
-                "categories", List.of("公开源文章(" + matchedSignals.size() + ")", "内部知识库(待接入)", "政策法规库(待接入)"),
-                "tags", List.of("#半导体", "#物流", "#供应链", "#公开源", "#风险信号"),
-                "results", matchedSignals.stream().limit(30).map(signal -> Map.of(
-                        "id", signal.id(),
-                        "title", signal.title(),
-                        "format", "WEB",
-                        "size", "公开网页",
-                        "similarity", signal.riskScore(),
-                        "summary", signal.source() + " / " + signal.dimension() + " / " + signal.fetchedAt(),
-                        "url", signal.sourceUrl()
-                )).toList()
+                "searchEngine", "LocalPublicCrawler + MySQL knowledge_doc",
+                "categories", knowledgeCategories("公开源文章", matchedSignals.size()),
+                "tags", List.of("#半导体", "#物流", "#供应链", "#政策法规", "#公开源"),
+                "results", results
         );
     }
 
     public Map<String, Object> knowledge(String query, List<Map<String, Object>> indexedResults) {
         String q = query == null || query.isBlank() ? "半导体物流中断" : query;
-        List<Map<String, Object>> results = normalizeIndexedKnowledgeResults(indexedResults);
-        if (results.isEmpty()) {
+        List<Map<String, Object>> esResults = normalizeIndexedKnowledgeResults(indexedResults);
+        if (esResults.isEmpty()) {
             return knowledge(q);
         }
+        List<Map<String, Object>> results = new ArrayList<>(esResults);
+        results.addAll(knowledgeDocResults(q, KNOWLEDGE_POLICY, 6));
+        results.addAll(knowledgeDocResults(q, KNOWLEDGE_INTERNAL, 6));
         return Map.of(
                 "query", q,
-                "searchEngine", "Elasticsearch",
-                "categories", List.of("ES 公开源索引(" + results.size() + ")", "内部知识库(待接入)", "政策法规库(待接入)"),
-                "tags", List.of("#半导体", "#物流", "#供应链", "#Elasticsearch", "#RAG"),
+                "searchEngine", "Elasticsearch + MySQL knowledge_doc",
+                "categories", knowledgeCategories("ES 公开源索引", esResults.size()),
+                "tags", List.of("#半导体", "#物流", "#供应链", "#政策法规", "#RAG"),
                 "results", results
         );
+    }
+
+    private List<Map<String, Object>> knowledgeDocResults(String query, String category, int limit) {
+        try {
+            String keyword = query == null || query.isBlank() ? null : query;
+            return repository.findKnowledgeDocsByCategory(category, limit).stream()
+                    .filter(doc -> keyword == null
+                            || stringValue(doc.get("title")).contains(keyword)
+                            || stringValue(doc.get("content")).contains(keyword)
+                            || category.equals(KNOWLEDGE_INTERNAL))
+                    .map(doc -> {
+                        Map<String, Object> item = new LinkedHashMap<>();
+                        item.put("id", stringValue(doc.get("id")));
+                        item.put("title", stringValue(doc.get("title")));
+                        item.put("format", category.equals(KNOWLEDGE_POLICY) ? "POLICY" : "DOC");
+                        item.put("size", category);
+                        item.put("category", category);
+                        item.put("similarity", asInt(doc.get("riskScore")));
+                        item.put("summary", stringValue(doc.get("source")) + " / " + stringValue(doc.get("dimension")) + " / " + truncate(stringValue(doc.get("content")), 60));
+                        item.put("url", stringValue(doc.get("sourceUrl")));
+                        return item;
+                    })
+                    .toList();
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private List<String> knowledgeCategories(String publicLabel, int publicCount) {
+        return List.of(
+                publicLabel + "(" + publicCount + ")",
+                "内部知识库(" + countKnowledge(KNOWLEDGE_INTERNAL) + ")",
+                "政策法规库(" + countKnowledge(KNOWLEDGE_POLICY) + ")");
+    }
+
+    private int countKnowledge(String category) {
+        try {
+            return repository.countKnowledgeDocsByCategory(category);
+        } catch (Exception ignored) {
+            return 0;
+        }
     }
 
     public Map<String, Object> askKnowledgeAgent(String question) {
@@ -653,26 +1356,19 @@ public class SemiRiskStore {
                 .map(signal -> signal.source() + " | " + signal.dimension() + " | " + signal.title() + " | " + signal.sourceUrl())
                 .toList());
         AiAnswer aiAnswer = callDeepSeek(q, context);
-        return Map.of(
-                "question", q,
-                "answer", aiAnswer.answer().isBlank() ? answer : aiAnswer.answer(),
-                "model", defaultAiModel,
-                "modelStatus", aiAnswer.status(),
-                "aiCalled", aiAnswer.called(),
-                "usage", aiAnswer.usage(),
-                "trace", aiAnswer.called()
-                        ? List.of("Query Rewrite", "Knowledge Retrieval", "DeepSeek Chat Completions", "Answer Synthesis")
-                        : List.of("Query Rewrite", "Knowledge Retrieval", "Risk Scoring", "Local Answer Synthesis"),
-                "citations", matched.stream().limit(5).map(signal -> Map.of(
+        List<Map<String, Object>> citations = matched.stream().limit(5).map(signal -> Map.<String, Object>of(
                         "id", signal.id(),
                         "title", signal.title(),
                         "source", signal.source(),
                         "sourceUrl", signal.sourceUrl(),
                         "score", signal.riskScore(),
                         "fetchedAt", signal.fetchedAt().toString()
-                )).toList(),
-                "answeredAt", Instant.now().toString()
-        );
+                )).toList();
+        return knowledgeAnswerPayload(q, aiAnswer.answer().isBlank() ? answer : aiAnswer.answer(), aiAnswer,
+                aiAnswer.called()
+                        ? List.of("Query Rewrite", "Knowledge Retrieval", "DeepSeek Chat Completions", "Answer Synthesis")
+                        : List.of("Query Rewrite", "Knowledge Retrieval", "Risk Scoring", "Local Answer Synthesis"),
+                citations);
     }
 
     public Map<String, Object> askKnowledgeAgent(String question, List<Map<String, Object>> indexedResults) {
@@ -692,17 +1388,7 @@ public class SemiRiskStore {
                 .map(result -> stringValue(result.get("source")) + " | " + stringValue(result.get("dimension")) + " | " + stringValue(result.get("title")) + " | " + stringValue(result.get("sourceUrl")))
                 .toList());
         AiAnswer aiAnswer = callDeepSeek(q, context);
-        return Map.of(
-                "question", q,
-                "answer", aiAnswer.answer().isBlank() ? answer : aiAnswer.answer(),
-                "model", defaultAiModel,
-                "modelStatus", aiAnswer.status(),
-                "aiCalled", aiAnswer.called(),
-                "usage", aiAnswer.usage(),
-                "trace", aiAnswer.called()
-                        ? List.of("Query Rewrite", "Elasticsearch Retrieval", "DeepSeek Chat Completions", "Answer Synthesis")
-                        : List.of("Query Rewrite", "Elasticsearch Retrieval", "Risk Scoring", "Local Answer Synthesis"),
-                "citations", results.stream().limit(5).map(result -> {
+        List<Map<String, Object>> citations = results.stream().limit(5).map(result -> {
                     Map<String, Object> citation = new HashMap<>();
                     citation.put("id", stringValue(result.get("id")));
                     citation.put("title", stringValue(result.get("title")));
@@ -712,9 +1398,58 @@ public class SemiRiskStore {
                     citation.put("fetchedAt", stringValue(result.get("fetchedAt")));
                     citation.put("searchEngine", "Elasticsearch");
                     return citation;
-                }).toList(),
-                "answeredAt", Instant.now().toString()
-        );
+                }).toList();
+        return knowledgeAnswerPayload(q, aiAnswer.answer().isBlank() ? answer : aiAnswer.answer(), aiAnswer,
+                aiAnswer.called()
+                        ? List.of("Query Rewrite", "Elasticsearch Retrieval", "DeepSeek Chat Completions", "Answer Synthesis")
+                        : List.of("Query Rewrite", "Elasticsearch Retrieval", "Risk Scoring", "Local Answer Synthesis"),
+                citations);
+    }
+
+    private Map<String, Object> knowledgeAnswerPayload(String question, String answer, AiAnswer aiAnswer, List<String> trace, List<Map<String, Object>> citations) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("question", question);
+        payload.put("answer", answer);
+        payload.put("sections", answerSections(answer, citations));
+        payload.put("nextActions", List.of("核验引用原文", "转入预警工单", "补充影响物料/供应商", "生成管理层报告"));
+        payload.put("model", defaultAiModel);
+        payload.put("modelStatus", aiAnswer.status());
+        payload.put("aiCalled", aiAnswer.called());
+        payload.put("usage", aiAnswer.usage());
+        payload.put("trace", trace);
+        payload.put("citations", citations);
+        payload.put("answeredAt", Instant.now().toString());
+        return payload;
+    }
+
+    private List<Map<String, Object>> answerSections(String answer, List<Map<String, Object>> citations) {
+        String clean = answer == null || answer.isBlank() ? "暂无可用回答。" : answer.trim();
+        List<String> paragraphs = splitAnswer(clean);
+        List<Map<String, Object>> sections = new ArrayList<>();
+        sections.add(Map.of(
+                "title", "结论",
+                "items", paragraphs.isEmpty() ? List.of(clean) : paragraphs.subList(0, Math.min(2, paragraphs.size()))
+        ));
+        List<String> basis = citations == null || citations.isEmpty()
+                ? List.of("知识库未返回可引用公开源，建议先检查采集任务。")
+                : citations.stream().limit(3).map(item -> stringValue(item.get("source")) + "：" + stringValue(item.get("title"))).toList();
+        sections.add(Map.of("title", "依据", "items", basis));
+        sections.add(Map.of(
+                "title", "处置建议",
+                "items", List.of("优先核验评分最高的公开源原文。", "确认影响物料、库存覆盖天数、替代供应商和责任人。", "将有效高危信号转为告警工单并进入闭环跟踪。")
+        ));
+        if (paragraphs.size() > 2) {
+            sections.add(Map.of("title", "补充说明", "items", paragraphs.subList(2, Math.min(6, paragraphs.size()))));
+        }
+        return sections;
+    }
+
+    private List<String> splitAnswer(String answer) {
+        return java.util.Arrays.stream(answer.replace("\r", "\n").split("\\n+|(?<=[。！？；])"))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .limit(8)
+                .toList();
     }
 
     private AiAnswer callDeepSeek(String question, List<String> contextLines) {
@@ -767,11 +1502,21 @@ public class SemiRiskStore {
     }
 
     private List<String> localKnowledgeLines() {
+        try {
+            List<Map<String, Object>> docs = repository.findKnowledgeDocsByCategory(KNOWLEDGE_INTERNAL, 20);
+            if (!docs.isEmpty()) {
+                return docs.stream()
+                        .map(doc -> "内部知识库 | " + stringValue(doc.get("dimension")) + " | " + stringValue(doc.get("title")) + "：" + stringValue(doc.get("content")))
+                        .toList();
+            }
+        } catch (Exception ignored) {
+            // MySQL 不可达时使用内存兜底（与 DB 种子内容一致）。
+        }
         return List.of(
-                "本地知识库 | SOP | 高危供应链告警先核验公开源原文，再确认影响物料、库存覆盖天数和替代供应商。",
-                "本地知识库 | 半导体 | 半导体供应链风险重点关注先进制程产能、封测排期、关键设备出口管制、物流节点拥堵和汇率/关税变化。",
-                "本地知识库 | 处置 | 当公开源出现关税、罢工、港口拥堵、制裁、短缺等关键词时，优先同步采购、物流、合规三类责任人。",
-                "本地知识库 | 报告 | 管理层报告需要给出事实来源、影响范围、评分依据、可选方案、负责人和闭环时间。"
+                "内部知识库 | 处置 | 高危供应链告警先核验公开源原文，再确认影响物料、库存覆盖天数和替代供应商。",
+                "内部知识库 | 半导体 | 半导体供应链风险重点关注先进制程产能、封测排期、关键设备出口管制、物流节点拥堵和汇率/关税变化。",
+                "内部知识库 | 处置 | 当公开源出现关税、罢工、港口拥堵、制裁、短缺等关键词时，优先同步采购、物流、合规三类责任人。",
+                "内部知识库 | 报告 | 管理层报告需要给出事实来源、影响范围、评分依据、可选方案、负责人和闭环时间。"
         );
     }
 
@@ -821,23 +1566,40 @@ public class SemiRiskStore {
     }
 
     public Map<String, Object> systemOverview() {
-        return Map.of(
-                "users", systemUsers(),
-                "roles", List.of("管理员", "分析师", "运营人员"),
-                "models", List.of(
-                        modelOverview(defaultAiModel, defaultAiEndpoint, 286),
-                        modelOverview("deepseek-chat", AiModelDefaults.DEFAULT_ENDPOINT, 344)
-                ),
-                "agents", List.of(
-                        Map.of("name", "舆情监控 Agent", "status", "运行中", "cron", "*/15 * * * *", "lastPull", Instant.now().minus(8, ChronoUnit.MINUTES).toString()),
-                        Map.of("name", "财务监视 Agent", "status", "运行中", "cron", "0 */1 * * *", "lastPull", Instant.now().minus(22, ChronoUnit.MINUTES).toString())
-                ),
-                "logs", auditLogs(),
-                "dataSources", List.of(
-                        Map.of("name", "SAP ERP", "status", "健康", "host", "192.168.101.130:3306"),
-                        Map.of("name", "三方 GIS Webhook", "status", "阻断", "host", "192.168.101.130:8088")
-                )
-        );
+        DailyRiskSnapshot snapshot = dailyRiskSnapshot;
+        String lastRefresh = snapshot == null ? "待采集" : snapshot.calculatedAt().toString();
+        int signalCount = snapshot == null ? 0 : snapshot.signals().size();
+        Map<String, Object> overview = new LinkedHashMap<>();
+        overview.put("users", systemUsers());
+        overview.put("roles", List.of("管理员", "分析师", "运营人员"));
+        overview.put("models", List.of(
+                modelOverview(defaultAiModel, defaultAiEndpoint),
+                modelOverview("deepseek-chat", AiModelDefaults.DEFAULT_ENDPOINT)
+        ));
+        overview.put("agents", List.of(
+                Map.of("name", "公开源爬虫 Agent", "status", "运行中", "cron", "0 0 */12 * * *", "lastPull", lastRefresh,
+                        "detail", "实时爬取公开 RSS / 政策法规源，最近一轮纳入 " + signalCount + " 条真实信号"),
+                Map.of("name", "风险测算 Agent", "status", snapshot == null || snapshot.score() == 0 ? "待采集" : "运行中", "cron", "0 0 */12 * * *", "lastPull", lastRefresh,
+                        "detail", "基于公开源信号与规则自动测算每日风险分"),
+                Map.of("name", "AI 报告 Agent", "status", aiConfigured() ? "运行中" : "待配置 API Key", "cron", "0 0 */12 * * *", "lastPull", lastRefresh,
+                        "detail", "聚合公开源 + 风险快照调用 DeepSeek 生成本日报告")
+        ));
+        overview.put("logs", auditLogs());
+        overview.put("dataSources", probeDataSources());
+        return overview;
+    }
+
+    private List<Map<String, Object>> probeDataSources() {
+        try {
+            return healthProbeService.probeAll();
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private boolean aiConfigured() {
+        String apiKey = aiModelApiKeys.getOrDefault(defaultAiModel, defaultAiApiKey == null ? "" : defaultAiApiKey);
+        return apiKey != null && !apiKey.isBlank();
     }
 
     private List<CrawlerSignal> availableSignals() {
@@ -892,30 +1654,78 @@ public class SemiRiskStore {
     }
 
     private List<Map<String, Object>> gisPoints(List<CrawlerSignal> signals) {
-        double[][] coordinates = {
-                {-77.03, 38.90},
-                {-118.26, 33.74},
-                {103.80, 1.29},
-                {121.49, 31.23},
-                {4.47, 51.92},
-                {139.76, 35.68}
-        };
         List<Map<String, Object>> points = new ArrayList<>();
         for (int i = 0; i < signals.size(); i++) {
             CrawlerSignal signal = signals.get(i);
-            double[] coordinate = coordinates[i % coordinates.length];
-            points.add(Map.of(
-                    "id", signal.id(),
-                    "name", signal.source() + " #" + (i + 1),
-                    "lon", coordinate[0],
-                    "lat", coordinate[1],
-                    "riskIndex", signal.riskScore(),
-                    "analysis", signal.title(),
-                    "source", signal.source(),
-                    "sourceUrl", signal.sourceUrl()
-            ));
+            GeoPlace place = geocodeSignal(signal);
+            Map<String, Object> point = new LinkedHashMap<>();
+            point.put("id", signal.id());
+            point.put("name", place.name() + " · " + signal.source());
+            point.put("region", place.name());
+            point.put("lon", place.lon());
+            point.put("lat", place.lat());
+            point.put("riskIndex", signal.riskScore());
+            point.put("analysis", signal.title());
+            point.put("source", signal.source());
+            point.put("sourceUrl", signal.sourceUrl());
+            points.add(point);
         }
         return points;
+    }
+
+    /** 真实地名 -> 真实经纬度映射（公开地理坐标），用于把公开源信号定位到其涉及/来源地区。 */
+    private static final Object[][] PLACE_GEO = {
+            {new String[]{"shanghai", "上海", "外高桥", "洋山"}, "上海", 121.49, 31.23},
+            {new String[]{"shenzhen", "深圳", "盐田"}, "深圳", 114.06, 22.54},
+            {new String[]{"beijing", "北京"}, "北京", 116.40, 39.90},
+            {new String[]{"wuhan", "武汉"}, "武汉", 114.30, 30.59},
+            {new String[]{"suzhou", "苏州"}, "苏州", 120.58, 31.30},
+            {new String[]{"hong kong", "香港"}, "香港", 114.16, 22.32},
+            {new String[]{"taiwan", "台湾", "taipei", "hsinchu", "新竹", "tsmc", "台积电"}, "中国台湾", 120.97, 24.80},
+            {new String[]{"singapore", "新加坡"}, "新加坡", 103.82, 1.35},
+            {new String[]{"korea", "韩国", "samsung", "三星", "seoul", "首尔"}, "韩国", 126.98, 37.57},
+            {new String[]{"japan", "日本", "tokyo", "东京"}, "日本", 139.69, 35.69},
+            {new String[]{"netherlands", "荷兰", "asml", "rotterdam", "鹿特丹"}, "荷兰", 4.48, 51.92},
+            {new String[]{"germany", "德国", "hamburg"}, "德国", 9.99, 53.55},
+            {new String[]{"mexico", "墨西哥"}, "墨西哥", -99.13, 19.43},
+            {new String[]{"brazil", "巴西"}, "巴西", -47.93, -15.78},
+            {new String[]{"california", "加州", "los angeles", "long beach", "洛杉矶", "silicon valley", "硅谷", "nvidia", "英伟达"}, "美国加州", -118.24, 34.05},
+            {new String[]{"texas", "德州", "houston"}, "美国德州", -95.37, 29.76},
+            {new String[]{"washington", "white house", "u.s.", " us ", "united states", "america", "美国", "tariff", "关税"}, "美国华盛顿", -77.04, 38.90},
+            {new String[]{"china", "中国", "中国大陆"}, "中国", 116.40, 39.90},
+            {new String[]{"europe", "欧盟", "eu ", "欧洲"}, "欧盟", 4.35, 50.85}
+    };
+
+    /** 各公开源的来源地区坐标（当文章未命中具体地名时，按来源地区定位）。 */
+    private static final Object[][] SOURCE_GEO = {
+            {new String[]{"中国新闻网", "chinanews"}, "中国北京", 116.40, 39.90},
+            {new String[]{"freightwaves", "supplychaindive", "trucking", "manufacturing dive", "supply chain dive"}, "美国", -77.04, 38.90},
+            {new String[]{"eetimes", "ee times", "semiconductor", "semiengineering"}, "美国硅谷", -121.96, 37.35},
+            {new String[]{"商务部", "海关", "政策", "法规"}, "中国北京", 116.40, 39.90}
+    };
+
+    private GeoPlace geocodeSignal(CrawlerSignal signal) {
+        String haystack = (signal.title() + " " + signal.source()).toLowerCase(Locale.ROOT);
+        for (Object[] entry : PLACE_GEO) {
+            for (String keyword : (String[]) entry[0]) {
+                if (haystack.contains(keyword.toLowerCase(Locale.ROOT))) {
+                    return new GeoPlace((String) entry[1], (double) entry[2], (double) entry[3]);
+                }
+            }
+        }
+        String source = signal.source() == null ? "" : signal.source().toLowerCase(Locale.ROOT);
+        for (Object[] entry : SOURCE_GEO) {
+            for (String keyword : (String[]) entry[0]) {
+                if (source.contains(keyword.toLowerCase(Locale.ROOT))) {
+                    return new GeoPlace((String) entry[1], (double) entry[2], (double) entry[3]);
+                }
+            }
+        }
+        // 未命中地名与来源地区：定位到全球供应链枢纽（新加坡），并在名称中标注待核验。
+        return new GeoPlace("全球公开源(待核验地区)", 103.82, 1.35);
+    }
+
+    private record GeoPlace(String name, double lon, double lat) {
     }
 
     private List<Map<String, Object>> gisRoutes(List<Map<String, Object>> points) {
@@ -993,14 +1803,128 @@ public class SemiRiskStore {
         return dailyRiskSnapshot;
     }
 
-    private Map<String, Object> modelOverview(String name, String endpoint, int latencyMs) {
+    private Map<String, Object> modelOverview(String name, String endpoint) {
         AiModelConfig config = aiModelConfigs.get(name);
         Map<String, Object> map = new HashMap<>();
         map.put("name", name);
         map.put("endpoint", config == null ? endpoint : config.endpoint());
-        map.put("latencyMs", latencyMs);
         map.put("status", config != null && config.configured() ? "已配置" : "待配置 API Key");
+        map.put("hint", "延迟请用连通性测试实测");
         return map;
+    }
+
+    // ----- AI 本日报告：真实聚合公开源 + 风险快照，调用 DeepSeek 生成，持久化到 ai_report -----
+
+    /** 读取本日 AI 报告（DB 优先，不存在则返回待生成态，不阻塞调用线程触发模型）。 */
+    public Map<String, Object> latestAiReport() {
+        String today = LocalDate.now().toString();
+        if (dailyAiReport != null && today.equals(dailyAiReportDate)) {
+            return dailyAiReport;
+        }
+        try {
+            List<Map<String, Object>> rows = repository.findLatestAiReport();
+            if (!rows.isEmpty()) {
+                Map<String, Object> report = aiReportFromRow(rows.get(0));
+                if (today.equals(stringValue(report.get("reportDate")))) {
+                    dailyAiReport = report;
+                    dailyAiReportDate = today;
+                }
+                return report;
+            }
+        } catch (Exception ignored) {
+        }
+        // 尚无报告：后台异步生成，先返回待生成态。
+        maybeGenerateDailyReportAsync();
+        Map<String, Object> pending = new LinkedHashMap<>();
+        pending.put("reportDate", today);
+        pending.put("title", "SemiRisk AI 本日风险分析");
+        pending.put("model", defaultAiModel);
+        pending.put("configured", aiConfigured());
+        pending.put("modelStatus", "本日报告生成中，请稍后刷新");
+        pending.put("summary", "正在聚合公开源情报与风险快照并生成本日报告。");
+        pending.put("recommendation", "");
+        pending.put("sections", List.of());
+        pending.put("generatedAt", Instant.now().toString());
+        pending.put("pending", true);
+        return pending;
+    }
+
+    private Map<String, Object> aiReportFromRow(Map<String, Object> row) {
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("reportDate", stringValue(row.get("reportDate")));
+        report.put("title", stringValue(row.get("title")));
+        report.put("model", stringValue(row.get("model")));
+        report.put("configured", asInt(row.get("configured")) == 1 || Boolean.TRUE.equals(row.get("configured")));
+        report.put("modelStatus", stringValue(row.get("modelStatus")));
+        report.put("summary", stringValue(row.get("summary")));
+        report.put("recommendation", stringValue(row.get("recommendation")));
+        report.put("sections", readJson(row.get("bodyJson"), new TypeReference<List<String>>() {
+        }, List.of()));
+        report.put("generatedAt", stringValue(row.get("generatedAt")));
+        return report;
+    }
+
+    private void maybeGenerateDailyReportAsync() {
+        String today = LocalDate.now().toString();
+        if (today.equals(dailyAiReportDate)) {
+            return;
+        }
+        if (reportGenerating.compareAndSet(false, true)) {
+            reportExecutor.submit(() -> {
+                try {
+                    generateDailyAiReport();
+                } finally {
+                    reportGenerating.set(false);
+                }
+            });
+        }
+    }
+
+    /** 同步生成本日 AI 报告（聚合真实数据 + 调 DeepSeek），并持久化。 */
+    public Map<String, Object> generateDailyAiReport() {
+        String today = LocalDate.now().toString();
+        DailyRiskSnapshot snapshot = dailyRiskSnapshot;
+        List<CrawlerSignal> signals = availableSignals();
+        List<String> context = reportContext("risk-assessment", signals);
+        AiAnswer ai = callDeepSeek(
+                "请基于以下公开源情报与风险快照，生成 SemiRisk 半导体供应链本日风险分析报告，包含【总体态势】【重点风险】【处置建议】三部分，分段清晰。",
+                context);
+        int score = snapshot == null ? 0 : snapshot.score();
+        String level = snapshot == null ? "待采集" : snapshot.level();
+        List<String> sections = ai.answer().isBlank()
+                ? fallbackReportLines("risk-assessment", signals)
+                : splitAnswer(ai.answer());
+        String summary = ai.answer().isBlank()
+                ? "本日综合风险 " + score + "（" + level + "），有效公开源信号 " + signals.size() + " 条。"
+                : (sections.isEmpty() ? ai.answer() : sections.get(0));
+        String recommendation = ai.answer().isBlank()
+                ? "优先核验高分公开源原文，将高危信号转为告警工单并绑定负责人与闭环时间。"
+                : sections.get(sections.size() - 1);
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("reportDate", today);
+        report.put("title", "SemiRisk AI 本日风险分析");
+        report.put("model", defaultAiModel);
+        report.put("configured", aiConfigured());
+        report.put("modelStatus", ai.status());
+        report.put("aiCalled", ai.called());
+        report.put("usage", ai.usage());
+        report.put("summary", summary);
+        report.put("recommendation", recommendation);
+        report.put("sections", sections);
+        report.put("signalCount", signals.size());
+        report.put("score", score);
+        report.put("level", level);
+        report.put("generatedAt", Instant.now().toString());
+        try {
+            repository.upsertAiReport(today, stringValue(report.get("title")), defaultAiModel, aiConfigured(),
+                    truncate(ai.status(), 500), truncate(summary, 2000), truncate(recommendation, 2000),
+                    writeJson(sections), Instant.now());
+        } catch (Exception ignored) {
+        }
+        dailyAiReport = report;
+        dailyAiReportDate = today;
+        auditLogs.add("[INFO] daily AI report generated aiCalled=" + ai.called() + " signals=" + signals.size());
+        return report;
     }
 
     private void seedDefaultAiModel() {

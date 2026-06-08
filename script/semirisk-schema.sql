@@ -114,3 +114,92 @@ CREATE TABLE IF NOT EXISTS system_audit_log (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_system_audit_log_level_time(level, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Bearer Token 持久化（DB 为事实源，重启/多实例共享生效）
+CREATE TABLE IF NOT EXISTS auth_token (
+    token VARCHAR(96) PRIMARY KEY,
+    username VARCHAR(128) NOT NULL,
+    display_name VARCHAR(128) NOT NULL,
+    role VARCHAR(64) NOT NULL,
+    issued_at DATETIME NOT NULL,
+    expires_at DATETIME NOT NULL,
+    INDEX idx_auth_token_expires(expires_at),
+    INDEX idx_auth_token_username(username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 实时爬取的公开源信号持久化（真实数据，供 Dashboard/告警/GIS/知识库/风险聚合）
+CREATE TABLE IF NOT EXISTS crawler_signal (
+    id VARCHAR(64) PRIMARY KEY,
+    source VARCHAR(256) NOT NULL,
+    source_url VARCHAR(1024) NOT NULL DEFAULT '',
+    title VARCHAR(1024) NOT NULL,
+    dimension VARCHAR(64) NOT NULL DEFAULT '供应链',
+    category VARCHAR(32) NOT NULL DEFAULT '公开情报',
+    risk_signal VARCHAR(64) NOT NULL DEFAULT '监控信号',
+    risk_score INT NOT NULL DEFAULT 0,
+    status VARCHAR(16) NOT NULL DEFAULT 'OK',
+    fetched_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_crawler_signal_fetched(fetched_at),
+    INDEX idx_crawler_signal_category(category),
+    INDEX idx_crawler_signal_score(risk_score),
+    INDEX idx_crawler_signal_status(status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 每日 AI 风险测算快照持久化
+CREATE TABLE IF NOT EXISTS risk_snapshot (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    score INT NOT NULL,
+    level VARCHAR(16) NOT NULL,
+    summary VARCHAR(1024) NOT NULL,
+    signal_count INT NOT NULL DEFAULT 0,
+    calculated_at DATETIME NOT NULL,
+    INDEX idx_risk_snapshot_time(calculated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 知识库文档：公开情报 / 政策法规（实时爬取） + 内部知识库 SOP（管理维护）
+CREATE TABLE IF NOT EXISTS knowledge_doc (
+    id VARCHAR(64) PRIMARY KEY,
+    category VARCHAR(32) NOT NULL,
+    title VARCHAR(1024) NOT NULL,
+    content TEXT NOT NULL,
+    source VARCHAR(256) NOT NULL,
+    source_url VARCHAR(1024) NOT NULL DEFAULT '',
+    dimension VARCHAR(64) NOT NULL DEFAULT '供应链',
+    risk_score INT NOT NULL DEFAULT 0,
+    object_key VARCHAR(512) NULL,
+    fetched_at DATETIME NOT NULL,
+    INDEX idx_knowledge_doc_category(category),
+    INDEX idx_knowledge_doc_fetched(fetched_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 企业画像：来自真实公开源事件聚合；权威工商字段待接入（不伪造）
+CREATE TABLE IF NOT EXISTS enterprise_record (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    credit_code VARCHAR(64) NOT NULL DEFAULT '',
+    industry VARCHAR(128) NOT NULL DEFAULT '',
+    location VARCHAR(128) NOT NULL DEFAULT '',
+    risk_score INT NOT NULL DEFAULT 0,
+    credit_level VARCHAR(16) NOT NULL DEFAULT '待采集',
+    source_mode VARCHAR(64) NOT NULL DEFAULT '公开源事件聚合',
+    registry_status VARCHAR(32) NOT NULL DEFAULT '待接入权威源',
+    events_json JSON NULL,
+    signals_json JSON NULL,
+    updated_at DATETIME NOT NULL,
+    UNIQUE KEY uk_enterprise_record_name(name),
+    INDEX idx_enterprise_record_risk(risk_score)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- AI 本日风险分析报告持久化（真实聚合 + 模型生成）
+CREATE TABLE IF NOT EXISTS ai_report (
+    report_date VARCHAR(32) PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    model VARCHAR(128) NOT NULL,
+    configured TINYINT(1) NOT NULL DEFAULT 0,
+    model_status VARCHAR(512) NOT NULL DEFAULT '',
+    summary TEXT NOT NULL,
+    recommendation TEXT NOT NULL,
+    body_json JSON NULL,
+    generated_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

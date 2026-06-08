@@ -113,4 +113,105 @@ public class PreparedRiskRepository {
     public int upsertReportJob(String id, String template, String language, String format, int threshold, String status, int progress, String step, String downloadUrl, Instant createdAt) {
         return jdbcTemplate.update(SqlTemplates.UPSERT_REPORT_JOB, id, template, language, format, threshold, status, progress, step, downloadUrl, createdAt);
     }
+
+    public List<Map<String, Object>> findAuditLogs(int limit) {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_AUDIT_LOGS, limit);
+    }
+
+    // --- Bearer Token 持久化 ---
+    public int insertAuthToken(String token, String username, String displayName, String role, Instant issuedAt, Instant expiresAt) {
+        return jdbcTemplate.update(SqlTemplates.INSERT_AUTH_TOKEN, token, username, displayName, role, issuedAt, expiresAt);
+    }
+
+    public List<Map<String, Object>> findAuthToken(String token) {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_AUTH_TOKEN, token);
+    }
+
+    public int renewAuthToken(String token, Instant expiresAt) {
+        return jdbcTemplate.update(SqlTemplates.RENEW_AUTH_TOKEN, expiresAt, token);
+    }
+
+    public int deleteAuthToken(String token) {
+        return jdbcTemplate.update(SqlTemplates.DELETE_AUTH_TOKEN, token);
+    }
+
+    public int deleteExpiredAuthTokens(Instant now) {
+        return jdbcTemplate.update(SqlTemplates.DELETE_EXPIRED_AUTH_TOKENS, now);
+    }
+
+    // --- 实时爬取信号持久化 ---
+    public int upsertCrawlerSignal(String id, String source, String sourceUrl, String title, String dimension, String category, String riskSignal, int riskScore, String status, Instant fetchedAt) {
+        return jdbcTemplate.update(SqlTemplates.UPSERT_CRAWLER_SIGNAL, id, source, sourceUrl, title, dimension, category, riskSignal, riskScore, status, fetchedAt);
+    }
+
+    public List<Map<String, Object>> findRecentCrawlerSignals(Instant since, int limit) {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_RECENT_CRAWLER_SIGNALS, since, limit);
+    }
+
+    public int deleteOldCrawlerSignals(Instant before) {
+        return jdbcTemplate.update(SqlTemplates.DELETE_OLD_CRAWLER_SIGNALS, before);
+    }
+
+    // --- 风险快照持久化 ---
+    public int insertRiskSnapshot(int score, String level, String summary, int signalCount, Instant calculatedAt) {
+        return jdbcTemplate.update(SqlTemplates.INSERT_RISK_SNAPSHOT, score, level, summary, signalCount, calculatedAt);
+    }
+
+    public List<Map<String, Object>> findLatestRiskSnapshot() {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_LATEST_RISK_SNAPSHOT);
+    }
+
+    // --- 知识库文档持久化 ---
+    public int upsertKnowledgeDoc(String id, String category, String title, String content, String source, String sourceUrl, String dimension, int riskScore, String objectKey, Instant fetchedAt) {
+        return jdbcTemplate.update(SqlTemplates.UPSERT_KNOWLEDGE_DOC, id, category, title, content, source, sourceUrl, dimension, riskScore, objectKey, fetchedAt);
+    }
+
+    public List<Map<String, Object>> findKnowledgeDocsByCategory(String category, int limit) {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_KNOWLEDGE_DOCS_BY_CATEGORY, category, limit);
+    }
+
+    public List<Map<String, Object>> findKnowledgeDocById(String id) {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_KNOWLEDGE_DOC_BY_ID, id);
+    }
+
+    public int countKnowledgeDocsByCategory(String category) {
+        Number count = jdbcTemplate.queryForObject(SqlTemplates.COUNT_KNOWLEDGE_DOCS_BY_CATEGORY, Number.class, category);
+        return count == null ? 0 : count.intValue();
+    }
+
+    public List<Map<String, Object>> searchKnowledgeDocs(String keyword, int limit) {
+        return jdbcTemplate.queryForList(SqlTemplates.SEARCH_KNOWLEDGE_DOCS, keyword, keyword, keyword, limit);
+    }
+
+    // --- 企业画像持久化 ---
+    public int upsertEnterpriseRecord(String id, String name, String creditCode, String industry, String location, int riskScore, String creditLevel, String sourceMode, String registryStatus, String eventsJson, String signalsJson, Instant updatedAt) {
+        return jdbcTemplate.update(SqlTemplates.UPSERT_ENTERPRISE_RECORD, id, name, creditCode, industry, location, riskScore, creditLevel, sourceMode, registryStatus, eventsJson, signalsJson, updatedAt);
+    }
+
+    public List<Map<String, Object>> findEnterpriseRecords(int limit) {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_ENTERPRISE_RECORDS, limit);
+    }
+
+    public List<Map<String, Object>> findEnterpriseRecordByKeyword(String keyword) {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_ENTERPRISE_RECORD_BY_KEYWORD, keyword, keyword, keyword);
+    }
+
+    // --- AI 报告持久化 ---
+    public int upsertAiReport(String reportDate, String title, String model, boolean configured, String modelStatus, String summary, String recommendation, String bodyJson, Instant generatedAt) {
+        return jdbcTemplate.update(SqlTemplates.UPSERT_AI_REPORT, reportDate, title, model, configured, modelStatus, summary, recommendation, bodyJson, generatedAt);
+    }
+
+    public List<Map<String, Object>> findLatestAiReport() {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_LATEST_AI_REPORT);
+    }
+
+    // --- 公开源告警持久化 ---
+    public int upsertPublicAlert(String id, Instant alertTime, String level, String title, String source, String status, String target) {
+        return jdbcTemplate.update(SqlTemplates.UPSERT_PUBLIC_ALERT, id, alertTime, level, title, source, status, target);
+    }
+
+    public String findAlertStatus(String id) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(SqlTemplates.FIND_ALERT_STATUS, id);
+        return rows.isEmpty() ? null : String.valueOf(rows.get(0).get("status"));
+    }
 }

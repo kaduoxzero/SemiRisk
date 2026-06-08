@@ -22,6 +22,20 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebConfig implements WebMvcConfigurer {
 
     private static final String CSRF_HEADER = "X-CSRF-Token";
+    private static final String[] SPA_ROUTES = {
+            "/dashboard",
+            "/login",
+            "/register",
+            "/upload",
+            "/analysis",
+            "/detail",
+            "/report",
+            "/alerts",
+            "/gis",
+            "/enterprise",
+            "/knowledge",
+            "/system"
+    };
 
     private final ObjectMapper objectMapper;
     private final CsrfTokenService csrfTokenService;
@@ -36,13 +50,16 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addViewControllers(ViewControllerRegistry registry) {
         registry.addRedirectViewController("/", "/index.html");
+        for (String route : SPA_ROUTES) {
+            registry.addViewController(route).setViewName("forward:/index.html");
+        }
     }
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
                 .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*")
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true);
     }
@@ -70,7 +87,7 @@ public class WebConfig implements WebMvcConfigurer {
                                 && uri.startsWith("/api/reports/") && uri.endsWith("/download"))) {
                             return true;
                         }
-                        var principal = tokenAuthService.validate(request.getHeader("Authorization"));
+                        var principal = tokenAuthService.validate(request.getHeader("Authorization"), request.getParameter("access_token"));
                         if (uri.startsWith("/api/") && principal.isEmpty()) {
                             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                             response.setContentType("application/json;charset=UTF-8");
@@ -111,7 +128,7 @@ public class WebConfig implements WebMvcConfigurer {
         if (uri.startsWith("/api/reports/")) return "report";
         if (uri.startsWith("/api/alerts")) return "alerts";
         if (uri.startsWith("/api/gis/")) return "gis";
-        if (uri.startsWith("/api/enterprises/")) return "enterprise";
+        if (uri.equals("/api/enterprises") || uri.startsWith("/api/enterprises/")) return "enterprise";
         if (uri.startsWith("/api/knowledge/")) return "knowledge";
         if (uri.startsWith("/api/system/")) return "system";
         if (uri.startsWith("/api/risk-score/")) return "dashboard";

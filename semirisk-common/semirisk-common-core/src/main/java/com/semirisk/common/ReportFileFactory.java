@@ -46,24 +46,36 @@ public final class ReportFileFactory {
 
     private static List<String> reportLines(String id, String template, String language, List<String> findings) {
         List<String> lines = new ArrayList<>();
-        lines.add("SemiRisk AI 风险报告");
-        lines.add("报告编号：" + id);
-        lines.add("模板：" + template + " / 语言：" + language);
-        lines.add("结论：报告内容由已采集公开源、风险告警和本地规则引擎生成。");
-        lines.add("建议：核验高分公开源、同步供应商确认结果，并按 SOP 推进闭环处置。");
+        appendWrapped(lines, "SemiRisk AI 风险报告", 44);
+        appendWrapped(lines, "报告编号：" + id, 44);
+        appendWrapped(lines, "模板：" + template + " / 语言：" + language, 44);
+        appendWrapped(lines, "生成说明：报告内容由已采集公开源、风险告警、本地规则引擎和知识库 SOP 共同生成，可用于高管汇报、事件复盘和供应商协同。", 44);
         if (findings != null && !findings.isEmpty()) {
-            lines.add("公开源信号：");
-            findings.stream().limit(8).forEach(item -> lines.add(" - " + item));
+            findings.stream().limit(36).forEach(item -> appendWrapped(lines, item, 52));
         }
         return lines;
+    }
+
+    private static void appendWrapped(List<String> lines, String value, int maxChars) {
+        String text = value == null ? "" : value.trim();
+        if (text.length() <= maxChars) {
+            lines.add(text);
+            return;
+        }
+        int start = 0;
+        while (start < text.length()) {
+            int end = Math.min(text.length(), start + maxChars);
+            lines.add((start == 0 ? "" : "  ") + text.substring(start, end));
+            start = end;
+        }
     }
 
     private static byte[] pdf(List<String> lines) {
         StringBuilder stream = new StringBuilder();
         stream.append("BT\n/F1 18 Tf\n72 770 Td\n").append(hexText(lines.get(0))).append(" Tj\n");
         stream.append("/F1 11 Tf\n");
-        for (int i = 1; i < lines.size(); i++) {
-            stream.append("0 -24 Td\n").append(hexText(lines.get(i))).append(" Tj\n");
+        for (int i = 1; i < Math.min(lines.size(), 38); i++) {
+            stream.append("0 -18 Td\n").append(hexText(lines.get(i))).append(" Tj\n");
         }
         stream.append("ET\n");
         byte[] content = stream.toString().getBytes(StandardCharsets.ISO_8859_1);
