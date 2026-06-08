@@ -395,11 +395,9 @@ function renderEventRows(rows, target, withActions = false) {
 }
 
 async function loadDashboard() {
-  const [kpisRes, eventRes, trendRes, gisRes] = await Promise.allSettled([
+  const [kpisRes, eventRes] = await Promise.allSettled([
     api("/risk/event/kpis"),
-    api("/risk/event/list?pageNum=1&pageSize=8"),
-    api("/risk/event/trend"),
-    api("/risk/event/gis/nodes")
+    api("/risk/event/list?pageNum=1&pageSize=8")
   ]);
   const warnings = [];
   const valueOf = (settled, label) => {
@@ -410,14 +408,11 @@ async function loadDashboard() {
 
   const kpis = dataOf(valueOf(kpisRes, "KPI"), {});
   const events = rowsOf(valueOf(eventRes, "最新事件"));
-  state.trendRows = arrayOf(dataOf(valueOf(trendRes, "趋势"), []));
-  state.gisRows = arrayOf(dataOf(valueOf(gisRes, "GIS"), []));
 
   renderMetric("#metric-total", kpis.total);
   renderMetric("#metric-today", kpis.today);
   renderMetric("#metric-resolved", kpis.resolved);
   renderMetric("#metric-index", kpis.currentRiskIndex);
-  renderTrend("#trend-chart", state.trendRows);
   renderTopRisks(events);
   renderDashboardIntel(events, kpis);
   renderEventRows(events, "#latest-events");
@@ -791,7 +786,7 @@ function renderGlobe(selector, rows) {
       <canvas id="globe-canvas"></canvas>
       <aside id="globe-detail" class="globe-detail">
         <h4>${formatNumber(valid.length)} 个真实风险点</h4>
-        <p>地球自动旋转，可按住鼠标水平拖动接管视角；点击亮点查看风险详情。</p>
+        <p>连线表示邻近真实坐标事件的空间关联。地球自动旋转，可拖动接管视角，点击亮点查看详情。</p>
       </aside>
     </div>
   `;
@@ -914,6 +909,55 @@ function renderGlobe(selector, rows) {
     }
   }
 
+  function colorFor(row) {
+    if (row.riskLevel === "CRITICAL") return "#fb7185";
+    if (row.riskLevel === "WARNING") return "#22d3ee";
+    return "#a78bfa";
+  }
+
+  function drawConnections(points, cx, cy, radius) {
+    const candidates = [...points]
+      .sort((a, b) => Number(b.row.riskScore || 0) - Number(a.row.riskScore || 0))
+      .slice(0, 130);
+    const edges = [];
+    const seen = new Set();
+    candidates.forEach((point, index) => {
+      let nearest = null;
+      for (let i = 0; i < candidates.length; i += 1) {
+        if (i === index) continue;
+        const other = candidates[i];
+        const distance = Math.hypot(point.x - other.x, point.y - other.y);
+        if (distance < 24 || distance > 96) continue;
+        if (!nearest || distance < nearest.distance) nearest = { other, distance, index: i };
+      }
+      if (!nearest) return;
+      const key = [index, nearest.index].sort((a, b) => a - b).join("-");
+      if (!seen.has(key)) {
+        seen.add(key);
+        edges.push({ from: point, to: nearest.other, distance: nearest.distance });
+      }
+    });
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius - 1, 0, Math.PI * 2);
+    ctx.clip();
+    edges.slice(0, 120).forEach((edge) => {
+      const alpha = Math.max(0.12, 0.38 - edge.distance / 300);
+      const gradient = ctx.createLinearGradient(edge.from.x, edge.from.y, edge.to.x, edge.to.y);
+      gradient.addColorStop(0, `rgba(34,211,238,${alpha})`);
+      gradient.addColorStop(0.5, `rgba(167,139,250,${alpha * 0.8})`);
+      gradient.addColorStop(1, `rgba(251,113,133,${alpha * 0.9})`);
+      ctx.beginPath();
+      ctx.moveTo(edge.from.x, edge.from.y);
+      ctx.lineTo(edge.to.x, edge.to.y);
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
   function draw() {
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
@@ -933,26 +977,33 @@ function renderGlobe(selector, rows) {
     drawLand(cx, cy, radius);
     drawGrid(cx, cy, radius);
 
-    valid.forEach((row) => {
+    const visiblePoints = valid.map((row) => {
       const p = project(row);
-      if (p.z < -0.08) return;
+      if (p.z < -0.08) return null;
+      return { ...p, row };
+    }).filter(Boolean);
+
+    drawConnections(visiblePoints, cx, cy, radius);
+
+    visiblePoints.forEach((point) => {
+      const row = point.row;
       const score = Number(row.riskScore || 0);
-      const depth = 0.42 + Math.max(0, p.z) * 0.68;
+      const depth = 0.42 + Math.max(0, point.z) * 0.68;
       const r = Math.max(3, Math.min(10, score / 10)) * depth;
-      const color = row.riskLevel === "CRITICAL" ? "#ef4444" : row.riskLevel === "WARNING" ? "#eab308" : "#3b82f6";
+      const color = colorFor(row);
       ctx.beginPath();
-      ctx.arc(p.x, p.y, r + 9, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, r + 8, 0, Math.PI * 2);
       ctx.fillStyle = color + "24";
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, r, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(p.x, p.y, Math.max(1.4, r * 0.32), 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, Math.max(1.4, r * 0.32), 0, Math.PI * 2);
       ctx.fillStyle = "rgba(255,255,255,0.82)";
       ctx.fill();
-      model.points.push({ ...p, r: r + 8, row });
+      model.points.push({ ...point, r: r + 8, row });
     });
   }
 
