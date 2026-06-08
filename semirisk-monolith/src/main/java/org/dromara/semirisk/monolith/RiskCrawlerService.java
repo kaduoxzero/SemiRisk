@@ -17,7 +17,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -54,19 +56,29 @@ public class RiskCrawlerService {
     public synchronized Map<String, Object> crawlNow() {
         Instant started = Instant.now();
         Map<String, Integer> counts = new LinkedHashMap<>();
+        List<String> errors = new ArrayList<>();
+        store.beginBulk();
         try {
-            counts.put("cisaKev", crawlCisaKev());
-            counts.put("usgsEarthquake", crawlUsgsEarthquakes());
+            crawlSource("cisaKev", counts, errors, this::crawlCisaKev);
+            crawlSource("usgsEarthquake", counts, errors, this::crawlUsgsEarthquakes);
             lastRunAt = started;
-            lastStatus = "FINISHED";
-            lastMessage = "crawler finished";
-        } catch (Exception ex) {
-            lastRunAt = started;
-            lastStatus = "FAILED";
-            lastMessage = ex.getMessage();
+            int total = counts.values().stream().mapToInt(Integer::intValue).sum();
+            if (errors.isEmpty()) {
+                lastStatus = "FINISHED";
+                lastMessage = "crawler finished";
+            } else if (total > 0) {
+                lastStatus = "PARTIAL";
+                lastMessage = String.join("; ", errors);
+            } else {
+                lastStatus = "FAILED";
+                lastMessage = String.join("; ", errors);
+            }
+        } finally {
+            store.endBulk();
         }
         Map<String, Object> result = status();
         result.put("counts", counts);
+        result.put("errors", errors);
         return result;
     }
 
@@ -112,6 +124,20 @@ public class RiskCrawlerService {
         }
         store.upsertSource("CISA Known Exploited Vulnerabilities", "JSON", properties.getCisaKevUrl(), syncTime);
         return count;
+    }
+
+    private void crawlSource(String name, Map<String, Integer> counts, List<String> errors, SourceCrawler crawler) {
+        try {
+            counts.put(name, crawler.crawl());
+        } catch (Exception ex) {
+            counts.put(name, 0);
+            errors.add(name + ": " + ex.getMessage());
+        }
+    }
+
+    @FunctionalInterface
+    private interface SourceCrawler {
+        int crawl() throws Exception;
     }
 
     private int crawlUsgsEarthquakes() throws Exception {

@@ -147,6 +147,7 @@ function statusText(status) {
     FINISHED: "完成",
     GENERATING: "生成中",
     FAILED: "失败",
+    PARTIAL: "部分完成",
     PENDING: "等待",
     ACTIVE: "启用",
     INACTIVE: "停用"

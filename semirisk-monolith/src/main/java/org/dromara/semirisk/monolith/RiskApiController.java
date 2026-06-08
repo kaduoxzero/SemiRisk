@@ -69,6 +69,21 @@ public class RiskApiController {
         return ApiResponse.ok();
     }
 
+    @PostMapping("/event/bulk")
+    public ApiResponse<Map<String, Object>> addEvents(@RequestBody List<RiskEvent> events) {
+        int count = 0;
+        store.beginBulk();
+        try {
+            for (RiskEvent event : events) {
+                store.addManualEvent(event);
+                count++;
+            }
+        } finally {
+            store.endBulk();
+        }
+        return ApiResponse.ok(Map.of("count", count));
+    }
+
     @PutMapping("/event/handle/{eventId}")
     public ApiResponse<Void> handleEvent(@PathVariable Long eventId, @RequestBody Map<String, String> body) {
         store.updateEventStatus(eventId, body.get("status"), body.get("disposalSuggestion"));

@@ -1,8 +1,14 @@
 package org.dromara.semirisk.monolith;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -17,6 +23,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class RiskStore {
+    private final ObjectMapper objectMapper;
+    private final Path dataFile = Paths.get("data", "risk-store.json");
     private final AtomicLong eventIds = new AtomicLong(1);
     private final AtomicLong reportIds = new AtomicLong(1);
     private final AtomicLong knowledgeIds = new AtomicLong(1);
@@ -26,8 +34,75 @@ public class RiskStore {
     private final Map<Long, RiskReport> reports = new ConcurrentHashMap<>();
     private final Map<Long, RiskKnowledge> knowledge = new ConcurrentHashMap<>();
     private final Map<Long, RiskDataSource> sources = new ConcurrentHashMap<>();
+    private int bulkDepth;
+    private boolean bulkDirty;
 
-    public RiskEvent upsertEvent(RiskEvent event) {
+    public RiskStore(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @PostConstruct
+    public void load() {
+        if (!Files.exists(dataFile)) {
+            return;
+        }
+        try {
+            SaveState state = objectMapper.readValue(dataFile.toFile(), SaveState.class);
+            if (state.events != null) {
+                state.events.forEach(event -> {
+                    if (event.eventId != null) {
+                        events.put(event.eventId, event);
+                        if (event.eventCode != null) {
+                            eventCodeIndex.put(event.eventCode, event.eventId);
+                        }
+                    }
+                });
+            }
+            if (state.reports != null) {
+                state.reports.forEach(report -> {
+                    if (report.reportId != null) {
+                        reports.put(report.reportId, report);
+                    }
+                });
+            }
+            if (state.knowledge != null) {
+                state.knowledge.forEach(item -> {
+                    if (item.knowledgeId != null) {
+                        knowledge.put(item.knowledgeId, item);
+                    }
+                });
+            }
+            if (state.sources != null) {
+                state.sources.forEach(source -> {
+                    if (source.sourceId != null) {
+                        sources.put(source.sourceId, source);
+                    }
+                });
+            }
+            eventIds.set(nextId(events.keySet()));
+            reportIds.set(nextId(reports.keySet()));
+            knowledgeIds.set(nextId(knowledge.keySet()));
+            sourceIds.set(nextId(sources.keySet()));
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to load risk store: " + dataFile, ex);
+        }
+    }
+
+    public synchronized void beginBulk() {
+        bulkDepth++;
+    }
+
+    public synchronized void endBulk() {
+        if (bulkDepth > 0) {
+            bulkDepth--;
+        }
+        if (bulkDepth == 0 && bulkDirty) {
+            bulkDirty = false;
+            saveNow();
+        }
+    }
+
+    public synchronized RiskEvent upsertEvent(RiskEvent event) {
         if (event.eventCode != null && eventCodeIndex.containsKey(event.eventCode)) {
             Long existingId = eventCodeIndex.get(event.eventCode);
             RiskEvent existing = events.get(existingId);
@@ -52,6 +127,7 @@ public class RiskStore {
         if (event.eventCode != null) {
             eventCodeIndex.put(event.eventCode, event.eventId);
         }
+        saveQuietly();
         return event;
     }
 
@@ -75,18 +151,20 @@ public class RiskStore {
         return events.get(id);
     }
 
-    public void updateEventStatus(Long id, String status, String disposalSuggestion) {
+    public synchronized void updateEventStatus(Long id, String status, String disposalSuggestion) {
         RiskEvent event = events.get(id);
         if (event != null) {
             event.status = status == null || status.isBlank() ? event.status : status;
             event.disposalSuggestion = disposalSuggestion;
+            saveQuietly();
         }
     }
 
-    public RiskReport addReport(RiskReport report) {
+    public synchronized RiskReport addReport(RiskReport report) {
         report.reportId = reportIds.getAndIncrement();
         report.createTime = Instant.now();
         reports.put(report.reportId, report);
+        saveQuietly();
         return report;
     }
 
@@ -100,7 +178,7 @@ public class RiskStore {
         return reports.get(id);
     }
 
-    public RiskKnowledge addKnowledge(RiskKnowledge item) {
+    public synchronized RiskKnowledge addKnowledge(RiskKnowledge item) {
         item.knowledgeId = knowledgeIds.getAndIncrement();
         item.createTime = Instant.now();
         item.updateTime = item.createTime;
@@ -108,6 +186,7 @@ public class RiskStore {
             item.status = "ACTIVE";
         }
         knowledge.put(item.knowledgeId, item);
+        saveQuietly();
         return item;
     }
 
@@ -123,7 +202,7 @@ public class RiskStore {
             .toList();
     }
 
-    public RiskDataSource upsertSource(String name, String type, String endpoint, Instant syncTime) {
+    public synchronized RiskDataSource upsertSource(String name, String type, String endpoint, Instant syncTime) {
         RiskDataSource source = sources.values().stream()
             .filter(item -> Objects.equals(item.sourceName, name))
             .findFirst()
@@ -139,13 +218,15 @@ public class RiskStore {
         source.endpoint = endpoint;
         source.status = "ACTIVE";
         source.lastSyncTime = syncTime;
+        saveQuietly();
         return source;
     }
 
-    public RiskDataSource addSource(RiskDataSource source) {
+    public synchronized RiskDataSource addSource(RiskDataSource source) {
         source.sourceId = sourceIds.getAndIncrement();
         source.status = source.status == null || source.status.isBlank() ? "ACTIVE" : source.status;
         sources.put(source.sourceId, source);
+        saveQuietly();
         return source;
     }
 
@@ -196,5 +277,44 @@ public class RiskStore {
 
     private static String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase();
+    }
+
+    private synchronized void saveQuietly() {
+        if (bulkDepth > 0) {
+            bulkDirty = true;
+            return;
+        }
+        saveNow();
+    }
+
+    private void saveNow() {
+        try {
+            Files.createDirectories(dataFile.getParent());
+            SaveState state = new SaveState();
+            state.events = new ArrayList<>(events.values());
+            state.reports = new ArrayList<>(reports.values());
+            state.knowledge = new ArrayList<>(knowledge.values());
+            state.sources = new ArrayList<>(sources.values());
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(dataFile.toFile(), state);
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to save risk store: " + dataFile, ex);
+        }
+    }
+
+    private static long nextId(Iterable<Long> ids) {
+        long max = 0;
+        for (Long id : ids) {
+            if (id != null && id > max) {
+                max = id;
+            }
+        }
+        return max + 1;
+    }
+
+    public static class SaveState {
+        public List<RiskEvent> events = List.of();
+        public List<RiskReport> reports = List.of();
+        public List<RiskKnowledge> knowledge = List.of();
+        public List<RiskDataSource> sources = List.of();
     }
 }
