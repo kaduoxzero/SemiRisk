@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SemiRisk 风险智能管理系统</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">SR</div>
+          <div>
+            <h1>SemiRisk</h1>
+            <p>风险智能管理系统</p>
+          </div>
+        </div>
+        <nav class="nav" aria-label="主导航">
+          <button class="nav-item active" data-view="dashboard" type="button">总览</button>
+          <button class="nav-item" data-view="events" type="button">风险事件</button>
+          <button class="nav-item" data-view="analysis" type="button">趋势分析</button>
+          <button class="nav-item" data-view="gis" type="button">GIS 分布</button>
+          <button class="nav-item" data-view="enterprise" type="button">企业画像</button>
+          <button class="nav-item" data-view="reports" type="button">AI 报告</button>
+          <button class="nav-item" data-view="knowledge" type="button">知识库</button>
+          <button class="nav-item" data-view="sources" type="button">数据源</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">实时运行</p>
+            <h2 id="view-title">总览</h2>
+          </div>
+          <div class="top-actions">
+            <span id="last-updated" class="muted">未刷新</span>
+            <button id="refresh-btn" class="button primary" type="button">刷新</button>
+          </div>
+        </header>
+
+        <section id="status" class="status hidden"></section>
+
+        <section id="dashboard" class="view active">
+          <div class="metric-grid">
+            <article class="metric">
+              <span>总风险事件</span>
+              <strong id="metric-total">--</strong>
+            </article>
+            <article class="metric">
+              <span>今日新增</span>
+              <strong id="metric-today">--</strong>
+            </article>
+            <article class="metric">
+              <span>已闭环</span>
+              <strong id="metric-resolved">--</strong>
+            </article>
+            <article class="metric">
+              <span>当前风险指数</span>
+              <strong id="metric-index">--</strong>
+            </article>
+          </div>
+
+          <div class="layout-grid">
+            <section class="panel span-8">
+              <div class="panel-header">
+                <h3>风险趋势</h3>
+                <span class="muted">来自真实事件聚合</span>
+              </div>
+              <div id="trend-chart" class="chart"></div>
+            </section>
+            <section class="panel span-4">
+              <div class="panel-header">
+                <h3>高风险事件</h3>
+                <span class="muted" id="top-risk-count">--</span>
+              </div>
+              <div id="top-risk-list" class="list"></div>
+            </section>
+            <section class="panel span-12">
+              <div class="panel-header">
+                <h3>最新风险事件</h3>
+                <button class="button ghost" data-view-jump="events" type="button">查看全部</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>发生时间</th>
+                      <th>等级</th>
+                      <th>企业</th>
+                      <th>事件</th>
+                      <th>来源</th>
+                      <th>状态</th>
+                      <th>风险分</th>
+                    </tr>
+                  </thead>
+                  <tbody id="latest-events"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="events" class="view">
+          <section class="panel">
+            <div class="toolbar">
+              <input id="event-keyword" class="input" placeholder="事件标题" />
+              <input id="event-enterprise" class="input" placeholder="企业名称" />
+              <select id="event-level" class="input">
+                <option value="">全部等级</option>
+                <option value="CRITICAL">CRITICAL</option>
+                <option value="WARNING">WARNING</option>
+                <option value="INFO">INFO</option>
+              </select>
+              <select id="event-status" class="input">
+                <option value="">全部状态</option>
+                <option value="UNRESOLVED">未处理</option>
+                <option value="RESOLVING">处理中</option>
+                <option value="RESOLVED">已闭环</option>
+              </select>
+              <button id="event-search" class="button primary" type="button">查询</button>
+              <button id="event-reset" class="button" type="button">重置</button>
+            </div>
+            <details class="create-box">
+              <summary>新增真实风险事件</summary>
+              <form id="event-form" class="form-grid">
+                <input name="enterpriseName" class="input" placeholder="企业名称" required />
+                <input name="eventTitle" class="input wide" placeholder="事件标题" required />
+                <input name="category" class="input" placeholder="分类" />
+                <select name="riskLevel" class="input">
+                  <option value="CRITICAL">CRITICAL</option>
+                  <option value="WARNING" selected>WARNING</option>
+                  <option value="INFO">INFO</option>
+                </select>
+                <input name="riskScore" class="input" type="number" min="0" max="100" placeholder="风险分" />
+                <input name="sourceName" class="input" placeholder="来源" />
+                <input name="longitude" class="input" type="number" step="0.000001" placeholder="经度" />
+                <input name="latitude" class="input" type="number" step="0.000001" placeholder="纬度" />
+                <textarea name="description" class="input wide" rows="3" placeholder="事件描述"></textarea>
+                <button class="button primary" type="submit">写入事件</button>
+              </form>
+            </details>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>发生时间</th>
+                    <th>等级</th>
+                    <th>企业</th>
+                    <th>事件</th>
+                    <th>来源</th>
+                    <th>状态</th>
+                    <th>风险分</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="event-table"></tbody>
+              </table>
+            </div>
+            <div class="pager">
+              <span id="event-total" class="muted">共 -- 条</span>
+              <div>
+                <button id="event-prev" class="button" type="button">上一页</button>
+                <span id="event-page" class="page-num">1</span>
+                <button id="event-next" class="button" type="button">下一页</button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section id="analysis" class="view">
+          <div class="layout-grid">
+            <section class="panel span-12">
+              <div class="panel-header">
+                <h3>风险趋势分析</h3>
+                <span class="muted">按接口返回日期序列绘制</span>
+              </div>
+              <div id="analysis-chart" class="chart large"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="gis" class="view">
+          <section class="panel">
+            <div class="panel-header">
+              <h3>GIS 风险分布</h3>
+              <span class="muted">仅展示带经纬度的真实事件</span>
+            </div>
+            <div id="gis-map" class="map"></div>
+          </section>
+        </section>
+
+        <section id="enterprise" class="view">
+          <section class="panel">
+            <div class="toolbar">
+              <input id="enterprise-keyword" class="input grow" placeholder="企业名称或统一社会信用代码" />
+              <button id="enterprise-search" class="button primary" type="button">检索</button>
+            </div>
+            <div id="enterprise-profile" class="profile"></div>
+          </section>
+        </section>
+
+        <section id="reports" class="view">
+          <div class="layout-grid">
+            <section class="panel span-5">
+              <div class="panel-header">
+                <h3>生成 AI 报告</h3>
+              </div>
+              <form id="report-form" class="stack">
+                <select name="templateType" class="input">
+                  <option>供应链风险研判报告</option>
+                  <option>供应商财务风险报告</option>
+                  <option>物流通道风险报告</option>
+                </select>
+                <input name="dateRange" class="input" value="全部真实数据" />
+                <select name="format" class="input">
+                  <option value="markdown">Markdown</option>
+                  <option value="text">Text</option>
+                </select>
+                <button class="button primary" type="submit">生成报告</button>
+              </form>
+            </section>
+            <section class="panel span-7">
+              <div class="panel-header">
+                <h3>报告记录</h3>
+              </div>
+              <div id="report-list" class="list"></div>
+            </section>
+            <section class="panel span-12 hidden" id="report-detail-panel">
+              <div class="panel-header">
+                <h3 id="report-title">报告内容</h3>
+              </div>
+              <pre id="report-content" class="report-content"></pre>
+            </section>
+          </div>
+        </section>
+
+        <section id="knowledge" class="view">
+          <section class="panel">
+            <div class="toolbar">
+              <input id="knowledge-keyword" class="input grow" placeholder="关键词" />
+              <button id="knowledge-search" class="button primary" type="button">检索</button>
+            </div>
+            <details class="create-box">
+              <summary>新增知识</summary>
+              <form id="knowledge-form" class="form-grid">
+                <input name="title" class="input wide" placeholder="标题" required />
+                <input name="category" class="input" placeholder="分类" />
+                <input name="keywords" class="input" placeholder="关键词" />
+                <input name="sourceName" class="input" placeholder="来源" />
+                <textarea name="content" class="input wide" rows="4" placeholder="知识内容" required></textarea>
+                <button class="button primary" type="submit">写入知识库</button>
+              </form>
+            </details>
+            <div id="knowledge-list" class="list"></div>
+          </section>
+        </section>
+
+        <section id="sources" class="view">
+          <section class="panel">
+            <details class="create-box" open>
+              <summary>新增数据源</summary>
+              <form id="source-form" class="form-grid">
+                <input name="sourceName" class="input" placeholder="数据源名称" required />
+                <input name="sourceType" class="input" placeholder="类型" />
+                <input name="accessMode" class="input" placeholder="接入方式" />
+                <input name="endpoint" class="input wide" placeholder="地址或说明" />
+                <button class="button primary" type="submit">写入数据源</button>
+              </form>
+            </details>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th>类型</th>
+                    <th>接入方式</th>
+                    <th>地址/说明</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody id="source-table"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

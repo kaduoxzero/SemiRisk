@@ -11,6 +11,11 @@ SKIP_BUILD="${SKIP_BUILD:-false}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
+COMPOSE_ENV_FILE="${COMPOSE_ENV_FILE:-${ROOT_DIR}/.env}"
+COMPOSE_ARGS=(-f "${COMPOSE_FILE}")
+if [[ -f "${COMPOSE_ENV_FILE}" ]]; then
+  COMPOSE_ARGS=(--env-file "${COMPOSE_ENV_FILE}" "${COMPOSE_ARGS[@]}")
+fi
 
 step() {
   printf '\n==> %s\n' "$1"
@@ -104,29 +109,26 @@ require_cmd curl
 
 if [[ "${SKIP_BUILD}" != "true" ]]; then
   require_cmd mvn
-  require_cmd npm
 
   step "Build Java services"
   mvn "-P${BUILD_PROFILE}" -DskipTests package \
     -pl ruoyi-gateway,ruoyi-auth,ruoyi-modules/ruoyi-system,ruoyi-modules/ruoyi-resource -am
 
-  step "Build frontend"
-  (
-    cd ruoyi-ui
-    npm install
-    npm run build:prod
-  )
+  step "Check standalone frontend"
+  test -f risk-portal/index.html
+  test -f risk-portal/app.css
+  test -f risk-portal/app.js
 else
   step "Use prebuilt artifacts"
   test -f ruoyi-gateway/target/ruoyi-gateway.jar
   test -f ruoyi-auth/target/ruoyi-auth.jar
   test -f ruoyi-modules/ruoyi-system/target/ruoyi-system.jar
   test -f ruoyi-modules/ruoyi-resource/target/ruoyi-resource.jar
-  test -f ruoyi-ui/dist/index.html
+  test -f risk-portal/index.html
 fi
 
 step "Build Docker images"
-docker compose -f "${COMPOSE_FILE}" build risk-ai ruoyi-gateway ruoyi-system ruoyi-auth ruoyi-resource nginx
+docker compose "${COMPOSE_ARGS[@]}" build risk-ai ruoyi-gateway ruoyi-system ruoyi-auth ruoyi-resource nginx
 
 step "Start middleware"
 mkdir -p script/docker/mysql/data script/docker/mysql/conf script/docker/redis/data script/docker/redis/conf script/docker/nacos/logs script/docker/logs
@@ -138,12 +140,12 @@ if ! chmod -R 777 script/docker/redis/data script/docker/nacos/logs script/docke
     exit 1
   fi
 fi
-docker compose -f "${COMPOSE_FILE}" up -d mysql redis
+docker compose "${COMPOSE_ARGS[@]}" up -d mysql redis
 wait_mysql
 import_sql "script/sql/semi-cloud.sql"
 import_sql "script/sql/risk-module.sql" "semi_cloud"
 import_sql "script/sql/semi-config.sql"
-docker compose -f "${COMPOSE_FILE}" up -d nacos risk-ai
+docker compose "${COMPOSE_ARGS[@]}" up -d nacos risk-ai
 wait_http "${NACOS_URL}/nacos" 120
 wait_http "http://127.0.0.1:18088/health" 60
 
@@ -157,10 +159,10 @@ publish_nacos_config "ruoyi-system.yml" "ruoyi-system.yml" "yaml" "${TOKEN}"
 publish_nacos_config "ruoyi-resource.yml" "ruoyi-resource.yml" "yaml" "${TOKEN}"
 
 step "Start application"
-docker compose -f "${COMPOSE_FILE}" up -d ruoyi-system ruoyi-resource ruoyi-auth ruoyi-gateway nginx
+docker compose "${COMPOSE_ARGS[@]}" up -d ruoyi-system ruoyi-resource ruoyi-auth ruoyi-gateway nginx
 
 step "Health summary"
-docker compose -f "${COMPOSE_FILE}" ps
+docker compose "${COMPOSE_ARGS[@]}" ps
 printf '\nFrontend: http://127.0.0.1\n'
 printf 'Gateway:  http://127.0.0.1:8080\n'
 printf 'Nacos:    %s/nacos\n' "${NACOS_URL}"
