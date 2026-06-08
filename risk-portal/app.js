@@ -13,24 +13,28 @@ const state = {
 
 const titles = {
   dashboard: "首页风险总览",
-  events: "风险事件",
+  upload: "数据上传与处理",
+  events: "风险详情",
   analysis: "风险分析",
   gis: "GIS 风险地图",
   enterprise: "企业画像",
   reports: "AI 报告生成",
+  alerts: "风险预警中心",
   knowledge: "知识库检索",
-  sources: "数据源管理"
+  system: "系统后台配置"
 };
 
 const viewLoaders = {
   dashboard: loadDashboard,
+  upload: loadUpload,
   events: loadEvents,
   analysis: loadAnalysis,
   gis: loadGis,
   enterprise: loadEnterprise,
   reports: loadReports,
+  alerts: loadAlerts,
   knowledge: loadKnowledge,
-  sources: loadSources
+  system: loadSources
 };
 
 class ParticleSystem {
@@ -412,6 +416,22 @@ function renderDashboardIntel(rows, kpis = {}) {
   `).join("");
 }
 
+async function loadUpload() {
+  const [kpisRes, eventsRes] = await Promise.all([
+    api("/risk/event/kpis"),
+    api("/risk/event/list?pageNum=1&pageSize=8")
+  ]);
+  const kpis = dataOf(kpisRes, {});
+  const rows = rowsOf(eventsRes);
+  $("#upload-total").textContent = `事件总数 ${formatNumber(kpis.total)}`;
+  $("#upload-recent-list").innerHTML = rows.length ? rows.map((item) => `
+    <article class="list-item">
+      <h4>${escapeHtml(valueOrDash(item.eventTitle))}</h4>
+      <p>${escapeHtml(valueOrDash(item.enterpriseName))} · ${escapeHtml(valueOrDash(item.sourceName))} · ${escapeHtml(formatDate(item.createTime))}</p>
+    </article>
+  `).join("") : empty("暂无真实入库记录");
+}
+
 async function loadEvents() {
   const params = new URLSearchParams({
     pageNum: String(state.eventPage),
@@ -743,6 +763,60 @@ async function loadReportDetail(id) {
   $("#report-content").textContent = report.content || report.errorMessage || "暂无报告内容";
 }
 
+async function loadAlerts() {
+  const params = new URLSearchParams({ pageNum: "1", pageSize: "80" });
+  const level = $("#alert-level").value;
+  const status = $("#alert-status").value;
+  const keyword = $("#alert-search").value.trim();
+  if (level) params.set("riskLevel", level);
+  if (status) params.set("status", status);
+  if (keyword) params.set("eventTitle", keyword);
+  const result = await api(`/risk/event/list?${params.toString()}`);
+  const rows = rowsOf(result);
+  const critical = rows.filter((item) => item.riskLevel === "CRITICAL").length;
+  const warning = rows.filter((item) => item.riskLevel === "WARNING").length;
+  const info = rows.filter((item) => item.riskLevel === "INFO").length;
+  $("#alert-critical").textContent = formatNumber(critical);
+  $("#alert-warning").textContent = formatNumber(warning);
+  $("#alert-info").textContent = formatNumber(info);
+  $("#alert-list").innerHTML = rows.length ? rows.map((item) => `
+    <article class="alert-item ${String(item.riskLevel || "").toLowerCase()}">
+      <div>
+        <time>${escapeHtml(formatDate(item.occurredAt || item.createTime))}</time>
+        <h4>${escapeHtml(valueOrDash(item.eventTitle))}</h4>
+        <p>${escapeHtml(valueOrDash(item.enterpriseName))} · ${escapeHtml(valueOrDash(item.sourceName))}</p>
+      </div>
+      <div class="alert-state">
+        ${levelBadge(item.riskLevel)}
+        ${statusBadge(item.status)}
+      </div>
+      <div class="row-actions">
+        <button class="link-btn" data-alert-detail="${item.eventId}" type="button">详情</button>
+        <button class="link-btn" data-alert-resolving="${item.eventId}" type="button">处理</button>
+        <button class="link-btn" data-alert-resolved="${item.eventId}" type="button">闭环</button>
+      </div>
+    </article>
+  `).join("") : empty("暂无符合条件的真实预警");
+  $all("[data-alert-detail]").forEach((button) => {
+    button.onclick = () => {
+      switchView("events");
+      setTimeout(() => runTask(() => loadEventDetail(button.dataset.alertDetail, button)), 120);
+    };
+  });
+  $all("[data-alert-resolving]").forEach((button) => {
+    button.onclick = () => runTask(async () => {
+      await handleEvent(button.dataset.alertResolving, "RESOLVING", button);
+      await loadAlerts();
+    });
+  });
+  $all("[data-alert-resolved]").forEach((button) => {
+    button.onclick = () => runTask(async () => {
+      await handleEvent(button.dataset.alertResolved, "RESOLVED", button);
+      await loadAlerts();
+    });
+  });
+}
+
 async function loadKnowledge() {
   const query = $("#knowledge-keyword").value.trim();
   const result = query
@@ -817,7 +891,13 @@ async function submitUpload(event) {
     const data = dataOf(result, {});
     event.currentTarget.reset();
     setStatus(`上传完成：企业 ${formatNumber(data.enterpriseRows)} 条，事件 ${formatNumber(data.eventRows)} 条`);
-    await loadEnterprise();
+    if (state.currentView === "upload") {
+      await loadUpload();
+    } else if (state.currentView === "enterprise") {
+      await loadEnterprise();
+    } else {
+      await loadDashboard();
+    }
   });
 }
 
@@ -900,6 +980,8 @@ function bindEvents() {
     button.onclick = () => switchView(button.dataset.viewJump);
   });
   $("#refresh-btn").onclick = () => switchView(state.currentView);
+  $("#upload-form-main").onsubmit = bindSubmit(submitUpload);
+  $("#download-template-main").onclick = downloadUploadTemplate;
   $("#event-search").onclick = () => {
     state.eventPage = 1;
     switchView("events");
@@ -949,6 +1031,15 @@ function bindEvents() {
   $("#upload-form").onsubmit = bindSubmit(submitUpload);
   $("#download-template").onclick = downloadUploadTemplate;
   $("#report-form").onsubmit = bindSubmit(submitReport);
+  $("#alert-refresh").onclick = () => switchView("alerts");
+  ["#alert-search", "#alert-level", "#alert-status"].forEach((selector) => {
+    $(selector).onkeydown = (event) => {
+      if (event.key === "Enter") switchView("alerts");
+    };
+    if ($(selector).tagName === "SELECT") {
+      $(selector).onchange = () => switchView("alerts");
+    }
+  });
   $("#knowledge-search").onclick = () => switchView("knowledge");
   $("#knowledge-keyword").onkeydown = (event) => {
     if (event.key === "Enter") switchView("knowledge");

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>供应链风险智能管理系统</title>
     <script src="https://modao.cc/agent-py/static/source/js/iconify-icon.min.js"></script>
-    <link rel="stylesheet" href="./app.css?v=cyber-20260608b" />
+    <link rel="stylesheet" href="./app.css?v=cyber-20260608c" />
   </head>
   <body>
     <canvas id="particle-canvas" aria-hidden="true"></canvas>
@@ -66,9 +66,13 @@
             <iconify-icon icon="lucide:layout-dashboard"></iconify-icon>
             <span class="nav-text">首页风险总览</span>
           </button>
+          <button class="nav-item" data-view="upload" type="button">
+            <iconify-icon icon="lucide:upload-cloud"></iconify-icon>
+            <span class="nav-text">数据上传</span>
+          </button>
           <button class="nav-item" data-view="events" type="button">
             <iconify-icon icon="lucide:file-search"></iconify-icon>
-            <span class="nav-text">风险事件</span>
+            <span class="nav-text">风险详情</span>
           </button>
           <button class="nav-item" data-view="analysis" type="button">
             <iconify-icon icon="lucide:bar-chart-3"></iconify-icon>
@@ -86,13 +90,17 @@
             <iconify-icon icon="lucide:file-text"></iconify-icon>
             <span class="nav-text">AI 报告生成</span>
           </button>
+          <button class="nav-item" data-view="alerts" type="button">
+            <iconify-icon icon="lucide:bell"></iconify-icon>
+            <span class="nav-text">预警中心</span>
+          </button>
           <button class="nav-item" data-view="knowledge" type="button">
             <iconify-icon icon="lucide:library"></iconify-icon>
             <span class="nav-text">知识库检索</span>
           </button>
-          <button class="nav-item" data-view="sources" type="button">
-            <iconify-icon icon="lucide:database-zap"></iconify-icon>
-            <span class="nav-text">数据源管理</span>
+          <button class="nav-item" data-view="system" type="button">
+            <iconify-icon icon="lucide:settings"></iconify-icon>
+            <span class="nav-text">系统管理</span>
           </button>
         </nav>
         <div class="user-card">
@@ -235,6 +243,38 @@
                   <tbody id="latest-events"></tbody>
                 </table>
               </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="upload" class="view">
+          <div class="upload-layout">
+            <section class="panel hud-card upload-main">
+              <div class="corner-br"></div><div class="corner-bl"></div>
+              <div class="stepper" aria-label="数据导入流程">
+                <span class="step active">1 上传文件</span>
+                <span class="step">2 模板校验</span>
+                <span class="step">3 数据清洗</span>
+                <span class="step">4 写入风险库</span>
+              </div>
+              <form id="upload-form-main" class="upload-drop">
+                <iconify-icon icon="lucide:upload-cloud"></iconify-icon>
+                <h3>上传真实经营/供应链 CSV</h3>
+                <p>按模板字段导入企业与风险事件，导入后立即参与总览、分析、GIS 与报告生成。</p>
+                <input name="file" class="input file-input" type="file" accept=".csv,text/csv" required />
+                <div class="button-row">
+                  <button class="button primary" type="submit">校验并导入</button>
+                  <button id="download-template-main" class="button" type="button">下载模板</button>
+                </div>
+              </form>
+            </section>
+            <section class="panel hud-card upload-side">
+              <div class="corner-br"></div><div class="corner-bl"></div>
+              <div class="panel-header">
+                <h3><iconify-icon icon="lucide:file-check-2"></iconify-icon>最近入库记录</h3>
+                <span id="upload-total" class="muted">--</span>
+              </div>
+              <div id="upload-recent-list" class="list"></div>
             </section>
           </div>
         </section>
@@ -406,6 +446,40 @@
           </div>
         </section>
 
+        <section id="alerts" class="view">
+          <section class="panel hud-card">
+            <div class="corner-br"></div><div class="corner-bl"></div>
+            <div class="alert-head">
+              <div>
+                <p class="eyebrow">REAL-TIME ALERT CENTER</p>
+                <h3>风险预警中心</h3>
+              </div>
+              <div class="alert-metrics">
+                <span><b id="alert-critical">--</b> 高危</span>
+                <span><b id="alert-warning">--</b> 中危</span>
+                <span><b id="alert-info">--</b> 低危</span>
+              </div>
+            </div>
+            <div class="toolbar">
+              <input id="alert-search" class="input grow" placeholder="搜索告警标题或来源" />
+              <select id="alert-level" class="input compact">
+                <option value="">全部等级</option>
+                <option value="CRITICAL">CRITICAL</option>
+                <option value="WARNING">WARNING</option>
+                <option value="INFO">INFO</option>
+              </select>
+              <select id="alert-status" class="input compact">
+                <option value="">全部状态</option>
+                <option value="UNRESOLVED">未处理</option>
+                <option value="RESOLVING">处理中</option>
+                <option value="RESOLVED">已闭环</option>
+              </select>
+              <button id="alert-refresh" class="button primary" type="button">刷新预警</button>
+            </div>
+            <div id="alert-list" class="alert-list"></div>
+          </section>
+        </section>
+
         <section id="knowledge" class="view">
           <section class="panel hud-card">
             <div class="corner-br"></div><div class="corner-bl"></div>
@@ -428,9 +502,23 @@
           </section>
         </section>
 
-        <section id="sources" class="view">
+        <section id="system" class="view">
           <section class="panel hud-card">
             <div class="corner-br"></div><div class="corner-bl"></div>
+            <div class="system-summary">
+              <article>
+                <span>服务状态</span>
+                <strong id="system-health">运行中</strong>
+              </article>
+              <article>
+                <span>数据策略</span>
+                <strong>真实源爬取</strong>
+              </article>
+              <article>
+                <span>持久化</span>
+                <strong>本地 JSON</strong>
+              </article>
+            </div>
             <div class="toolbar section-toolbar">
               <button id="crawler-run" class="button primary" type="button">立即爬取真实数据</button>
               <span id="crawler-status" class="muted">等待爬取状态</span>
@@ -468,6 +556,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=cyber-20260608b"></script>
+    <script src="./app.js?v=cyber-20260608c"></script>
   </body>
 </html>
