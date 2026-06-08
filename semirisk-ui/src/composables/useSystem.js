@@ -5,10 +5,29 @@ export function useSystem(state, notify) {
     state.system = await systemApi.overview();
   }
 
+  async function loadAiConfig() {
+    try {
+      const data = await systemApi.getAiConfig();
+      const configs = data && typeof data === 'object' ? data : {};
+      const entry = Object.values(configs)[0];
+      if (entry) {
+        state.aiConfig.model = entry.model || state.aiConfig.model;
+        state.aiConfig.endpoint = entry.endpoint || state.aiConfig.endpoint;
+        // maskedApiKey from server; real key stays blank in UI unless user re-enters
+        if (entry.configured) {
+          state.aiConfigSaved = true;
+        }
+      }
+    } catch {
+      // backend not ready yet; keep defaults
+    }
+  }
+
   async function saveAiConfig() {
     await systemApi.saveAiConfig(state.aiConfig);
+    state.aiConfigSaved = true;
     await loadSystem();
-    notify('AI API Key 已保存并脱敏展示');
+    notify('AI API Key 已保存，重启后自动加载');
   }
 
   async function pingModel() {
@@ -29,5 +48,5 @@ export function useSystem(state, notify) {
     notify(result?.result || 'Agent 已触发');
   }
 
-  return { loadSystem, saveAiConfig, pingModel, reconnectSource, triggerAgent };
+  return { loadSystem, loadAiConfig, saveAiConfig, pingModel, reconnectSource, triggerAgent };
 }

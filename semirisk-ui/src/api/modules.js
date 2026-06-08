@@ -67,6 +67,7 @@ export const knowledgeApi = {
 
 export const systemApi = {
   overview: () => request('/api/system/overview'),
+  getAiConfig: () => request('/api/system/models/config'),
   saveAiConfig: payload => request('/api/system/models/config', {
     method: 'POST',
     body: JSON.stringify(payload)

@@ -61,6 +61,7 @@ export function useSemiRiskApp() {
     systemLogPage: 1,
     systemLogDate: new Date().toISOString().slice(0, 10),
     aiConfig: { model: 'deepseek-v4-pro', endpoint: 'https://api.deepseek.com/v1', apiKey: '' },
+    aiConfigSaved: false,
     modelPing: null
   });
 
@@ -116,9 +117,9 @@ export function useSemiRiskApp() {
   }
 
   function setAuthMode(mode) {
-    state.authMode = mode === 'register' ? 'register' : 'login';
-    const target = state.authMode === 'register' ? '/register' : '/login';
-    if (route.path !== target) router.push(target);
+    if (mode === 'register') state.authMode = 'register';
+    else if (mode === 'forgot') state.authMode = 'forgot';
+    else state.authMode = 'login';
   }
 
   function replaceRoute(path) {
@@ -176,6 +177,12 @@ export function useSemiRiskApp() {
     if (mode) state.authMode = String(mode);
   });
 
+  // Clear router-based auth redirects since we now handle auth inline
+  watch(() => route.path, path => {
+    if (path === '/login') { state.authMode = 'login'; router.replace('/dashboard'); }
+    else if (path === '/register') { state.authMode = 'register'; router.replace('/dashboard'); }
+  });
+
   onMounted(async () => {
     clock = setInterval(() => (state.now = new Date().toLocaleString('zh-CN', { hour12: false })), 1000);
     keyHandler = event => {
@@ -193,6 +200,9 @@ export function useSemiRiskApp() {
       notify('登录已过期，请重新登录');
     };
     window.addEventListener('semirisk-auth-expired', authExpiredHandler);
+
+    // Always pre-load saved AI config so the system page shows it without re-entering
+    system.loadAiConfig();
 
     if (state.session) {
       const restored = await auth.restoreSession();

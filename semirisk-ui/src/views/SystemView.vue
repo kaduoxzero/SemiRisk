@@ -1,19 +1,28 @@
 <template>
   <section class="grid">
-    <div class="panel">
+    <div class="panel ai-config-panel">
       <div class="toolbar compact-toolbar">
         <h3>AI 模型 API Key 配置</h3>
+        <span v-if="state.aiConfigSaved" class="badge low">已保存 · 自动加载</span>
         <span v-if="state.modelPing" class="badge" :class="state.modelPing.reachable ? 'low' : 'high'">
           {{ state.modelPing.reachable ? '可达 ' + state.modelPing.latencyMs + 'ms' : '不可达' }}
         </span>
       </div>
-      <p class="muted">保存后知识库智能体与本日报告会优先调用该模型；返回中展示 aiCalled、模型状态与 Token 使用量。</p>
-      <div class="toolbar">
-        <input v-model="state.aiConfig.model" class="input" placeholder="模型名称，如 deepseek-v4-pro" />
-        <input v-model="state.aiConfig.endpoint" class="input" placeholder="Endpoint" />
-        <input v-model="state.aiConfig.apiKey" class="input" placeholder="API Key" type="password" />
-        <button class="btn" @click="actions.saveAiConfig">保存并用于 AI</button>
-        <button class="btn secondary" @click="actions.pingModel">连通性测试</button>
+      <p class="muted">配置保存后重启服务自动加载，无需重复输入。知识库智能体与本日报告均调用该模型。</p>
+      <div class="ai-config-grid">
+        <label class="config-label">模型名称
+          <input v-model="state.aiConfig.model" class="input" placeholder="deepseek-v4-pro" />
+        </label>
+        <label class="config-label">Endpoint
+          <input v-model="state.aiConfig.endpoint" class="input" placeholder="https://api.deepseek.com/v1" />
+        </label>
+        <label class="config-label">API Key
+          <input v-model="state.aiConfig.apiKey" class="input" :placeholder="state.aiConfigSaved ? '已配置（留空保留原值）' : 'sk-...'" type="password" />
+        </label>
+        <div class="config-actions">
+          <button class="btn" @click="actions.saveAiConfig">保存</button>
+          <button class="btn secondary" @click="actions.pingModel">连通性测试</button>
+        </div>
       </div>
     </div>
 
@@ -55,7 +64,14 @@
     <div class="grid cols-2">
       <div class="panel fixed-panel">
         <h3>用户</h3>
-        <p v-for="u in state.system.users || []" :key="u.id">{{ u.username }} · {{ u.role }} · {{ u.status }}</p>
+        <div class="user-list">
+          <div v-for="u in state.system.users || []" :key="u.id" class="user-row">
+            <span class="badge" :class="u.role === 'ADMIN' ? 'high' : 'low'">{{ u.role }}</span>
+            <strong>{{ u.username }}</strong>
+            <span class="muted">{{ u.displayName }}</span>
+            <span class="badge" :class="u.status === 'ACTIVE' ? 'low' : 'mid'">{{ u.status }}</span>
+          </div>
+        </div>
         <p v-if="!(state.system.users || []).length" class="muted">暂无用户。</p>
       </div>
       <div class="panel fixed-panel">
