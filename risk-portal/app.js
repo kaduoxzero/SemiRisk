@@ -786,7 +786,7 @@ function renderGlobe(selector, rows) {
       <canvas id="globe-canvas"></canvas>
       <aside id="globe-detail" class="globe-detail">
         <h4>${formatNumber(valid.length)} 个真实风险点</h4>
-        <p>连线表示邻近真实坐标事件的空间关联。地球自动旋转，可拖动接管视角，点击亮点查看详情。</p>
+        <p>发光弧线表示邻近真实坐标事件的空间关联。地球自动旋转，可拖动接管视角，点击亮点查看详情。</p>
       </aside>
     </div>
   `;
@@ -851,19 +851,19 @@ function renderGlobe(selector, rows) {
 
   function drawAtmosphere(cx, cy, radius) {
     ctx.save();
-    ctx.shadowColor = "rgba(56,189,248,0.75)";
-    ctx.shadowBlur = 34;
+    ctx.shadowColor = "rgba(125,211,252,0.72)";
+    ctx.shadowBlur = 42;
     ctx.beginPath();
     ctx.arc(cx, cy, radius + 2, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(125,211,252,0.55)";
+    ctx.strokeStyle = "rgba(186,230,253,0.58)";
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.restore();
 
     ctx.beginPath();
-    ctx.arc(cx, cy, radius * 1.08, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(59,130,246,0.16)";
-    ctx.lineWidth = 18;
+    ctx.arc(cx, cy, radius * 1.075, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(14,165,233,0.18)";
+    ctx.lineWidth = 20;
     ctx.stroke();
   }
 
@@ -883,8 +883,8 @@ function renderGlobe(selector, rows) {
         else ctx.lineTo(point.x, point.y);
       });
       ctx.closePath();
-      ctx.fillStyle = "rgba(15,118,110,0.38)";
-      ctx.strokeStyle = "rgba(94,234,212,0.32)";
+      ctx.fillStyle = "rgba(84,132,76,0.56)";
+      ctx.strokeStyle = "rgba(187,247,208,0.26)";
       ctx.lineWidth = 1.2;
       ctx.fill();
       ctx.stroke();
@@ -893,7 +893,7 @@ function renderGlobe(selector, rows) {
   }
 
   function drawGrid(cx, cy, radius) {
-    ctx.strokeStyle = "rgba(125,211,252,0.16)";
+    ctx.strokeStyle = "rgba(186,230,253,0.12)";
     ctx.lineWidth = 1;
     for (let lat = -60; lat <= 60; lat += 30) {
       const r = radius * Math.cos(lat * Math.PI / 180);
@@ -915,10 +915,44 @@ function renderGlobe(selector, rows) {
     return "#a78bfa";
   }
 
+  function drawClouds(cx, cy, radius) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius - 1, 0, Math.PI * 2);
+    ctx.clip();
+    for (let i = 0; i < 9; i += 1) {
+      const lat = -48 + i * 12;
+      const p = project({ longitude: -80 + i * 37, latitude: lat + Math.sin((model.rotation + i * 18) * Math.PI / 180) * 5 });
+      if (p.z < -0.2) continue;
+      const band = radius * (0.62 + seeded(i, 89) * 0.28);
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y, band, radius * (0.018 + seeded(i, 97) * 0.018), (model.rotation * 0.35 + i * 22) * Math.PI / 180, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(241,245,249,${0.12 + seeded(i, 113) * 0.1})`;
+      ctx.lineWidth = 3 + seeded(i, 131) * 4;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawLighting(cx, cy, radius) {
+    const shade = ctx.createRadialGradient(cx - radius * 0.46, cy - radius * 0.42, radius * 0.1, cx + radius * 0.24, cy + radius * 0.16, radius * 1.15);
+    shade.addColorStop(0, "rgba(255,255,255,0.18)");
+    shade.addColorStop(0.42, "rgba(255,255,255,0.02)");
+    shade.addColorStop(0.74, "rgba(15,23,42,0.28)");
+    shade.addColorStop(1, "rgba(0,0,0,0.66)");
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = shade;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+
   function drawConnections(points, cx, cy, radius) {
     const candidates = [...points]
       .sort((a, b) => Number(b.row.riskScore || 0) - Number(a.row.riskScore || 0))
-      .slice(0, 130);
+      .slice(0, 180);
     const edges = [];
     const seen = new Set();
     candidates.forEach((point, index) => {
@@ -927,7 +961,7 @@ function renderGlobe(selector, rows) {
         if (i === index) continue;
         const other = candidates[i];
         const distance = Math.hypot(point.x - other.x, point.y - other.y);
-        if (distance < 24 || distance > 96) continue;
+        if (distance < 18 || distance > 132) continue;
         if (!nearest || distance < nearest.distance) nearest = { other, distance, index: i };
       }
       if (!nearest) return;
@@ -942,17 +976,23 @@ function renderGlobe(selector, rows) {
     ctx.beginPath();
     ctx.arc(cx, cy, radius - 1, 0, Math.PI * 2);
     ctx.clip();
-    edges.slice(0, 120).forEach((edge) => {
-      const alpha = Math.max(0.12, 0.38 - edge.distance / 300);
+    ctx.shadowColor = "rgba(34,211,238,0.82)";
+    ctx.shadowBlur = 8;
+    edges.slice(0, 160).forEach((edge) => {
+      const alpha = Math.max(0.26, 0.72 - edge.distance / 260);
+      const mx = (edge.from.x + edge.to.x) / 2;
+      const my = (edge.from.y + edge.to.y) / 2;
+      const controlX = cx + (mx - cx) * 1.12;
+      const controlY = cy + (my - cy) * 1.12;
       const gradient = ctx.createLinearGradient(edge.from.x, edge.from.y, edge.to.x, edge.to.y);
-      gradient.addColorStop(0, `rgba(34,211,238,${alpha})`);
-      gradient.addColorStop(0.5, `rgba(167,139,250,${alpha * 0.8})`);
+      gradient.addColorStop(0, `rgba(125,211,252,${alpha})`);
+      gradient.addColorStop(0.5, `rgba(34,211,238,${alpha})`);
       gradient.addColorStop(1, `rgba(251,113,133,${alpha * 0.9})`);
       ctx.beginPath();
       ctx.moveTo(edge.from.x, edge.from.y);
-      ctx.lineTo(edge.to.x, edge.to.y);
+      ctx.quadraticCurveTo(controlX, controlY, edge.to.x, edge.to.y);
       ctx.strokeStyle = gradient;
-      ctx.lineWidth = 0.8;
+      ctx.lineWidth = 1.55;
       ctx.stroke();
     });
     ctx.restore();
@@ -965,16 +1005,18 @@ function renderGlobe(selector, rows) {
     model.points = [];
     drawBackdrop();
     drawAtmosphere(cx, cy, radius);
-    const gradient = ctx.createRadialGradient(cx - radius * 0.42, cy - radius * 0.36, radius * 0.05, cx, cy, radius * 1.08);
-    gradient.addColorStop(0, "rgba(125,211,252,0.92)");
-    gradient.addColorStop(0.32, "rgba(14,165,233,0.52)");
-    gradient.addColorStop(0.72, "rgba(15,23,42,0.94)");
-    gradient.addColorStop(1, "rgba(2,6,23,0.98)");
+    const gradient = ctx.createRadialGradient(cx - radius * 0.42, cy - radius * 0.36, radius * 0.04, cx, cy, radius * 1.08);
+    gradient.addColorStop(0, "rgba(186,230,253,0.98)");
+    gradient.addColorStop(0.18, "rgba(56,189,248,0.58)");
+    gradient.addColorStop(0.58, "rgba(12,74,110,0.94)");
+    gradient.addColorStop(1, "rgba(8,25,44,0.98)");
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
     ctx.fillStyle = gradient;
     ctx.fill();
     drawLand(cx, cy, radius);
+    drawClouds(cx, cy, radius);
+    drawLighting(cx, cy, radius);
     drawGrid(cx, cy, radius);
 
     const visiblePoints = valid.map((row) => {
