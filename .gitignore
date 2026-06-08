@@ -64,3 +64,5 @@ script/docker/mysql/data/
 script/docker/redis/data/
 script/docker/nacos/logs/
 !/script/health-check-semirisk.sh
+/logs/
+/data/
