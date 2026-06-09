@@ -154,10 +154,15 @@ function initGlobe() {
   renderer.setSize(host.clientWidth, host.clientHeight);
   host.appendChild(renderer.domElement);
 
-  scene.add(new THREE.AmbientLight(0x9cc7ff, 1.2));
-  const key = new THREE.DirectionalLight(0xffffff, 2.1);
-  key.position.set(4, 3, 5);
-  scene.add(key);
+  // Lighting - sun-like directional light from one side for realistic shading
+  scene.add(new THREE.AmbientLight(0x223355, 0.6));
+  const sun = new THREE.DirectionalLight(0xfff8e8, 3.2);
+  sun.position.set(8, 4, 6);
+  scene.add(sun);
+  // Soft fill from opposite side (atmosphere scatter)
+  const fill = new THREE.DirectionalLight(0x4488cc, 0.4);
+  fill.position.set(-6, -2, -4);
+  scene.add(fill);
 
   globeGroup = new THREE.Group();
   pointGroup = new THREE.Group();
@@ -166,15 +171,59 @@ function initGlobe() {
   globeGroup.add(heatGroup, routeGroup, pointGroup);
   scene.add(globeGroup);
 
-  const earth = new THREE.Mesh(
-    new THREE.SphereGeometry(2.05, 96, 64),
-    new THREE.MeshPhongMaterial({ color: 0x123a6f, emissive: 0x071b38, shininess: 18, transparent: true, opacity: 0.96 })
-  );
+  const loader = new THREE.TextureLoader();
+
+  // Earth sphere with real texture from NASA Blue Marble (public domain, served via cdnjs/unpkg proxy)
+  const earthGeo = new THREE.SphereGeometry(2.05, 96, 64);
+
+  // Load texture async - use fallback color until loaded
+  const earthMat = new THREE.MeshPhongMaterial({
+    color: 0x2255aa,
+    emissive: 0x050e20,
+    shininess: 12,
+    specular: 0x224466
+  });
+  const earth = new THREE.Mesh(earthGeo, earthMat);
   globeGroup.add(earth);
 
+  // Try loading earth texture from multiple CDN sources
+  const textureSources = [
+    'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_atmos_2048.jpg',
+    'https://unpkg.com/three@0.160.0/examples/textures/planets/earth_atmos_2048.jpg'
+  ];
+  let loaded = false;
+  const tryLoad = (index) => {
+    if (index >= textureSources.length || loaded) return;
+    loader.load(
+      textureSources[index],
+      (texture) => {
+        if (loaded) return;
+        loaded = true;
+        earthMat.map = texture;
+        earthMat.color.setHex(0xffffff);
+        earthMat.needsUpdate = true;
+      },
+      undefined,
+      () => tryLoad(index + 1)
+    );
+  };
+  tryLoad(0);
+
+  // Atmosphere glow ring
+  const atmGeo = new THREE.SphereGeometry(2.11, 64, 48);
+  const atmMat = new THREE.MeshPhongMaterial({
+    color: 0x4488ff,
+    transparent: true,
+    opacity: 0.08,
+    side: THREE.FrontSide,
+    depthWrite: false
+  });
+  globeGroup.add(new THREE.Mesh(atmGeo, atmMat));
+
+  // Subtle wireframe grid overlay
   const wire = new THREE.Mesh(
-    new THREE.SphereGeometry(2.065, 48, 32),
-    new THREE.MeshBasicMaterial({ color: 0x4ea1ff, wireframe: true, transparent: true, opacity: 0.12 })
+    new THREE.SphereGeometry(2.065, 36, 24),
+    new THREE.MeshBasicMaterial({ color: 0x4ea1ff, wireframe: true, transparent: true, opacity: 0.07 })
   );
   globeGroup.add(wire);
   addLatLonGrid();
