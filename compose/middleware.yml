@@ -48,7 +48,26 @@ services:
       - "5672:5672"
       - "15672:15672"
 
+  # Nacos 服务注册发现 + 配置中心
+  nacos:
+    image: nacos/nacos-server:v2.4.3
+    container_name: semirisk-nacos
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+
+  # Zipkin 分布式链路追踪
+  zipkin:
+    image: openzipkin/zipkin:3.4
+    container_name: semirisk-zipkin
+    ports:
+      - "9411:9411"
+
 volumes:
   semirisk-mysql:
   semirisk-minio:
-

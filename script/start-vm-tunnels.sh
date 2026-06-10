@@ -23,7 +23,9 @@ all_tunnel_ports_listening() {
     && lsof -nP -iTCP:9001 -sTCP:LISTEN >/dev/null 2>&1 \
     && lsof -nP -iTCP:5672 -sTCP:LISTEN >/dev/null 2>&1 \
     && lsof -nP -iTCP:15672 -sTCP:LISTEN >/dev/null 2>&1 \
-    && lsof -nP -iTCP:8848 -sTCP:LISTEN >/dev/null 2>&1
+    && lsof -nP -iTCP:8848 -sTCP:LISTEN >/dev/null 2>&1 \
+    && lsof -nP -iTCP:9848 -sTCP:LISTEN >/dev/null 2>&1 \
+    && lsof -nP -iTCP:9411 -sTCP:LISTEN >/dev/null 2>&1
 }
 
 if [[ -f "${PID_FILE}" ]]; then
@@ -64,6 +66,8 @@ SSH_ARGS=(
   -L 5672:127.0.0.1:5672
   -L 15672:127.0.0.1:15672
   -L 8848:127.0.0.1:8848
+  -L 9848:127.0.0.1:9848
+  -L 9411:127.0.0.1:9411
   "${VM_USER}@${VM_HOST}"
 )
 
@@ -107,6 +111,8 @@ if [[ -n "${SEMIRISK_SSH_JUMP_PASSWORD:-}" && -n "${SEMIRISK_VM_PASSWORD:-}" ]];
       -L 5672:127.0.0.1:5672 \
       -L 15672:127.0.0.1:15672 \
       -L 8848:127.0.0.1:8848 \
+      -L 9848:127.0.0.1:9848 \
+      -L 9411:127.0.0.1:9411 \
       $env(SEMIRISK_VM_USER)@$env(SEMIRISK_VM_HOST)
     expect {
       -re "(?i)password:" {

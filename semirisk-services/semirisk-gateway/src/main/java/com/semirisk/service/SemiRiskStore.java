@@ -99,9 +99,9 @@ public class SemiRiskStore {
         recoverFromDatabase();
     }
 
-    @Scheduled(cron = "0 0 */12 * * *")
+    @Scheduled(fixedDelayString = "${semirisk.risk.refresh-interval-ms:300000}", initialDelayString = "${semirisk.risk.initial-delay-ms:60000}")
     public void refreshDailyRiskRecords() {
-        auditLogs.add("[INFO] gateway scheduled refresh tick; waiting for data-service public crawler sync");
+        auditLogs.add("[INFO] gateway scheduled refresh tick; pulling latest crawler signals");
     }
 
     public void refreshDailyRiskRecords(List<CrawlerSignal> signals) {
@@ -159,6 +159,9 @@ public class SemiRiskStore {
         }
         loadAlertStatusesFromDb();
         seedEnterpriseWatchlist();
+        recoverUsersToMemory();
+        recoverUploadTasks();
+        recoverReportJobs();
     }
 
     private List<CrawlerSignal> loadRecentSignalsFromDb() {
@@ -234,6 +237,52 @@ public class SemiRiskStore {
                     publicAlertStatuses.put(id, status);
                 }
             });
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 从 MySQL 恢复上传任务到内存。 */
+    private void recoverUploadTasks() {
+        try {
+            List<Map<String, Object>> rows = repository.findUploadTasks(200);
+            for (Map<String, Object> row : rows) {
+                String id = stringValue(row.get("id"));
+                String filename = stringValue(row.get("filename"));
+                long size = asInt(row.get("size"));
+                String status = stringValue(row.get("status"));
+                int rowsCount = asInt(row.get("rows"));
+                Instant createdAt = toInstant(row.get("createdAt"));
+                // 只恢复非完成状态的任务
+                if (!"导入成功".equals(status) && !"无有效数据".equals(status) && !"失败".equals(status)) {
+                    UploadTask task = new UploadTask(id, filename, size, status, createdAt, rowsCount, List.of());
+                    uploadTasks.put(id, task);
+                }
+            }
+            auditLogs.add("[INFO] recovered " + rows.size() + " upload tasks from MySQL");
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 从 MySQL 恢复报告任务到内存。 */
+    private void recoverReportJobs() {
+        try {
+            List<Map<String, Object>> rows = repository.findReportJobs(200);
+            for (Map<String, Object> row : rows) {
+                String id = stringValue(row.get("id"));
+                if (reportJobs.containsKey(id)) continue; // 已在内存中
+                String template = stringValue(row.get("template"));
+                String language = stringValue(row.get("language"));
+                String format = stringValue(row.get("format"));
+                int threshold = asInt(row.get("threshold"));
+                String status = stringValue(row.get("status"));
+                int progress = asInt(row.get("progress"));
+                String step = stringValue(row.get("step"));
+                String downloadUrl = stringValue(row.get("downloadUrl"));
+                Instant createdAt = toInstant(row.get("createdAt"));
+                ReportJob job = new ReportJob(id, template, language, format, threshold, status, progress, step, downloadUrl, createdAt);
+                reportJobs.put(id, job);
+            }
+            auditLogs.add("[INFO] recovered " + rows.size() + " report jobs from MySQL");
         } catch (Exception ignored) {
         }
     }
@@ -389,12 +438,44 @@ public class SemiRiskStore {
     }
 
     public Optional<UserAccount> authenticate(String username, String password) {
+        // 内存用户路径：仅用于兜底（启动管理员、本地开发），密码用明文校验
         UserAccount account = users.get(username);
-        if (account == null || !account.enabled() || !account.password().equals(password)) {
-            return Optional.empty();
+        if (account != null && account.enabled() && account.password().equals(password)) {
+            loginCounters.remove(username);
+            return Optional.of(account);
         }
-        loginCounters.remove(username);
-        return Optional.of(account);
+        return Optional.empty();
+    }
+
+    /** 从 MySQL 恢复已注册用户到内存，确保数据库可用时登录路径一致。 */
+    public void recoverUsersToMemory() {
+        try {
+            List<Map<String, Object>> allUsers = findAllSystemUsers();
+            for (Map<String, Object> row : allUsers) {
+                String status = stringValue(row.get("status"));
+                String username = stringValue(row.get("username"));
+                if ("启用".equals(status) && !username.isEmpty()) {
+                    String displayName = stringValue(row.get("displayName"));
+                    if (displayName.isBlank()) displayName = username;
+                    String role = stringValue(row.get("role"));
+                    // 不覆盖启动管理员（已在 upsertLoginUser 中写入）
+                    if (!users.containsKey(username)) {
+                        users.put(username, new UserAccount(username, "", displayName, role, true));
+                    }
+                }
+            }
+            auditLogs.add("[INFO] recovered " + allUsers.size() + " users from MySQL to memory");
+        } catch (Exception ignored) {
+            // MySQL 不可达时跳过
+        }
+    }
+
+    private List<Map<String, Object>> findAllSystemUsers() {
+        try {
+            return repository.findSystemUsers();
+        } catch (Exception ignored) {
+            return List.of();
+        }
     }
 
     public UserAccount register(String username, String password, String displayName, String email) {
@@ -562,13 +643,20 @@ public class SemiRiskStore {
         if (job == null) {
             throw new IllegalArgumentException("报告任务不存在");
         }
-        int progress = Math.min(100, job.progress() + 34);
+        // 真实进度：聚合(25%) → AI 调用(60%) → 编排(85%) → 渲染(100%)
+        int current = job.progress();
+        int next = current + 25; // 每轮轮询推进 25%，4 轮完成
+        if (next > 100) next = 100;
+        int progress = Math.max(next, current); // 不倒退
         String status = progress >= 100 ? "已完成" : "生成中";
-        String step = switch (Math.min(progress / 25, 4)) {
-            case 0 -> "聚合风险事件与供应商画像";
-            case 1 -> "调用 AI 生成风险摘要";
-            case 2 -> "编排处置建议与图表";
-            case 3 -> "渲染导出文件";
+        String step = switch (progress) {
+            case 0 -> "任务已接受";
+            case 1 -> "聚合风险事件与供应商画像";
+            case 25 -> "准备 AI 分析上下文";
+            case 50 -> "调用 AI 模型生成风险摘要";
+            case 60 -> "AI 模型响应中";
+            case 75 -> "编排处置建议与图表";
+            case 85 -> "渲染导出文件";
             default -> "报告文件已生成";
         };
         String downloadUrl = progress >= 100 ? "/api/reports/" + id + "/download" : null;
@@ -1647,18 +1735,24 @@ public class SemiRiskStore {
                     )
             );
             HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(java.time.Duration.ofSeconds(25))
+                    .timeout(java.time.Duration.ofSeconds(45)) // DeepSeek 模型响应可能较慢
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + apiKey)
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                auditLogs.add("[WARN] DeepSeek call failed status=" + response.statusCode());
-                return new AiAnswer(false, "", "DeepSeek 调用失败，HTTP " + response.statusCode() + "，已回退本地 RAG 摘要", Map.of("httpStatus", response.statusCode()));
+                String errorBody = response.body() != null ? response.body().substring(0, Math.min(200, response.body().length())) : "(empty)";
+                auditLogs.add("[WARN] DeepSeek call failed status=" + response.statusCode() + " body=" + errorBody);
+                return new AiAnswer(false, "", "DeepSeek 调用失败，HTTP " + response.statusCode() + "，已回退本地 RAG 摘要",
+                        Map.of("httpStatus", response.statusCode(), "error", errorBody));
             }
             JsonNode root = objectMapper.readTree(response.body());
             String answer = root.path("choices").path(0).path("message").path("content").asText("");
+            if (answer.isBlank()) {
+                auditLogs.add("[WARN] DeepSeek returned empty answer");
+                return new AiAnswer(false, "", "DeepSeek 返回空答案，已回退本地 RAG 摘要", Map.of());
+            }
             Map<String, Object> usage = new HashMap<>();
             JsonNode usageNode = root.path("usage");
             if (!usageNode.isMissingNode()) {

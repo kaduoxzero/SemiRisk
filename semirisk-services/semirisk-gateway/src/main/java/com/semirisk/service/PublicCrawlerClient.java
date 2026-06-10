@@ -7,9 +7,14 @@ import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 公开源爬虫客户端：调用 data-service 拉取 RSS/Atom 信号。
+ * 增加超时缓冲（2s→5s connect, 4s→10s read）和重试机制，应对中转网络波动。
+ */
 @Service
 public class PublicCrawlerClient {
 
@@ -17,8 +22,9 @@ public class PublicCrawlerClient {
 
     public PublicCrawlerClient(@Value("${semirisk.data-service.url}") String dataServiceUrl) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofSeconds(2));
-        requestFactory.setReadTimeout(Duration.ofSeconds(4));
+        // 增加超时：中转网络可能延迟较大
+        requestFactory.setConnectTimeout(Duration.ofSeconds(5));
+        requestFactory.setReadTimeout(Duration.ofSeconds(10));
         this.restClient = RestClient.builder()
                 .baseUrl(dataServiceUrl)
                 .requestFactory(requestFactory)
@@ -27,6 +33,21 @@ public class PublicCrawlerClient {
 
     @SuppressWarnings("unchecked")
     public List<SemiRiskStore.CrawlerSignal> today() {
+        // 重试 2 次，间隔 1s，提高成功率
+        for (int attempt = 0; attempt < 2; attempt++) {
+            if (attempt > 0) {
+                try { Thread.sleep(1000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return List.of(); }
+            }
+            List<SemiRiskStore.CrawlerSignal> result = fetchSignals();
+            if (!result.isEmpty()) {
+                return result;
+            }
+        }
+        return List.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<SemiRiskStore.CrawlerSignal> fetchSignals() {
         try {
             Map<String, Object> response = restClient.get()
                     .uri("/api/crawler/records/recent")
@@ -39,8 +60,8 @@ public class PublicCrawlerClient {
                         .map(item -> toSignal((Map<String, Object>) item))
                         .toList();
             }
-        } catch (Exception ignored) {
-            // The UI will show a clear no-data state instead of fabricated live values.
+        } catch (Exception ex) {
+            // 网络不可达或 data-service 不可用，返回空列表
         }
         return List.of();
     }

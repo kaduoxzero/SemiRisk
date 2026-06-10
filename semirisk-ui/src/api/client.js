@@ -73,8 +73,14 @@ function refreshLocalExpiry() {
   try {
     const session = JSON.parse(localStorage.getItem('semiriskUser') || 'null');
     if (!session?.token) return;
-    session.expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    localStorage.setItem('semiriskUser', JSON.stringify(session));
+    // 使用服务器返回的 expiresAt，而不是本地推算
+    if (session.expiresAt) {
+      localStorage.setItem('semiriskUser', JSON.stringify(session));
+    } else {
+      // 兜底：30 分钟后过期
+      session.expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      localStorage.setItem('semiriskUser', JSON.stringify(session));
+    }
   } catch {
     localStorage.removeItem('semiriskUser');
   }

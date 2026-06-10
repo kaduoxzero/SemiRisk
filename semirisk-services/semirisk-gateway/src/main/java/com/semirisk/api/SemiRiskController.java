@@ -1,5 +1,6 @@
 package com.semirisk.api;
 
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.semirisk.service.SemiRiskStore;
 import com.semirisk.common.ReportFileFactory;
 import com.semirisk.common.ReportFileFactory.ReportFile;
@@ -94,6 +95,8 @@ public class SemiRiskController {
     }
 
     @PostMapping("/auth/login")
+    @SentinelResource(value = "auth.login",
+            blockHandlerClass = SentinelBlockHandler.class, blockHandler = "loginBlocked")
     public ResponseEntity<ApiResponse<Map<String, Object>>> login(@Valid @RequestBody LoginRequest request) {
         String username = inputSanitizer.username(request.username());
         String password = inputSanitizer.loginPassword(request.password());
@@ -249,6 +252,9 @@ public class SemiRiskController {
     }
 
     @GetMapping("/dashboard/overview")
+    @SentinelResource(value = "dashboard.overview",
+            blockHandlerClass = SentinelBlockHandler.class, blockHandler = "dashboardBlocked",
+            fallbackClass = SentinelBlockHandler.class, fallback = "dashboardFallback")
     public ApiResponse<Map<String, Object>> dashboard() {
         syncPublicCrawlerRecords();
         return ApiResponse.ok(store.dashboard());
@@ -380,12 +386,7 @@ public class SemiRiskController {
         } catch (IllegalArgumentException ignored) {
             // Unknown risk ids still return a deterministic response for the current detail page.
         }
-        try {
-            preparedRiskRepository.updateAlertStatus(id, "处理中");
-            preparedRiskRepository.insertAuditLog("INFO", "risk assigned " + id + " owner=" + owner);
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
-        }
+        // store.updateAlertStatus already persists to DB, skip duplicate DB update
         return ApiResponse.ok("负责人已指派", Map.of("id", id, "owner", owner, "status", "处理中"));
     }
 
@@ -396,12 +397,7 @@ public class SemiRiskController {
         } catch (IllegalArgumentException ignored) {
             // Unknown risk ids still return a deterministic response for the current detail page.
         }
-        try {
-            preparedRiskRepository.updateAlertStatus(id, "处理中");
-            preparedRiskRepository.insertAuditLog("INFO", "risk report dispatched " + id);
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
-        }
+        // store.updateAlertStatus already persists to DB, skip duplicate DB update
         return ApiResponse.ok("处置报告已下发", Map.of("id", id, "status", "处理中"));
     }
 
@@ -415,6 +411,8 @@ public class SemiRiskController {
     }
 
     @PostMapping("/reports/jobs")
+    @SentinelResource(value = "reports.create",
+            blockHandlerClass = SentinelBlockHandler.class, blockHandler = "reportBlocked")
     public ApiResponse<ReportJob> createReport(@Valid @RequestBody ReportRequest request) {
         String fmt = request.format() == null || request.format().isBlank() ? "PDF" : request.format().toUpperCase();
         ReportJob job = store.createReport(request.template(), request.language(), fmt, request.threshold());
@@ -513,13 +511,27 @@ public class SemiRiskController {
 
     private void syncPublicCrawlerRecords() {
         Instant now = Instant.now();
-        if (lastCrawlerSync.isAfter(now.minusSeconds(120))) {
+        // 实时刷新模式：冷却 30 秒（之前 120 秒），确保 Dashboard 接口能反映最新爬取数据
+        if (lastCrawlerSync.isAfter(now.minusSeconds(crawlerSyncCooldownSeconds))) {
             return;
         }
         lastCrawlerSync = now;
         List<SemiRiskStore.CrawlerSignal> records = publicCrawlerClient.today();
         store.refreshDailyRiskRecords(records);
         knowledgeSearchIndexService.sync(records);
+    }
+
+    @org.springframework.beans.factory.annotation.Value("${semirisk.crawler-sync.cooldown-seconds:60}")
+    private int crawlerSyncCooldownSeconds;
+
+    /** 定时任务：每分钟主动拉取 data-service 最新信号，写入网关风险快照。 */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${semirisk.crawler-sync.tick-ms:60000}", initialDelayString = "${semirisk.crawler-sync.initial-delay-ms:15000}")
+    public void scheduledCrawlerSync() {
+        try {
+            syncPublicCrawlerRecords();
+        } catch (Exception ex) {
+            // ignore - downstream may be temporarily unavailable
+        }
     }
 
     @GetMapping("/alerts/counts")
@@ -535,24 +547,14 @@ public class SemiRiskController {
     @PutMapping("/alerts/{id}/ignore")
     public ApiResponse<SemiRiskStore.RiskAlert> ignoreAlert(@PathVariable String id) {
         SemiRiskStore.RiskAlert alert = store.updateAlertStatus(id, "已忽略");
-        try {
-            preparedRiskRepository.updateAlertStatus(id, "已忽略");
-            preparedRiskRepository.insertAuditLog("WARN", "alert ignored " + id);
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
-        }
+        // store.updateAlertStatus already persist to DB via persistAlertStatus, skip duplicate
         return ApiResponse.ok("告警已忽略", alert);
     }
 
     @PostMapping("/alerts/batch-process")
     public ApiResponse<Map<String, Object>> batchProcess(@RequestBody BatchRequest request) {
         request.ids().forEach(id -> store.updateAlertStatus(id, "处理中"));
-        try {
-            request.ids().forEach(id -> preparedRiskRepository.updateAlertStatus(id, "处理中"));
-            preparedRiskRepository.insertAuditLog("INFO", "alerts batch processed size=" + request.ids().size());
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
-        }
+        // store.updateAlertStatus already persists to DB, skip duplicate
         return ApiResponse.ok("批量处理指令下发成功", Map.of("processed", request.ids().size()));
     }
 
@@ -581,6 +583,9 @@ public class SemiRiskController {
     }
 
     @PostMapping("/knowledge/ask")
+    @SentinelResource(value = "knowledge.ask",
+            blockHandlerClass = SentinelBlockHandler.class, blockHandler = "knowledgeBlocked",
+            fallbackClass = SentinelBlockHandler.class, fallback = "knowledgeFallback")
     public ApiResponse<Map<String, Object>> askKnowledge(@Valid @RequestBody KnowledgeAskRequest request) {
         syncPublicCrawlerRecords();
         List<Map<String, Object>> indexedResults = knowledgeSearchIndexService.search(request.question(), 8);

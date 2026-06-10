@@ -47,7 +47,7 @@ public class CrawlerService {
         refreshDailyRecords();
     }
 
-    @Scheduled(cron = "0 0 */12 * * *")
+    @Scheduled(fixedDelayString = "${semirisk.crawler.refresh-interval-ms:300000}", initialDelayString = "${semirisk.crawler.initial-delay-ms:30000}")
     public void refreshDailyRecords() {
         List<CrawlerRecord> records = new ArrayList<>();
         for (SourceSpec source : sources) {

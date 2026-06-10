@@ -183,6 +183,23 @@ export function useSemiRiskApp() {
     else if (path === '/register') { state.authMode = 'register'; router.replace('/dashboard'); }
   });
 
+  // 实时刷新轮询：当前视图每 30 秒静默刷新一次，让 KPI / 告警 / GIS 反映最新爬虫数据
+  let liveRefreshTimer = null;
+  function startLiveRefresh() {
+    if (liveRefreshTimer) return;
+    liveRefreshTimer = setInterval(async () => {
+      if (!state.session) return;
+      try {
+        const loader = loaders[state.view];
+        if (loader) await loader();
+        // Dashboard 是首页，无论在哪个 view 都保持后台同步，方便 KPI 卡片回到首页时秒显示
+        if (state.view !== 'dashboard') await dashboard.loadDashboard();
+      } catch {
+        /* 静默失败，下一轮再试 */
+      }
+    }, 30_000);
+  }
+
   onMounted(async () => {
     clock = setInterval(() => (state.now = new Date().toLocaleString('zh-CN', { hour12: false })), 1000);
     keyHandler = event => {
@@ -211,19 +228,23 @@ export function useSemiRiskApp() {
         state.authMode = 'login';
         if (route.name !== 'dashboard') router.replace('/dashboard');
         await dashboard.loadDashboard();
+        startLiveRefresh();
         return;
       }
       if (!allowedNavItems.value.some(item => item.key === state.view)) {
         state.view = allowedNavItems.value[0]?.key || 'dashboard';
       }
       await loaders[state.view]?.();
+      startLiveRefresh();
       return;
     }
     await dashboard.loadDashboard();
+    startLiveRefresh();
   });
 
   onUnmounted(() => {
     clearInterval(clock);
+    if (liveRefreshTimer) clearInterval(liveRefreshTimer);
     document.removeEventListener('keydown', keyHandler);
     window.removeEventListener('semirisk-auth-expired', authExpiredHandler);
   });
