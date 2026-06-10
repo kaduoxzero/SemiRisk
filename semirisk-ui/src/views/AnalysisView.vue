@@ -5,6 +5,7 @@
       <button class="btn" :class="{ secondary: state.analysisWindow !== '7d' }" @click="actions.loadRiskAnalysis('7d')">近 7 天</button>
       <button class="btn" :class="{ secondary: state.analysisWindow !== '30d' }" @click="actions.loadRiskAnalysis('30d')">近 30 天</button>
       <span class="muted">{{ state.analysis.windowLabel || state.analysisWindow }}</span>
+      <span v-if="state.analysisLoading" class="badge low">加载中…</span>
     </div>
 
     <div class="grid cols-3">

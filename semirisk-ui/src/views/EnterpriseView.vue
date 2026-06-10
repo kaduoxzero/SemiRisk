@@ -51,6 +51,14 @@
               ↗ {{ link.name }}
             </a>
           </div>
+          <div v-if="(state.enterprise.internetSearchResults || []).length" class="search-results">
+            <h4>联网搜索结果</h4>
+            <div v-for="(r, i) in state.enterprise.internetSearchResults" :key="i" class="search-result-item">
+              <a class="text-link" :href="r.url" target="_blank" rel="noreferrer">{{ r.title }}</a>
+              <p class="muted">{{ r.snippet || r.source || '' }}</p>
+              <span class="muted" style="font-size:11px">{{ r.date || r.source }}</span>
+            </div>
+          </div>
         </div>
 
         <div class="panel fixed-panel">

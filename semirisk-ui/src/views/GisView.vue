@@ -315,10 +315,14 @@ function rebuildScene() {
     routes.value.forEach(r => routeGroup.add(routeArc(r)));
   }
   if (props.state.activeLayers.includes('suppliers') || props.state.activeLayers.includes('ports')) {
-    points.value.forEach(p => {
-      const m = pointMarker(p);
-      pointObjects.push(m);
-      pointGroup.add(m);
+    // 防重叠：对相近经纬度的点位施加微小偏移
+    const jittered = preventOverlap([...points.value]);
+    jittered.forEach(p => {
+      const hitGroup = pointMarker(p);
+      hitGroup.children.forEach(child => {
+        if (child.userData.point) pointObjects.push(child);
+      });
+      pointGroup.add(hitGroup);
     });
   }
 }
@@ -332,19 +336,30 @@ function clearGroup(group) {
 }
 
 function pointMarker(point) {
-  const m = new THREE.Mesh(
-    new THREE.SphereGeometry(0.055, 18, 18),
+  // 可见小球（0.018 半径）+ 不可见碰撞体（0.06 半径）用于射线拾取，兼顾美观与点击
+  const hitGroup = new THREE.Group();
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.018, 12, 12),
     new THREE.MeshBasicMaterial({ color: riskColor(point.riskIndex) })
   );
-  m.position.copy(latLonToVector(point.lon, point.lat, 2.19));
-  m.userData.point = point;
-  return m;
+  mesh.position.copy(latLonToVector(point.lon, point.lat, 2.19));
+  mesh.userData.point = point;
+  // 不可见碰撞球，让射线拾取更容易命中
+  const hitSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 12, 12),
+    new THREE.MeshBasicMaterial({ visible: false })
+  );
+  hitSphere.position.copy(latLonToVector(point.lon, point.lat, 2.19));
+  hitSphere.userData.point = point;
+  hitGroup.add(mesh, hitSphere);
+  pointObjects.push(hitSphere);
+  return hitGroup;
 }
 
 function heatHalo(point) {
   const halo = new THREE.Mesh(
-    new THREE.SphereGeometry(point.riskIndex >= 80 ? 0.18 : 0.12, 24, 24),
-    new THREE.MeshBasicMaterial({ color: riskColor(point.riskIndex), transparent: true, opacity: point.riskIndex >= 80 ? 0.28 : 0.16 })
+    new THREE.SphereGeometry(point.riskIndex >= 80 ? 0.10 : 0.07, 20, 20),
+    new THREE.MeshBasicMaterial({ color: riskColor(point.riskIndex), transparent: true, opacity: point.riskIndex >= 80 ? 0.22 : 0.14 })
   );
   halo.position.copy(latLonToVector(point.lon, point.lat, 2.17));
   return halo;
@@ -389,4 +404,25 @@ function layerName(layer) {
 }
 function riskClass(score) { return score >= 80 ? 'high' : score >= 60 ? 'mid' : 'low'; }
 function riskColor(score) { return score >= 80 ? 0xff5f6d : score >= 60 ? 0xfacc15 : 0x60a5fa; }
+
+/** 防重叠：对经纬度接近的点位施加微小球面偏移 */
+function preventOverlap(points) {
+  if (points.length <= 1) return points;
+  const jittered = points.map(p => ({ ...p, origLon: p.lon, origLat: p.lat, jittered: false }));
+  const minDist = 0.015; // 最小经纬度间距
+  for (let i = 0; i < jittered.length; i++) {
+    if (jittered[i].jittered) continue;
+    for (let j = i + 1; j < jittered.length; j++) {
+      const dLat = Math.abs(jittered[i].lat - jittered[j].lat);
+      const dLon = Math.abs(jittered[i].lon - jittered[j].lon);
+      if (dLat < minDist && dLon < minDist) {
+        // 沿球面做微小偏移（约 1.5km）
+        const offset = 0.02;
+        jittered[j].lon = jittered[j].origLon + (Math.random() > 0.5 ? offset : -offset);
+        jittered[j].jittered = true;
+      }
+    }
+  }
+  return jittered;
+}
 </script>

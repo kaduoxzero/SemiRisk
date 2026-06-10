@@ -6,7 +6,12 @@
         <b>支持格式</b>
         <p>Excel (.xlsx/.xls)、CSV、PDF、ZIP 压缩包，单文件 50MB 内。</p>
         <b>处理流程</b>
-        <p>上传 → 落 MinIO 对象存储 → Apache POI / CSV 真实解析行数与字段 → 风险告警入库 → SSE 实时推送日志。</p>
+        <p v-if="state.session?.role === 'ADMIN' || state.session?.role === 'ANALYST'">
+          上传 → AI 自动清洗 → 自动导入 → SSE 实时日志追踪（<em>{{ state.session.role === 'ADMIN' ? '管理员' : '分析师' }} 权限</em>）
+        </p>
+        <p v-else>
+          上传 → 落 MinIO 对象存储 → Apache POI / CSV 真实解析 → 人工复核 → 导入（<em>操作员权限，需人工复核</em>）
+        </p>
       </div>
 
       <!-- 拖拽上传区 -->

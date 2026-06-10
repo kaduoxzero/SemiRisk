@@ -261,13 +261,37 @@ public class SemiRiskController {
     }
 
     @GetMapping(value = "/data/templates/{type}", produces = "text/csv;charset=UTF-8")
-    public ResponseEntity<byte[]> template(@PathVariable String type) {
+    public ResponseEntity<byte[]> template(@PathVariable String type, HttpServletRequest request) {
         String csv = "supplier,material,stage,lead_time_days,risk_level\n"
                 + "安芯物流,晶圆,仓储物流,7,中危\n"
                 + "华南晶圆,硅片,生产制造,14,低危\n";
+        // UTF-8 BOM (EF BB BF) is required for Excel/WPS to correctly open UTF-8 CSV files
+        byte[] csvBytes = csv.getBytes(StandardCharsets.UTF_8);
+        byte[] bom = new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
+        byte[] response = new byte[bom.length + csvBytes.length];
+        System.arraycopy(bom, 0, response, 0, bom.length);
+        System.arraycopy(csvBytes, 0, response, bom.length, csvBytes.length);
+
+        // Determine upload processing flow based on user role
+        String flow = determineUploadFlow(request);
+
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=semirisk-" + type + "-template.csv")
-                .body(csv.getBytes(StandardCharsets.UTF_8));
+                .header(HttpHeaders.CONTENT_TYPE, "text/csv;charset=UTF-8")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"semirisk-" + type + "-template.csv\"")
+                .header("Content-Transfer-Encoding", "binary")
+                .header("X-Upload-Processing-Flow", flow)
+                .body(response);
+    }
+
+    private String determineUploadFlow(HttpServletRequest request) {
+        Optional<TokenAuthService.AuthPrincipal> principal = tokenAuthService.validate(
+                request == null ? null : request.getHeader("Authorization"));
+        if (principal.isEmpty()) return "上传→清洗→人工复核→导入";
+        String role = principal.get().role();
+        if ("ADMIN".equals(role) || "ANALYST".equals(role)) {
+            return "上传→AI自动清洗→自动导入→日志追踪";
+        }
+        return "上传→清洗→人工复核→导入";
     }
 
     @PostMapping(value = "/data/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

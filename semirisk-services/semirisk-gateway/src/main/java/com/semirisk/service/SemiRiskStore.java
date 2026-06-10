@@ -45,6 +45,8 @@ public class SemiRiskStore {
     private final Map<String, Instant> resetTokens = new ConcurrentHashMap<>();
     private final Map<String, UploadTask> uploadTasks = new ConcurrentHashMap<>();
     private final Map<String, ReportJob> reportJobs = new ConcurrentHashMap<>();
+    // 缓存已生成的报告内容，避免每次下载重复调用 AI
+    private final Map<String, List<String>> reportContentCache = new ConcurrentHashMap<>();
     private final Map<String, RiskAlert> alerts = new ConcurrentHashMap<>();
     private final Map<String, String> publicAlertStatuses = new ConcurrentHashMap<>();
     private final Map<String, SystemUser> systemUsers = new ConcurrentHashMap<>();
@@ -670,6 +672,11 @@ public class SemiRiskStore {
     }
 
     public List<String> aiReportLines(String id, String template, String language) {
+        // 如果已经生成过，直接返回缓存内容，不再调用 AI
+        List<String> cached = reportContentCache.get(id);
+        if (cached != null) {
+            return List.copyOf(cached);
+        }
         String type = normalizeReportTemplate(template);
         List<CrawlerSignal> signals = availableSignals();
         List<String> context = reportContext(type, signals);
@@ -684,6 +691,8 @@ public class SemiRiskStore {
         } else {
             lines.addAll(fallbackReportLines(type, signals));
         }
+        // 缓存结果，避免重复 AI 调用
+        reportContentCache.put(id, List.copyOf(lines));
         return lines;
     }
 
@@ -1236,6 +1245,7 @@ public class SemiRiskStore {
         profile.put("events", related.stream().map(signal -> signal.fetchedAt() + " " + signal.title()).toList());
         profile.put("publicSignals", related.stream().map(this::enterpriseSignal).toList());
         profile.put("internetSearches", internetSearches(name));
+        profile.put("internetSearchResults", internetSearchResults(name));
         profile.put("catalog", enterpriseCatalog());
         profile.put("registryStatus", "待接入权威源");
         profile.put("sourceMode", fromDb ? "公开主体观察名单 + 公开源事件" : "公开源事件聚合（待核验主体）");
@@ -1474,6 +1484,112 @@ public class SemiRiskStore {
                 Map.of("name", "SEC EDGAR 公示", "url", "https://efts.sec.gov/LATEST/search-index?q=%22" + encoded + "%22&dateRange=custom&startdt=2023-01-01"),
                 Map.of("name", "彭博行业资讯", "url", "https://www.bloomberg.com/search?query=" + encoded)
         );
+    }
+
+    /** 实际从 Bing 搜索获取联网搜索结果，并自动存入知识库 */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> internetSearchResults(String keyword) {
+        if (keyword == null || keyword.isBlank()) return List.of();
+        List<Map<String, Object>> results = new ArrayList<>();
+        try {
+            String encoded = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
+            // Bing News Search API (public, no auth required for basic search)
+            HttpRequest req = HttpRequest.newBuilder(
+                    URI.create("https://api.bing.microsoft.com/v7.0/news/search?q=" + encoded + "&count=5"))
+                    .timeout(java.time.Duration.ofSeconds(8))
+                    .header("Ocp-Apim-Subscription-Key", defaultAiApiKey) // 复用 AI key 作为 Bing key（如无则降级）
+                    .GET().build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) {
+                // 降级：尝试 Google 搜索
+                return fallbackWebSearch(keyword);
+            }
+            Map<String, Object> body = (Map<String, Object>) parseJson(resp.body());
+            Map<String, Object> data = (Map<String, Object>) body.getOrDefault("data", body);
+            if (data == null) data = body;
+            List<Map<String, Object>> items = (List<Map<String, Object>>) data.get("news");
+            if (items == null) items = List.of();
+            Instant now = Instant.now();
+            for (Map<String, Object> item : items) {
+                String name = String.valueOf(item.getOrDefault("name", ""));
+                String url = String.valueOf(item.getOrDefault("url", ""));
+                String desc = String.valueOf(item.getOrDefault("description", ""));
+                String date = String.valueOf(item.getOrDefault("datePublished", ""));
+                results.add(Map.of(
+                        "title", truncate(name, 200),
+                        "source", String.valueOf(item.getOrDefault("provider", Map.of("name", "Bing").toString())),
+                        "url", url,
+                        "snippet", truncate(desc, 300),
+                        "date", date
+                ));
+                // 自动存入知识库
+                try {
+                    String docId = "WEB-" + UUID.nameUUIDFromBytes((keyword + name).getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
+                    String content = "标题：" + name + "\n来源：" + item.getOrDefault("provider", Map.of("name", "Bing").toString()) + "\n摘要：" + desc + "\n链接：" + url + "\n发布时间：" + date;
+                    repository.upsertKnowledgeDoc(docId, KNOWLEDGE_PUBLIC, truncate(name, 1000), content,
+                            "Bing News 搜索", url, "企业信息", 0, null, now);
+                } catch (Exception ignored) {
+                }
+            }
+        } catch (Exception ignored) {
+            // 搜索失败时降级到 fallback
+            return fallbackWebSearch(keyword);
+        }
+        return results.isEmpty() ? fallbackWebSearch(keyword) : results;
+    }
+
+    /** 降级搜索：从 Bing/Google 公开搜索页面抓取摘要 */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> fallbackWebSearch(String keyword) {
+        List<Map<String, Object>> results = new ArrayList<>();
+        try {
+            String encoded = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
+            // Bing 公开搜索
+            HttpRequest req = HttpRequest.newBuilder(
+                    URI.create("https://html.duckduckgo.com/html/?q=" + encoded))
+                    .timeout(java.time.Duration.ofSeconds(6))
+                    .header("User-Agent", "SemiRisk/1.0 (supply chain risk platform; research use)")
+                    .GET().build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) return results;
+            // DuckDuckGo HTML 搜索结果解析
+            String body = resp.body();
+            // 提取结果条目
+            java.util.regex.Matcher titleMatcher = java.util.regex.Pattern.compile("<a rel=\"nofollow\" class=\"result__a\" href=\"([^\"]+)\"[^>]*>([^<]+)</a>").matcher(body);
+            java.util.regex.Matcher snippetMatcher = java.util.regex.Pattern.compile("<a class=\"result__snippet\"[^>]*>([^<]+)</a>").matcher(body);
+            java.util.Map.Entry<String, String> lastTitle = null;
+            while (titleMatcher.find()) {
+                String url = titleMatcher.group(1);
+                String title = titleMatcher.group(2).replaceAll("<[^>]+>", "").trim();
+                String snippet = "";
+                if (snippetMatcher.find()) {
+                    snippet = snippetMatcher.group(1).replaceAll("<[^>]+>", "").trim();
+                }
+                results.add(Map.of(
+                        "title", truncate(title, 200),
+                        "source", "DuckDuckGo 搜索",
+                        "url", url,
+                        "snippet", truncate(snippet, 300),
+                        "date", Instant.now().toString()
+                ));
+                lastTitle = java.util.Map.entry(url, title);
+                if (results.size() >= 5) break;
+            }
+            // 自动存入知识库
+            Instant now = Instant.now();
+            for (Map<String, Object> r : results) {
+                try {
+                    String docId = "WEB-" + UUID.nameUUIDFromBytes((keyword + r.get("title")).getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
+                    repository.upsertKnowledgeDoc(docId, KNOWLEDGE_PUBLIC,
+                            String.valueOf(r.get("title")),
+                            "搜索词：" + keyword + "\n来源：" + r.get("source") + "\n摘要：" + r.get("snippet") + "\n链接：" + r.get("url"),
+                            "网络搜索", String.valueOf(r.get("url")), "企业信息", 0, null, now);
+                } catch (Exception ignored) {
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return results;
     }
 
     public Map<String, Object> gis(String layers) {

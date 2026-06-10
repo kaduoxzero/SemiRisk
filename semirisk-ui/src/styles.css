@@ -1444,3 +1444,39 @@ th { color: var(--muted); font-size: 12px; }
 }
 .close-popover:hover { color: white; }
 
+/* ====================================================================
+   企业画像：联网搜索结果
+   ==================================================================== */
+.search-results {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, .04);
+}
+
+.search-results h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.search-result-item {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(59, 130, 246, .1);
+}
+
+.search-result-item:last-child { border-bottom: none; }
+
+.search-result-item .text-link {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ext-link {
+  display: inline-block;
+  margin-right: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+

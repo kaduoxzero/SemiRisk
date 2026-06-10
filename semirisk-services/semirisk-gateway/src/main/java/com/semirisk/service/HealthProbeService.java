@@ -25,7 +25,9 @@ import java.util.Map;
 @Service
 public class HealthProbeService {
 
-    private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(3))
+            .build();
     private final JdbcTemplate jdbcTemplate;
     private final String middlewareHost;
     private final String esUrl;
@@ -36,19 +38,42 @@ public class HealthProbeService {
 
     public HealthProbeService(
             JdbcTemplate jdbcTemplate,
-            @Value("${semirisk.middleware.host:192.168.101.130}") String middlewareHost,
+            @Value("${semirisk.middleware.host:}") String middlewareHost,
             @Value("${semirisk.elasticsearch.url:http://127.0.0.1:9200}") String esUrl,
             @Value("${spring.data.redis.port:6379}") int redisPort,
             @Value("${semirisk.minio.api-port:9000}") int minioApiPort,
             @Value("${semirisk.rabbitmq.http-port:15672}") int rabbitHttpPort,
             @Value("${semirisk.nacos.port:8848}") int nacosPort) {
         this.jdbcTemplate = jdbcTemplate;
-        this.middlewareHost = middlewareHost;
+        // 如果配置为空，尝试检测两个候选主机
+        this.middlewareHost = resolveMiddlewareHost(middlewareHost);
         this.esUrl = esUrl;
         this.redisPort = redisPort;
         this.minioApiPort = minioApiPort;
         this.rabbitHttpPort = rabbitHttpPort;
         this.nacosPort = nacosPort;
+    }
+
+    /** 自动检测中间件主机：先试默认，失败则切换到另一台 */
+    private String resolveMiddlewareHost(String configuredHost) {
+        if (configuredHost != null && !configuredHost.isBlank()) {
+            return configuredHost;
+        }
+        // 配置为空，尝试 172.16.0.151
+        if (tryConnect("172.16.0.151", 3306, 2000)) return "172.16.0.151";
+        // 回退 192.168.101.130
+        if (tryConnect("192.168.101.130", 3306, 2000)) return "192.168.101.130";
+        // 默认
+        return "192.168.101.130";
+    }
+
+    private boolean tryConnect(String host, int port, int timeoutMs) {
+        try (java.net.Socket s = new java.net.Socket()) {
+            s.connect(new java.net.InetSocketAddress(host, port), timeoutMs);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** 探测全部中间件，返回真实健康清单。 */
@@ -105,7 +130,8 @@ public class HealthProbeService {
             reachable = detail != null;
         } catch (Exception ex) {
             reachable = false;
-            detail = ex.getClass().getSimpleName();
+            // 提供更多信息，便于诊断
+            detail = ex.getClass().getSimpleName() + ": " + ex.getMessage();
         }
         long latencyMs = Math.max(1, (System.nanoTime() - start) / 1_000_000);
         Map<String, Object> map = new LinkedHashMap<>();
@@ -115,13 +141,13 @@ public class HealthProbeService {
         map.put("reachable", reachable);
         map.put("status", reachable ? "健康" : "不可达");
         map.put("latencyMs", reachable ? latencyMs : 0);
-        map.put("detail", detail == null ? "连接失败" : detail);
+        map.put("detail", detail == null ? "连接失败 (host=" + host + ")" : detail);
         return map;
     }
 
     private String probeMysql() {
         Number value = jdbcTemplate.queryForObject("SELECT 1", Number.class);
-        return value == null ? null : "SELECT 1 -> " + value;
+        return "SELECT 1 -> " + (value != null ? value : "?");
     }
 
     private String probeEs() throws Exception {
@@ -135,7 +161,7 @@ public class HealthProbeService {
 
     private String probeHttp(String url) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                .timeout(Duration.ofSeconds(2))
+                .timeout(Duration.ofSeconds(3))
                 .GET()
                 .build();
         HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
@@ -146,7 +172,7 @@ public class HealthProbeService {
 
     private String probeTcp(int port) throws Exception {
         try (Socket socket = new Socket()) {
-            socket.connect(new java.net.InetSocketAddress(middlewareHost, port), 1500);
+            socket.connect(new java.net.InetSocketAddress(middlewareHost, port), 3000);
             return "TCP connect ok";
         }
     }

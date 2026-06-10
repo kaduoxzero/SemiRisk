@@ -36,7 +36,7 @@
           {{ generating ? '生成中…' : '立即生成' }}
         </button>
         <button v-if="canDownload" class="btn secondary" @click="handleDownload">
-          下载 {{ state.reportForm.format || 'PDF' }}
+          {{ downloading ? '正在下载…' : '下载 ' + (state.reportForm.format || 'PDF') }}
         </button>
       </div>
 
@@ -56,7 +56,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { authenticatedUrl } from '../api/client';
 
 const props = defineProps({
@@ -76,13 +76,33 @@ const progressClass = computed(() => {
   return p >= 100 ? 'done' : p > 0 ? 'active' : '';
 });
 
+const downloading = ref(false);
+
 function handleDownload() {
   const id = props.state.reportJob?.id;
   if (!id) { return; }
+  downloading.value = true;
   const url = authenticatedUrl(`/api/reports/${id}/download`);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${id}-report.${(props.state.reportForm.format || 'pdf').toLowerCase().replace('word','docx').replace('ppt','pptx')}`;
-  a.click();
+  const ext = (props.state.reportForm.format || 'PDF').toLowerCase().replace('word', 'docx').replace('ppt', 'pptx');
+  fetch(url, {
+    headers: { 'Authorization': window.__semiriskToken || '' }
+  })
+    .then(async res => {
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${id}-report.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    })
+    .catch(() => {
+      // 降级：直接打开链接
+      window.open(url, '_blank');
+    })
+    .finally(() => {
+      downloading.value = false;
+    });
 }
 </script>
