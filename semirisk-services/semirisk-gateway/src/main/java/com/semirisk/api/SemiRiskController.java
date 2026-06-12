@@ -1,6 +1,15 @@
 package com.semirisk.api;
 
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.semirisk.model.LoginState;
+import com.semirisk.model.CrawlerSignal;
+import com.semirisk.model.DailyRiskSnapshot;
+import com.semirisk.model.AiModelConfig;
+import com.semirisk.model.ReportJob;
+import com.semirisk.model.RiskAlert;
+import com.semirisk.model.SystemUser;
+import com.semirisk.model.UploadTask;
+import com.semirisk.model.UserAccount;
 import com.semirisk.service.SemiRiskStore;
 import com.semirisk.common.ReportFileFactory;
 import com.semirisk.common.ReportFileFactory.ReportFile;
@@ -17,10 +26,6 @@ import com.semirisk.service.MinioStorageService;
 import com.semirisk.service.PublicCrawlerClient;
 import com.semirisk.service.HealthProbeService;
 import com.semirisk.service.UploadParseService;
-import com.semirisk.service.SemiRiskStore.ReportJob;
-import com.semirisk.service.SemiRiskStore.SystemUser;
-import com.semirisk.service.SemiRiskStore.UploadTask;
-import com.semirisk.service.SemiRiskStore.UserAccount;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -100,7 +105,7 @@ public class SemiRiskController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> login(@Valid @RequestBody LoginRequest request) {
         String username = inputSanitizer.username(request.username());
         String password = inputSanitizer.loginPassword(request.password());
-        SemiRiskStore.LoginState state = redisLoginGuardService.loginState(username).orElseGet(() -> store.loginState(username));
+        LoginState state = redisLoginGuardService.loginState(username).orElseGet(() -> store.loginState(username));
         if (state.locked()) {
             return ResponseEntity.status(423).body(ApiResponse.fail("账号已锁定至 " + state.lockedUntil()));
         }
@@ -121,7 +126,7 @@ public class SemiRiskController {
                     return ResponseEntity.ok(ApiResponse.ok("登录成功", body));
                 })
                 .orElseGet(() -> {
-                    SemiRiskStore.LoginState failed = redisLoginGuardService.recordFailure(username).orElseGet(() -> store.recordFailure(username));
+                    LoginState failed = redisLoginGuardService.recordFailure(username).orElseGet(() -> store.recordFailure(username));
                     String message = failed.locked()
                             ? "密码错误次数达到 5 次，账号锁定 30 分钟"
                             : "账号或密码错误，当前 5 分钟窗口失败次数：" + failed.failures();
@@ -502,7 +507,7 @@ public class SemiRiskController {
             @RequestParam(required = false) String status) {
         syncPublicCrawlerRecords();
         String kw = keyword == null ? "" : keyword.trim();
-        List<SemiRiskStore.RiskAlert> publicAlerts = filterAlerts(store.publicSignalAlerts(), kw, level, status);
+        List<RiskAlert> publicAlerts = filterAlerts(store.publicSignalAlerts(), kw, level, status);
         if (!publicAlerts.isEmpty()) {
             return ApiResponse.ok((List<?>) publicAlerts);
         }
@@ -517,11 +522,11 @@ public class SemiRiskController {
         } catch (Exception ignored) {
             // Local fallback keeps the project runnable before VM middleware is connected.
         }
-        List<SemiRiskStore.RiskAlert> filtered = filterAlerts(store.alerts(), kw, level, status);
+        List<RiskAlert> filtered = filterAlerts(store.alerts(), kw, level, status);
         return ApiResponse.ok((List<?>) filtered);
     }
 
-    private List<SemiRiskStore.RiskAlert> filterAlerts(List<SemiRiskStore.RiskAlert> alerts, String keyword, String level, String status) {
+    private List<RiskAlert> filterAlerts(List<RiskAlert> alerts, String keyword, String level, String status) {
         return alerts.stream()
                 .filter(alert -> keyword == null || keyword.isBlank() || alert.title().contains(keyword) || alert.source().contains(keyword))
                 .filter(alert -> level == null || level.isBlank() || alert.level().equals(level))
@@ -540,7 +545,7 @@ public class SemiRiskController {
             return;
         }
         lastCrawlerSync = now;
-        List<SemiRiskStore.CrawlerSignal> records = publicCrawlerClient.today();
+        List<CrawlerSignal> records = publicCrawlerClient.today();
         store.refreshDailyRiskRecords(records);
         knowledgeSearchIndexService.sync(records);
     }
@@ -569,8 +574,8 @@ public class SemiRiskController {
     }
 
     @PutMapping("/alerts/{id}/ignore")
-    public ApiResponse<SemiRiskStore.RiskAlert> ignoreAlert(@PathVariable String id) {
-        SemiRiskStore.RiskAlert alert = store.updateAlertStatus(id, "已忽略");
+    public ApiResponse<RiskAlert> ignoreAlert(@PathVariable String id) {
+        RiskAlert alert = store.updateAlertStatus(id, "已忽略");
         // store.updateAlertStatus already persist to DB via persistAlertStatus, skip duplicate
         return ApiResponse.ok("告警已忽略", alert);
     }
@@ -744,11 +749,11 @@ public class SemiRiskController {
     }
 
     @PostMapping("/system/models/config")
-    public ApiResponse<SemiRiskStore.AiModelConfig> saveModelConfig(@Valid @RequestBody AiModelConfigRequest request) {
+    public ApiResponse<AiModelConfig> saveModelConfig(@Valid @RequestBody AiModelConfigRequest request) {
         String model = inputSanitizer.plain(request.model(), 128);
         String endpoint = sanitizeEndpoint(request.endpoint());
         String apiKey = inputSanitizer.plain(request.apiKey(), 256);
-        SemiRiskStore.AiModelConfig config = store.saveAiModelConfig(model, endpoint, apiKey);
+        AiModelConfig config = store.saveAiModelConfig(model, endpoint, apiKey);
         try {
             preparedRiskRepository.upsertAiModelConfig(config.model(), config.endpoint(), config.maskedApiKey(), config.configured(), config.updatedAt());
             preparedRiskRepository.insertAuditLog("INFO", "AI model config saved " + config.model());
@@ -774,13 +779,13 @@ public class SemiRiskController {
     }
 
     @GetMapping("/risk-score/today")
-    public ApiResponse<SemiRiskStore.DailyRiskSnapshot> todayRiskScore() {
+    public ApiResponse<DailyRiskSnapshot> todayRiskScore() {
         syncPublicCrawlerRecords();
         return ApiResponse.ok(store.dailyRiskSnapshot());
     }
 
     @PostMapping("/risk-score/recalculate")
-    public ApiResponse<SemiRiskStore.DailyRiskSnapshot> recalculateRiskScore() {
+    public ApiResponse<DailyRiskSnapshot> recalculateRiskScore() {
         syncPublicCrawlerRecords();
         return ApiResponse.ok("AI 风险自动测算完成", store.dailyRiskSnapshot());
     }
@@ -793,7 +798,7 @@ public class SemiRiskController {
             Map<String, Object> report = store.generateDailyAiReport();
             result = "已触发 AI 报告生成，aiCalled=" + report.getOrDefault("aiCalled", false);
         } else {
-            List<SemiRiskStore.CrawlerSignal> records = publicCrawlerClient.today();
+            List<CrawlerSignal> records = publicCrawlerClient.today();
             store.refreshDailyRiskRecords(records);
             knowledgeSearchIndexService.sync(records);
             result = "已触发公开源爬虫与风险测算，纳入 " + records.size() + " 条真实信号";

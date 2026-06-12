@@ -1,6 +1,6 @@
 package com.semirisk.service;
 
-import com.semirisk.service.SemiRiskStore.CrawlerSignal;
+import com.semirisk.model.CrawlerSignal;
 import com.semirisk.repository.PreparedRiskRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,7 +29,7 @@ public class EnterpriseService {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
 
-    private static final String KNOWLEDGE_PUBLIC = SemiRiskStore.KNOWLEDGE_PUBLIC;
+    private static final String KNOWLEDGE_PUBLIC = "公开情报";
 
     private static final Map<String, Map<String, String>> PUBLIC_COMPANY_DB = new HashMap<>();
     static {

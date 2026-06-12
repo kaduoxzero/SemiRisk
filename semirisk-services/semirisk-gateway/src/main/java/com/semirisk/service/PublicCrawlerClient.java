@@ -1,5 +1,6 @@
 package com.semirisk.service;
 
+import com.semirisk.model.CrawlerSignal;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
@@ -32,13 +33,13 @@ public class PublicCrawlerClient {
     }
 
     @SuppressWarnings("unchecked")
-    public List<SemiRiskStore.CrawlerSignal> today() {
+    public List<CrawlerSignal> today() {
         // 重试 2 次，间隔 1s，提高成功率
         for (int attempt = 0; attempt < 2; attempt++) {
             if (attempt > 0) {
                 try { Thread.sleep(1000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return List.of(); }
             }
-            List<SemiRiskStore.CrawlerSignal> result = fetchSignals();
+            List<CrawlerSignal> result = fetchSignals();
             if (!result.isEmpty()) {
                 return result;
             }
@@ -47,7 +48,7 @@ public class PublicCrawlerClient {
     }
 
     @SuppressWarnings("unchecked")
-    private List<SemiRiskStore.CrawlerSignal> fetchSignals() {
+    private List<CrawlerSignal> fetchSignals() {
         try {
             Map<String, Object> response = restClient.get()
                     .uri("/api/crawler/records/recent")
@@ -66,8 +67,8 @@ public class PublicCrawlerClient {
         return List.of();
     }
 
-    private SemiRiskStore.CrawlerSignal toSignal(Map<String, Object> item) {
-        return new SemiRiskStore.CrawlerSignal(
+    private CrawlerSignal toSignal(Map<String, Object> item) {
+        return new CrawlerSignal(
                 text(item, "id", "CR-UNKNOWN"),
                 text(item, "source", "公开源"),
                 text(item, "title", "公开源暂无标题"),

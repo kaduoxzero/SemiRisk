@@ -1,7 +1,7 @@
 package com.semirisk.security;
 
 import com.semirisk.repository.PreparedRiskRepository;
-import com.semirisk.service.SemiRiskStore;
+import com.semirisk.model.UserAccount;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -36,7 +36,7 @@ public class TokenAuthService {
         this.ttlMinutes = ttlMinutes;
     }
 
-    public IssuedToken issue(SemiRiskStore.UserAccount account) {
+    public IssuedToken issue(UserAccount account) {
         byte[] bytes = new byte[32];
         RANDOM.nextBytes(bytes);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);

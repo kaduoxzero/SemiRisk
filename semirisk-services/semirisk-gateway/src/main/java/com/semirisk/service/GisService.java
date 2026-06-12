@@ -1,6 +1,6 @@
 package com.semirisk.service;
 
-import com.semirisk.service.SemiRiskStore.CrawlerSignal;
+import com.semirisk.model.CrawlerSignal;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;

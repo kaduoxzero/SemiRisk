@@ -2,6 +2,7 @@ package com.semirisk.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.semirisk.model.CrawlerSignal;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -33,7 +34,7 @@ public class KnowledgeSearchIndexService {
         this.indexName = indexName;
     }
 
-    public void sync(List<SemiRiskStore.CrawlerSignal> signals) {
+    public void sync(List<CrawlerSignal> signals) {
         if (signals == null || signals.isEmpty()) {
             return;
         }
@@ -46,7 +47,7 @@ public class KnowledgeSearchIndexService {
         }
         try {
             ensureIndex();
-            for (SemiRiskStore.CrawlerSignal signal : signals) {
+            for (CrawlerSignal signal : signals) {
                 if (!"OK".equalsIgnoreCase(signal.status())) {
                     continue;
                 }
@@ -145,7 +146,7 @@ public class KnowledgeSearchIndexService {
         }
     }
 
-    private void putDocument(SemiRiskStore.CrawlerSignal signal) throws Exception {
+    private void putDocument(CrawlerSignal signal) throws Exception {
         Map<String, Object> document = Map.of(
                 "id", signal.id(),
                 "title", signal.title(),
@@ -167,7 +168,7 @@ public class KnowledgeSearchIndexService {
                 .build();
     }
 
-    private String signature(List<SemiRiskStore.CrawlerSignal> signals) {
+    private String signature(List<CrawlerSignal> signals) {
         StringJoiner joiner = new StringJoiner("|");
         signals.forEach(signal -> joiner.add(signal.id() + ":" + signal.riskScore() + ":" + signal.status()));
         return joiner.toString();

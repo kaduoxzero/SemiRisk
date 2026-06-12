@@ -2,7 +2,18 @@ package com.semirisk.service;
 
 import com.semirisk.common.AiModelDefaults;
 import com.semirisk.common.SemiriskConstants;
+import com.semirisk.model.AiModelConfig;
+import com.semirisk.model.CrawlerSignal;
+import com.semirisk.model.DailyRiskSnapshot;
+import com.semirisk.model.LoginCounter;
+import com.semirisk.model.LoginState;
+import com.semirisk.model.ReportJob;
+import com.semirisk.model.RiskAlert;
+import com.semirisk.model.SystemUser;
+import com.semirisk.model.UploadTask;
+import com.semirisk.model.UserAccount;
 import com.semirisk.repository.PreparedRiskRepository;
+import com.semirisk.service.AiChatService.AiAnswer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -2367,42 +2378,4 @@ public class SemiRiskStore {
         return key.substring(0, 4) + "****" + key.substring(key.length() - 4);
     }
 
-    public record UserAccount(String username, String password, String displayName, String role, boolean enabled) {
-        public UserAccount(String username, String password, String displayName, String role) {
-            this(username, password, displayName, role, true);
-        }
-    }
-
-    public record LoginCounter(int failures, Instant windowStarted, Instant lockedUntil) {
-    }
-
-    public record LoginState(boolean locked, int failures, Instant lockedUntil) {
-    }
-
-    public record RiskAlert(String id, Instant time, String level, String title, String source, String sourceUrl, String status, String target) {
-        public RiskAlert(String id, Instant time, String level, String title, String source, String status, String target) {
-            this(id, time, level, title, source, "", status, target);
-        }
-    }
-
-    public record UploadTask(String id, String filename, long size, String status, Instant createdAt, int rows, List<String> warnings) {
-    }
-
-    public record ReportJob(String id, String template, String language, String format, int threshold, String status, int progress, String step, String downloadUrl, Instant createdAt) {
-    }
-
-    public record SystemUser(String id, String username, String email, String role, String status) {
-    }
-
-    public record CrawlerSignal(String id, String source, String title, String dimension, int riskScore, Instant fetchedAt, String sourceUrl, String status) {
-    }
-
-    public record DailyRiskSnapshot(int score, String level, String summary, List<CrawlerSignal> signals, Instant calculatedAt) {
-    }
-
-    public record AiModelConfig(String model, String endpoint, String maskedApiKey, boolean configured, Instant updatedAt) {
-    }
-
-    private record AiAnswer(boolean called, String answer, String status, Map<String, Object> usage) {
-    }
 }

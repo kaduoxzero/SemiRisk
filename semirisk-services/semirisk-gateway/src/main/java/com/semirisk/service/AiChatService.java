@@ -1,6 +1,7 @@
 package com.semirisk.service;
 
 import com.semirisk.common.AiModelDefaults;
+import com.semirisk.model.AiModelConfig;
 import com.semirisk.repository.PreparedRiskRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,7 +30,7 @@ public class AiChatService {
     private final PreparedRiskRepository repository;
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
 
-    private final Map<String, SemiRiskStore.AiModelConfig> aiModelConfigs;
+    private final Map<String, AiModelConfig> aiModelConfigs;
     private final Map<String, String> aiModelApiKeys;
     private final List<String> auditLogs;
 
@@ -49,7 +50,7 @@ public class AiChatService {
         this.auditLogs = new ArrayList<>();
     }
 
-    void setSharedState(Map<String, SemiRiskStore.AiModelConfig> configs, Map<String, String> keys, List<String> logs) {
+    void setSharedState(Map<String, AiModelConfig> configs, Map<String, String> keys, List<String> logs) {
         this.aiModelConfigs.putAll(configs);
         this.aiModelApiKeys.putAll(keys);
     }
@@ -60,7 +61,7 @@ public class AiChatService {
             return new AiAnswer(false, "", "未配置 API Key，当前使用本地 RAG 摘要", Map.of());
         }
         String endpoint = aiModelConfigs.getOrDefault(defaultAiModel,
-                new SemiRiskStore.AiModelConfig(defaultAiModel, defaultAiEndpoint, mask(apiKey), true, Instant.now())).endpoint();
+                new AiModelConfig(defaultAiModel, defaultAiEndpoint, mask(apiKey), true, Instant.now())).endpoint();
         String url = endpoint.endsWith("/chat/completions")
                 ? endpoint
                 : endpoint.replaceAll("/+$", "") + "/chat/completions";
@@ -143,7 +144,7 @@ public class AiChatService {
 
     public List<String> localKnowledgeLines() {
         try {
-            List<Map<String, Object>> docs = repository.findKnowledgeDocsByCategory(SemiRiskStore.KNOWLEDGE_INTERNAL, 20);
+            List<Map<String, Object>> docs = repository.findKnowledgeDocsByCategory("内部知识库", 20);
             if (!docs.isEmpty()) {
                 return docs.stream()
                         .map(doc -> "内部知识库 | " + stringValue(doc.get("dimension")) + " | " + stringValue(doc.get("title")) + "：" + stringValue(doc.get("content")))
