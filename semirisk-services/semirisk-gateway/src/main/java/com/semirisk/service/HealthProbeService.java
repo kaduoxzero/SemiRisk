@@ -54,16 +54,11 @@ public class HealthProbeService {
         this.nacosPort = nacosPort;
     }
 
-    /** 自动检测中间件主机：先试默认，失败则切换到另一台 */
     private String resolveMiddlewareHost(String configuredHost) {
         if (configuredHost != null && !configuredHost.isBlank()) {
             return configuredHost;
         }
-        // 配置为空，尝试 172.16.0.151
-        if (tryConnect("172.16.0.151", 3306, 2000)) return "172.16.0.151";
-        // 回退 192.168.101.130
-        if (tryConnect("192.168.101.130", 3306, 2000)) return "192.168.101.130";
-        // 默认
+        if (tryConnect("127.0.0.1", 3306, 2000)) return "127.0.0.1";
         return "192.168.101.130";
     }
 

@@ -69,6 +69,10 @@ public class SemiRiskStore {
     private final ObjectMapper objectMapper;
     private final PreparedRiskRepository repository;
     private final HealthProbeService healthProbeService;
+    private final TranslationService translationService;
+    private final GisService gisService;
+    private final EnterpriseService enterpriseService;
+    private final AiChatService aiChatService;
 
     /** 知识库分类常量：真实来源区分。 */
     public static final String KNOWLEDGE_PUBLIC = "公开情报";
@@ -81,13 +85,21 @@ public class SemiRiskStore {
             @Value("${semirisk.ai.default.api-key:}") String defaultAiApiKey,
             ObjectMapper objectMapper,
             PreparedRiskRepository repository,
-            HealthProbeService healthProbeService) {
+            HealthProbeService healthProbeService,
+            TranslationService translationService,
+            GisService gisService,
+            EnterpriseService enterpriseService,
+            AiChatService aiChatService) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.defaultAiApiKey = defaultAiApiKey;
         this.objectMapper = objectMapper;
         this.repository = repository;
         this.healthProbeService = healthProbeService;
+        this.translationService = translationService;
+        this.gisService = gisService;
+        this.enterpriseService = enterpriseService;
+        this.aiChatService = aiChatService;
         seedDefaultAiModel();
         auditLogs.add("[INFO] gateway route table initialized");
         refreshDailyRiskRecords();

@@ -58,12 +58,25 @@ SEMIRISK_ES_URL=http://127.0.0.1:9200
 
 ## 模块
 
-- `semirisk-ui`：Vue 前端
+- `semirisk-ui`：Vue 3 + Vite 前端
 - `semirisk-common`：公共响应结构、SQL 模板、AI/中间件默认值
 - `semirisk-services/semirisk-gateway`：统一 API 入口、持久化枢纽（Token/告警/企业/知识/AI 报告入库）、DeepSeek 调用、MinIO 存储、中间件健康探测
 - `semirisk-services/semirisk-data-service`：公开 RSS/Atom 与政策法规源实时爬虫，12 小时自动刷新
 - `semirisk-services/semirisk-risk-service`：AI 风险测算
 - `semirisk-services/semirisk-ai-service`：AI API Key 管理与本日风险报告真实生成（拉取公开源 + 调用 DeepSeek）
+
+## Gateway 服务层架构
+
+Gateway 核心业务层按领域拆分为以下服务类：
+
+| 服务类 | 职责 |
+|---|---|
+| `SemiRiskStore` | 核心协调：用户认证、风险快照、告警、上传、报告任务、Dashboard 聚合 |
+| `TranslationService` | 中英文标题翻译、风险等级/状态/维度名称映射 |
+| `GisService` | GIS 地理编码、风险点位计算、供应链路径生成 |
+| `EnterpriseService` | 企业画像、公开公司数据库、Wikipedia 信息查询、互联网搜索 |
+| `AiChatService` | DeepSeek API 调用、RAG 上下文构建、知识库问答、答案结构化 |
+| `HealthProbeService` | 中间件（MySQL/Redis/ES/MinIO/RabbitMQ/Nacos）健康探测 |
 
 ## 验证
 
