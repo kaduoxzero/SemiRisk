@@ -20,6 +20,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -1601,6 +1602,11 @@ public class SemiRiskStore {
             return "未配置";
         }
         return key.substring(0, 4) + "****" + key.substring(key.length() - 4);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        httpClient.close();
     }
 
 }

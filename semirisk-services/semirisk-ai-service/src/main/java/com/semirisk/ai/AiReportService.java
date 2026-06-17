@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.semirisk.common.AiModelDefaults;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -58,6 +59,11 @@ public class AiReportService {
         } catch (Exception ignored) {
             // 启动时数据源/模型不可达不影响服务启动，下一轮定时刷新会重试。
         }
+    }
+
+    @PreDestroy
+    public void destroy() {
+        httpClient.close();
     }
 
     @Scheduled(cron = "0 0 */12 * * *")

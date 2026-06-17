@@ -1,6 +1,7 @@
 package com.semirisk.data;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,11 @@ public class CrawlerService {
     @PostConstruct
     public void init() {
         refreshDailyRecords();
+    }
+
+    @PreDestroy
+    public void destroy() {
+        httpClient.close();
     }
 
     @Scheduled(fixedDelayString = "${semirisk.crawler.refresh-interval-ms:300000}", initialDelayString = "${semirisk.crawler.initial-delay-ms:30000}")

@@ -17,7 +17,7 @@ public class RiskComputationService {
     private final RestClient restClient;
     private final AtomicReference<RiskSnapshot> snapshot = new AtomicReference<>();
 
-    public RiskComputationService(@Value("${semirisk.data-service.url}") String dataServiceUrl) {
+    public RiskComputationService(@Value("${semirisk.data-service.url:http://localhost:8081}") String dataServiceUrl) {
         this.restClient = RestClient.builder().baseUrl(dataServiceUrl).build();
     }
 
