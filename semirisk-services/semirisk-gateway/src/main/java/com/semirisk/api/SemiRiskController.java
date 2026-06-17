@@ -638,6 +638,17 @@ public class SemiRiskController {
         try {
             List<Map<String, Object>> users = preparedRiskRepository.findSystemUsers();
             if (!users.isEmpty()) {
+                // Normalize role and status to English values for consistent frontend rendering
+                for (Map<String, Object> user : users) {
+                    String role = String.valueOf(user.get("role"));
+                    if ("管理员".equals(role)) user.put("role", "ADMIN");
+                    else if ("分析师".equals(role)) user.put("role", "ANALYST");
+                    else if ("运营人员".equals(role)) user.put("role", "OPERATOR");
+
+                    String status = String.valueOf(user.get("status"));
+                    if ("启用".equals(status)) user.put("status", "启用");
+                    else if ("禁用".equals(status)) user.put("status", "禁用");
+                }
                 overview.put("users", users);
             }
         } catch (Exception ex) {

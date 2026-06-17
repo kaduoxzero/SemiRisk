@@ -66,9 +66,9 @@
         <h3>用户</h3>
         <div class="user-list">
           <div v-for="u in state.system.users || []" :key="u.id" class="user-row">
-            <span class="badge" :class="normalizeRole(u.role) === 'ADMIN' ? 'high' : 'low'">{{ normalizeRole(u.role) }}</span>
+            <span class="badge" :class="u.role === 'ADMIN' ? 'high' : 'low'">{{ u.role }}</span>
             <strong>{{ u.username }}</strong>
-            <span class="muted">{{ u.display_name || u.displayName || '-' }}</span>
+            <span class="muted">{{ u.displayName || u.display_name || '-' }}</span>
             <span class="badge" :class="u.status === '启用' ? 'low' : 'mid'">{{ u.status }}</span>
           </div>
         </div>
@@ -101,11 +101,6 @@ const props = defineProps({
 
 const pageSize = 8;
 
-function normalizeRole(role) {
-  if (!role) return role;
-  const map = { '管理员': 'ADMIN', '分析师': 'ANALYST', '运营人员': 'OPERATOR' };
-  return map[role] || role;
-}
 const logs = computed(() => props.state.system.logs || []);
 const filteredLogs = computed(() => {
   const date = props.state.systemLogDate;
