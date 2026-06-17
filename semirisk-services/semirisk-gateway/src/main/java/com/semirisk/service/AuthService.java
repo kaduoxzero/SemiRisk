@@ -37,7 +37,7 @@ public class AuthService {
     }
 
     // ---------------------------------------------------------------------
-    // Accessors for SemiRiskStore
+    // SemiRiskStore 的访问器
     // ---------------------------------------------------------------------
 
     Map<String, UserAccount> getUsers() {
@@ -61,7 +61,7 @@ public class AuthService {
     }
 
     // ---------------------------------------------------------------------
-    // Authentication
+    // 身份验证
     // ---------------------------------------------------------------------
 
     public Optional<UserAccount> authenticate(String username, String password) {
@@ -126,7 +126,7 @@ public class AuthService {
     }
 
     // ---------------------------------------------------------------------
-    // Login failure tracking
+    // 登录失败追踪
     // ---------------------------------------------------------------------
 
     public LoginState loginState(String username) {
@@ -159,7 +159,7 @@ public class AuthService {
     }
 
     // ---------------------------------------------------------------------
-    // Password reset tokens
+    // 密码重置令牌
     // ---------------------------------------------------------------------
 
     public String createResetToken(String email) {
@@ -170,7 +170,7 @@ public class AuthService {
     }
 
     // ---------------------------------------------------------------------
-    // System user management (shared state with SemiRiskStore)
+    // 系统用户管理（与 SemiRiskStore 共享状态）
     // ---------------------------------------------------------------------
 
     public List<SystemUser> systemUsers() {
@@ -209,7 +209,7 @@ public class AuthService {
     }
 
     // ---------------------------------------------------------------------
-    // Private helpers
+    // 私有辅助方法
     // ---------------------------------------------------------------------
 
     private List<Map<String, Object>> findAllSystemUsers() {

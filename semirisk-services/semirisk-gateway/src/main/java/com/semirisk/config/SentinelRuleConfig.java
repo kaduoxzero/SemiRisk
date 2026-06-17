@@ -23,7 +23,7 @@ import java.util.List;
 @Configuration
 public class SentinelRuleConfig {
 
-    /** Enable @SentinelResource AOP */
+    /** 启用 @SentinelResource AOP */
     @Bean
     public SentinelResourceAspect sentinelResourceAspect() {
         return new SentinelResourceAspect();

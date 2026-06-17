@@ -17,7 +17,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Handles file upload task lifecycle: creation, completion, querying, and recovery.
+ * 处理文件上传任务的生命周期：创建、完成、查询和恢复。
  */
 @Service
 public class UploadService {
@@ -30,8 +30,7 @@ public class UploadService {
     }
 
     // -----------------------------------------------------------------
-    // Package-private getters for the maps (used by SemiRiskStore to
-    // access upload state after refactoring).
+    // 包级私有映射 getter（重构后供 SemiRiskStore 访问上传状态使用）。
     // -----------------------------------------------------------------
 
     Map<String, UploadTask> getUploadTasks() {
@@ -39,7 +38,8 @@ public class UploadService {
     }
 
     // -----------------------------------------------------------------
-    // Upload task operations — exact implementations copied from
+    // 上传任务操作 —— 精确实现直接从 SemiRiskStore 复制。
+    // -----------------------------------------------------------------
     // SemiRiskStore.
     // -----------------------------------------------------------------
 
@@ -119,7 +119,8 @@ public class UploadService {
     }
 
     // -----------------------------------------------------------------
-    // Helpers (extracted from SemiRiskStore, needed by recoverUploadTasks)
+    // 辅助方法（从 SemiRiskStore 提取，recoverUploadTasks 需要）
+    // -----------------------------------------------------------------
     // -----------------------------------------------------------------
 
     private String stringValue(Object value) {

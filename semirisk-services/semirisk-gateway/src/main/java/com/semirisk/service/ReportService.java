@@ -31,9 +31,8 @@ import java.util.function.Supplier;
 import org.springframework.stereotype.Service;
 
 /**
- * Extracted report-generation service. Owns all report-job lifecycle,
- * AI report compilation, and daily-report scheduling that previously lived
- * inside SemiRiskStore.
+ * 提取的报告生成服务。拥有所有报告任务的完整生命周期、AI 报告编译和日报调度，
+ * 这些功能此前位于 SemiRiskStore 内部。
  */
 @Service
 public class ReportService {
@@ -58,10 +57,10 @@ public class ReportService {
     private final PreparedRiskRepository repository;
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
 
-    /** Supplier for the shared daily risk snapshot (volatile in SemiRiskStore). */
+    /** 共享每日风险快照的 Supplier（在 SemiRiskStore 中为易失字段）。 */
     private final Supplier<DailyRiskSnapshot> snapshotSupplier;
 
-    /** Supplier for the available crawler signals list. */
+    /** 可用爬虫信号列表的 Supplier。 */
     private final Supplier<List<CrawlerSignal>> signalsSupplier;
 
     private final ObjectMapper objectMapper;
@@ -95,7 +94,7 @@ public class ReportService {
     }
 
     // -----------------------------------------------------------------
-    // Public API
+    // 公共 API
     // -----------------------------------------------------------------
 
     public ReportJob createReport(String template, String language, String format, int threshold) {
@@ -255,10 +254,10 @@ public class ReportService {
     }
 
     // -----------------------------------------------------------------
-    // Scheduled recovery (called from SemiRiskStore init)
+    // 定时恢复（由 SemiRiskStore 初始化调用）
     // -----------------------------------------------------------------
 
-    /** Recover report jobs from DB — called by SemiRiskStore.onStartup. */
+    /** 从数据库恢复报告任务 —— 由 SemiRiskStore.onStartup 调用。 */
     public void recoverReportJobs() {
         try {
             List<Map<String, Object>> rows = repository.findReportJobs(200);
@@ -282,7 +281,7 @@ public class ReportService {
     }
 
     // -----------------------------------------------------------------
-    // Private helpers (copied verbatim from SemiRiskStore)
+    // 私有辅助方法（直接从 SemiRiskStore 复制）
     // -----------------------------------------------------------------
 
     private String normalizeReportTemplate(String template) {
@@ -325,7 +324,7 @@ public class ReportService {
         List<String> context = new ArrayList<>();
         DailyRiskSnapshot snapshot = snapshotSupplier.get();
         context.add("当前综合评分：" + snapshot.score() + " | 等级：" + snapshot.level() + " | 摘要：" + snapshot.summary());
-        // Score drivers: signals above/below median
+        // 评分驱动因素：高于/低于中位数的信号
         long high = signals.stream().filter(s -> s.riskScore() >= 70).count();
         long mid = signals.stream().filter(s -> s.riskScore() >= 50 && s.riskScore() < 70).count();
         long low = signals.stream().filter(s -> s.riskScore() < 50).count();
@@ -342,12 +341,12 @@ public class ReportService {
                     enterpriseRecordsForReport(5).forEach(profile ->
                             context.add("企业画像：" + profile.get("name") + " | " + profile.get("industry") + " | 风险 " + profile.get("riskScore") + " | " + profile.get("creditLevel")));
             default -> {
-                // top risk drivers for the score
+                // 评分的主要风险驱动因素
                 signals.stream().filter(s -> s.riskScore() >= 60).limit(5).forEach(s ->
                         context.add("高风险驱动信号：[" + s.riskScore() + "分] " + s.source() + " | " + s.dimension() + " | " + s.title()));
             }
         }
-        // All signals with full detail for AI to reason over
+        // 所有信号的完整详细信息供 AI 推理
         signals.stream().limit(20).forEach(signal ->
                 context.add("公开源信号 [" + signal.riskScore() + "分] 来源：" + signal.source()
                         + " | 维度：" + signal.dimension()
@@ -389,7 +388,7 @@ public class ReportService {
     }
 
     // -----------------------------------------------------------------
-    // Shared utilities (copied from SemiRiskStore)
+    // 共享工具方法（从 SemiRiskStore 复制）
     // -----------------------------------------------------------------
 
     private Map<String, Object> aiReportFromRow(Map<String, Object> row) {
@@ -506,7 +505,7 @@ public class ReportService {
     }
 
     // -----------------------------------------------------------------
-    // Package-private accessors for tests / SemiRiskStore bridge
+    // 包级私有访问器，供测试 / SemiRiskStore 桥接使用
     // -----------------------------------------------------------------
 
     Map<String, ReportJob> reportJobs() {
@@ -518,7 +517,7 @@ public class ReportService {
     }
 
     // -----------------------------------------------------------------
-    // State kept alongside SemiRiskStore for daily report caching
+    // 与 SemiRiskStore 并列保存的日报缓存状态
     // -----------------------------------------------------------------
 
     private volatile Map<String, Object> dailyAiReport;

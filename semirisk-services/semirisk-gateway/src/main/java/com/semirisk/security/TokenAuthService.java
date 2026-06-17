@@ -96,7 +96,7 @@ public class TokenAuthService {
             log.warn("Failed to validate token from MySQL (DB may be unavailable), token={}", token, ex);
         }
 
-        // No token found in DB (or DB unavailable): not authenticated.
+        // 数据库中未找到 Token（或数据库不可用）：未认证。
         return Optional.empty();
     }
 

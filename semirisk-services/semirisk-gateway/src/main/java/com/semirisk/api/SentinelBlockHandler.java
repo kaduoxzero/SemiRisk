@@ -6,7 +6,7 @@ import org.springframework.http.ResponseEntity;
 
 import java.util.Map;
 
-/** Centralized Sentinel block / fallback handlers. */
+/** 统一的 Sentinel 限流 / 降级处理器。 */
 public final class SentinelBlockHandler {
 
     private SentinelBlockHandler() {}

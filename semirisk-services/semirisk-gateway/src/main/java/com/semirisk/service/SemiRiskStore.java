@@ -622,7 +622,7 @@ public class SemiRiskStore {
         List<String> context = new ArrayList<>();
         DailyRiskSnapshot snapshot = dailyRiskSnapshot;
         context.add("当前综合评分：" + snapshot.score() + " | 等级：" + snapshot.level() + " | 摘要：" + snapshot.summary());
-        // Score drivers: signals above/below median
+        // 评分驱动因素：高于/低于中位数的信号
         long high = signals.stream().filter(s -> s.riskScore() >= 70).count();
         long mid = signals.stream().filter(s -> s.riskScore() >= 50 && s.riskScore() < 70).count();
         long low = signals.stream().filter(s -> s.riskScore() < 50).count();
@@ -639,12 +639,12 @@ public class SemiRiskStore {
                     enterpriseRecordsForReport(5).forEach(profile ->
                             context.add("企业画像：" + profile.get("name") + " | " + profile.get("industry") + " | 风险 " + profile.get("riskScore") + " | " + profile.get("creditLevel")));
             default -> {
-                // top risk drivers for the score
+                // 评分的主要风险驱动因素
                 signals.stream().filter(s -> s.riskScore() >= 60).limit(5).forEach(s ->
                         context.add("高风险驱动信号：[" + s.riskScore() + "分] " + s.source() + " | " + s.dimension() + " | " + s.title()));
             }
         }
-        // All signals with full detail for AI to reason over
+        // 所有信号的完整详细信息供 AI 推理
         signals.stream().limit(20).forEach(signal ->
                 context.add("公开源信号 [" + signal.riskScore() + "分] 来源：" + signal.source()
                         + " | 维度：" + signal.dimension()
@@ -904,7 +904,7 @@ public class SemiRiskStore {
 
     private Map<String, Object> buildBusinessWithWiki(String creditCode, boolean noSignal, String companyName) {
         Map<String, Object> business = new LinkedHashMap<>();
-        // First try built-in public database of major semiconductor companies
+        // 首先尝试内置的主要半导体公司公共数据库
         Map<String, String> known = null;
         if (companyName != null && !companyName.isBlank()) {
             String lc = companyName.toLowerCase(Locale.ROOT);
@@ -919,7 +919,7 @@ public class SemiRiskStore {
             business.putAll(known);
             business.put("数据来源", "公司年报/官网/公开披露（已内置）");
         } else {
-            // Try Wikipedia for unknown companies
+            // 未知公司尝试查询维基百科
             Map<String, Object> wiki = companyName != null && !companyName.isBlank()
                     && !companyName.equals("请输入企业名称后搜索")
                     ? fetchWikipediaBusinessInfo(companyName) : Map.of();
@@ -949,7 +949,7 @@ public class SemiRiskStore {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
             String encoded = URLEncoder.encode(companyName, StandardCharsets.UTF_8);
-            // Step 1: search for the page
+            // 第一步：搜索页面
             HttpRequest searchReq = HttpRequest.newBuilder(
                     URI.create("https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch="
                             + encoded + "&format=json&srlimit=1"))
@@ -962,7 +962,7 @@ public class SemiRiskStore {
             if (hits == null || hits.isEmpty()) return result;
             String pageTitle = String.valueOf(hits.get(0).get("title"));
 
-            // Step 2: fetch extract + categories
+            // 第二步：获取摘要和分类
             String titleEncoded = URLEncoder.encode(pageTitle, StandardCharsets.UTF_8);
             HttpRequest infoReq = HttpRequest.newBuilder(
                     URI.create("https://en.wikipedia.org/w/api.php?action=query&titles=" + titleEncoded
@@ -977,7 +977,7 @@ public class SemiRiskStore {
             Map<String, Object> page = (Map<String, Object>) pages.values().iterator().next();
             String extract = String.valueOf(page.getOrDefault("extract", ""));
 
-            // Parse key fields from extract text
+            // 从摘要文本解析关键字段
             result.put("wikiTitle", pageTitle);
             result.put("wikiSource", "维基百科公开百科词条（英文）");
             extractWikiField(result, extract, "Founded", "成立时间");
@@ -986,19 +986,19 @@ public class SemiRiskStore {
             extractWikiField(result, extract, "Type", "企业类型");
             extractWikiField(result, extract, "Revenue", "营收（公开披露）");
             extractWikiField(result, extract, "Employees", "员工人数（公开披露）");
-            // First paragraph as description
+            // 第一段作为简介
             String[] paras = extract.split("\n\n");
             if (paras.length > 0 && !paras[0].isBlank()) {
                 result.put("description", truncate(paras[0].replaceAll("\\s+", " ").trim(), 200));
             }
         } catch (Exception ignored) {
-            // Wikipedia unreachable or no data: return empty, UI shows 待接入权威源
+            // 维基百科不可达或无数据：返回空值，UI 显示待接入权威源
         }
         return result;
     }
 
     private void extractWikiField(Map<String, Object> result, String text, String enKey, String zhKey) {
-        // Look for "Key: value" patterns in the extract
+        // 在摘要中查找"键: 值"模式
         java.util.regex.Matcher m = java.util.regex.Pattern.compile(
                 "(?i)" + java.util.regex.Pattern.quote(enKey) + "[:\\s]+([^\\n]+)").matcher(text);
         if (m.find()) {

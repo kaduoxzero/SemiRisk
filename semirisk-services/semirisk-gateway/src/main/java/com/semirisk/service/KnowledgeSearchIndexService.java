@@ -56,7 +56,7 @@ public class KnowledgeSearchIndexService {
             indexedSignature = signature;
         } catch (Exception ignored) {
             esDisabledUntil = Instant.now().plusSeconds(60);
-            // ES is optional locally; callers fall back to in-memory RAG.
+            // 本地环境下 ES 为可选；调用方会回退到内存 RAG。
         }
     }
 

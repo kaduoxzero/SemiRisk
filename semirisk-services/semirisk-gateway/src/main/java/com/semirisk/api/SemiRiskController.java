@@ -261,14 +261,14 @@ public class SemiRiskController {
         String csv = "supplier,material,stage,lead_time_days,risk_level\n"
                 + "安芯物流,晶圆,仓储物流,7,中危\n"
                 + "华南晶圆,硅片,生产制造,14,低危\n";
-        // UTF-8 BOM (EF BB BF) is required for Excel/WPS to correctly open UTF-8 CSV files
+        // Excel/WPS 正确打开 UTF-8 CSV 文件需要 UTF-8 BOM (EF BB BF)
         byte[] csvBytes = csv.getBytes(StandardCharsets.UTF_8);
         byte[] bom = new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
         byte[] response = new byte[bom.length + csvBytes.length];
         System.arraycopy(bom, 0, response, 0, bom.length);
         System.arraycopy(csvBytes, 0, response, bom.length, csvBytes.length);
 
-        // Determine upload processing flow based on user role
+        // 根据用户角色确定上传处理流程
         String flow = determineUploadFlow(request);
 
         return ResponseEntity.ok()
@@ -398,9 +398,9 @@ public class SemiRiskController {
         try {
             store.updateAlertStatus(id, "处理中");
         } catch (IllegalArgumentException ignored) {
-            // Unknown risk ids still return a deterministic response for the current detail page.
+            // 未知的风险 ID 仍为当前详情页返回确定性响应。
         }
-        // store.updateAlertStatus already persists to DB, skip duplicate DB update
+        // store.updateAlertStatus 已持久化到数据库，跳过重复的数据库更新
         return ApiResponse.ok("负责人已指派", Map.of("id", id, "owner", owner, "status", "处理中"));
     }
 
@@ -409,9 +409,9 @@ public class SemiRiskController {
         try {
             store.updateAlertStatus(id, "处理中");
         } catch (IllegalArgumentException ignored) {
-            // Unknown risk ids still return a deterministic response for the current detail page.
+            // 未知的风险 ID 仍为当前详情页返回确定性响应。
         }
-        // store.updateAlertStatus already persists to DB, skip duplicate DB update
+        // store.updateAlertStatus 已持久化到数据库，跳过重复的数据库更新
         return ApiResponse.ok("处置报告已下发", Map.of("id", id, "status", "处理中"));
     }
 
@@ -529,7 +529,7 @@ public class SemiRiskController {
         try {
             syncPublicCrawlerRecords();
         } catch (Exception ex) {
-            // ignore - downstream may be temporarily unavailable
+            // 忽略 -- 下游服务可能暂时不可用
         }
     }
 
@@ -546,14 +546,14 @@ public class SemiRiskController {
     @PutMapping("/alerts/{id}/ignore")
     public ApiResponse<RiskAlert> ignoreAlert(@PathVariable String id) {
         RiskAlert alert = store.updateAlertStatus(id, "已忽略");
-        // store.updateAlertStatus already persist to DB via persistAlertStatus, skip duplicate
+        // store.updateAlertStatus 已通过 persistAlertStatus 持久化到数据库，跳过重复操作
         return ApiResponse.ok("告警已忽略", alert);
     }
 
     @PostMapping("/alerts/batch-process")
     public ApiResponse<Map<String, Object>> batchProcess(@RequestBody BatchRequest request) {
         request.ids().forEach(id -> store.updateAlertStatus(id, "处理中"));
-        // store.updateAlertStatus already persists to DB, skip duplicate
+        // store.updateAlertStatus 已持久化到数据库，跳过重复操作
         return ApiResponse.ok("批量处理指令下发成功", Map.of("processed", request.ids().size()));
     }
 

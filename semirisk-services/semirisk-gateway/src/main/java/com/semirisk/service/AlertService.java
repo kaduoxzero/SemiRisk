@@ -16,8 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * Alert management service extracted from {@link SemiRiskStore}.
- * Owns alert state maps and all alert-related CRUD / persistence logic.
+ * 告警管理服务，从 {@link SemiRiskStore} 中提取。
+ * 拥有告警状态映射和所有告警相关的 CRUD / 持久化逻辑。
  */
 @Service
 public class AlertService {
@@ -31,19 +31,19 @@ public class AlertService {
         this.repository = repository;
     }
 
-    /** Public view of all alerts (sorted by time descending). */
+    /** 所有告警的公共视图（按时间降序排列）。 */
     public List<RiskAlert> alerts() {
         return alerts.values().stream()
                 .sorted(Comparator.comparing(RiskAlert::time).reversed())
                 .toList();
     }
 
-    /** Look up a single alert by id. */
+    /** 根据 id 查询单条告警。 */
     public Optional<RiskAlert> alert(String id) {
         return Optional.ofNullable(alerts.get(id));
     }
 
-    /** Update alert status; if the alert is not in-memory it falls back to public alerts and persists the change. */
+    /** 更新告警状态；若告警不在内存中则回退到公共告警并持久化变更。 */
     public RiskAlert updateAlertStatus(String id, String status, Supplier<List<CrawlerSignal>> signalSupplier) {
         RiskAlert current = alerts.get(id);
         if (current == null) {
@@ -62,17 +62,17 @@ public class AlertService {
         return updated;
     }
 
-    /** Build public signal alerts from the given signals, using stored statuses. */
+    /** 根据给定信号构建公共信号告警，使用已存储的状态。 */
     public List<RiskAlert> publicSignalAlerts(List<CrawlerSignal> signals) {
         return publicAlerts(signals);
     }
 
-    /** Public API: build public signal alerts from the provided signal list supplier. */
+    /** 公共 API：根据提供的信号列表构造器构建公共信号告警。 */
     public List<RiskAlert> publicSignalAlerts(Supplier<List<CrawlerSignal>> signalSupplier) {
         return publicAlerts(signalSupplier.get());
     }
 
-    /** Persist alert status to the database. */
+    /** 将告警状态持久化到数据库。 */
     public void persistAlertStatus(String id, String status, RiskAlert alert) {
         try {
             repository.upsertPublicAlert(id, alert.time(), alert.level(), alert.title(),
@@ -82,7 +82,7 @@ public class AlertService {
         }
     }
 
-    /** Persist public alerts from crawler signals into the database. */
+    /** 将爬虫信号的公共告警持久化到数据库。 */
     public void persistPublicAlerts(List<CrawlerSignal> signals) {
         try {
             for (CrawlerSignal s : signals) {
@@ -94,7 +94,7 @@ public class AlertService {
         }
     }
 
-    /** Load alert statuses from the database into local state on startup. */
+    /** 启动时从数据库加载告警状态到本地状态。 */
     public void loadAlertStatusesFromDb() {
         try {
             repository.findAlerts(null, null, null, 500).forEach(row -> {
@@ -108,7 +108,7 @@ public class AlertService {
         }
     }
 
-    // ---- package-private getters for the maps (used by SemiRiskStore) ----
+    // ---- 包级私有映射 getter（SemiRiskStore 使用）----
 
     Map<String, RiskAlert> getAlertsMap() {
         return alerts;
@@ -118,7 +118,7 @@ public class AlertService {
         return publicAlertStatuses;
     }
 
-    // ---- private helpers (extracted from SemiRiskStore) ----
+    // ---- 私有辅助方法（从 SemiRiskStore 提取）----
 
     private List<RiskAlert> publicAlerts(List<CrawlerSignal> signals) {
         return signals.stream()

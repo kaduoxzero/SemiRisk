@@ -48,7 +48,7 @@ public class SystemManagementService {
     }
 
     // -----------------------------------------------------------------
-    // System user management
+    // 系统用户管理
     // -----------------------------------------------------------------
 
     public List<SystemUser> systemUsers() {
@@ -89,7 +89,7 @@ public class SystemManagementService {
     }
 
     // -----------------------------------------------------------------
-    // Audit logs
+    // 审计日志
     // -----------------------------------------------------------------
 
     public List<String> auditLogs() {
@@ -110,7 +110,7 @@ public class SystemManagementService {
     }
 
     // -----------------------------------------------------------------
-    // AI model config
+    // AI 模型配置
     // -----------------------------------------------------------------
 
     public AiModelConfig saveAiModelConfig(String model, String endpoint, String apiKey) {
@@ -128,7 +128,7 @@ public class SystemManagementService {
     }
 
     // -----------------------------------------------------------------
-    // System overview
+    // 系统概览
     // -----------------------------------------------------------------
 
     public Map<String, Object> systemOverview() {
@@ -153,7 +153,7 @@ public class SystemManagementService {
     }
 
     // -----------------------------------------------------------------
-    // Internal helpers
+    // 内部辅助方法
     // -----------------------------------------------------------------
 
     private List<Map<String, Object>> probeDataSources() {
@@ -198,7 +198,7 @@ public class SystemManagementService {
     }
 
     // -----------------------------------------------------------------
-    // Package-private getters for the maps (used by SemiRiskStore)
+    // 包级私有映射 getter（供 SemiRiskStore 使用）
     // -----------------------------------------------------------------
 
     Map<String, SystemUser> systemUsersMap() {

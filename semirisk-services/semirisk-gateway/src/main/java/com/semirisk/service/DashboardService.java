@@ -17,11 +17,10 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 /**
- * Dashboard and risk-analysis service.
+ * 仪表盘和风险分析服务。
  *
- * Reads from shared risk state (DailyRiskSnapshot + CrawlerSignal supplier)
- * and produces dashboard/KPI, time-series window analysis, and per-signal
- * detail views with bilingual translations.
+ * 从共享风险状态（DailyRiskSnapshot + CrawlerSignal 构造器）读取数据，
+ * 生成仪表盘/KPI、时间序列窗口分析以及带双语翻译的单信号详情视图。
  */
 @Service
 public class DashboardService {
@@ -42,11 +41,11 @@ public class DashboardService {
     }
 
     // ---------------------------------------------------------------------
-    // Public API
+    // 公共 API
     // ---------------------------------------------------------------------
 
     /**
-     * KPI summary, hotspot counts, ranking, materials, and pipeline stages.
+     * KPI 汇总、热点计数、排名、维度材料和流水线阶段。
      */
     public Map<String, Object> dashboard() {
         DailyRiskSnapshot snapshot = snapshotSupplier.get();
@@ -78,7 +77,7 @@ public class DashboardService {
     }
 
     /**
-     * Time-series window analysis (24h / 7d / 30d).
+     * 时间序列窗口分析（24小时 / 7天 / 30天）。
      */
     public Map<String, Object> riskAnalysis(String window) {
         String normalizedWindow = normalizeWindow(window);
@@ -134,7 +133,7 @@ public class DashboardService {
     }
 
     /**
-     * Detailed signal info with bilingual translation.
+     * 带双语翻译的详细信号信息。
      */
     public Map<String, Object> riskDetail(String id) {
         DailyRiskSnapshot snapshot = snapshotSupplier.get();
@@ -176,12 +175,12 @@ public class DashboardService {
     }
 
     // ---------------------------------------------------------------------
-    // Helpers shared from SemiRiskStore
+    // 从 SemiRiskStore 共享的辅助方法
     // ---------------------------------------------------------------------
 
     private String currentStatus(String id) {
-        // In the original SemiRiskStore this reads from publicAlertStatuses map.
-        // Without direct access to that map we default to "未处理" for lookups via DashboardService.
+        // 在原始 SemiRiskStore 中此方法从 publicAlertStatuses 映射读取。
+        // 由于无法直接访问该映射，通过 DashboardService 查询时默认为"未处理"。
         return "未处理";
     }
 
@@ -347,7 +346,7 @@ public class DashboardService {
     }
 
     // ---------------------------------------------------------------------
-    // Delegated dependencies from SemiRiskStore
+    // 从 SemiRiskStore 委托的依赖
     // ---------------------------------------------------------------------
 
     private GisService gisService() {
@@ -355,8 +354,8 @@ public class DashboardService {
     }
 
     private Map<String, Object> latestAiReport() {
-        // Delegated to ReportService via SemiRiskStore bridge.
-        // Returns pending placeholder until daily report is generated.
+        // 通过 SemiRiskStore 桥接委托给 ReportService。
+        // 在日报生成前返回待处理占位符。
         Map<String, Object> pending = new LinkedHashMap<>();
         String today = java.time.LocalDate.now().toString();
         pending.put("reportDate", today);
