@@ -1445,7 +1445,7 @@ public class SemiRiskStore {
         return apiKey != null && !apiKey.isBlank();
     }
 
-    private List<CrawlerSignal> availableSignals() {
+    public List<CrawlerSignal> availableSignals() {
         DailyRiskSnapshot snapshot = dailyRiskSnapshot;
         if (snapshot == null) {
             return List.of();

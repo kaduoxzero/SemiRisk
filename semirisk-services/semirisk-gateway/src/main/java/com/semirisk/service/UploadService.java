@@ -2,6 +2,7 @@ package com.semirisk.service;
 
 import com.semirisk.model.UploadTask;
 import com.semirisk.repository.PreparedRiskRepository;
+import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -18,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Handles file upload task lifecycle: creation, completion, querying, and recovery.
  */
+@Service
 public class UploadService {
 
     private final Map<String, UploadTask> uploadTasks = new ConcurrentHashMap<>();

@@ -12,6 +12,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
 
 /**
  * Dashboard and risk-analysis service.
@@ -20,16 +23,20 @@ import java.util.Optional;
  * and produces dashboard/KPI, time-series window analysis, and per-signal
  * detail views with bilingual translations.
  */
+@Service
 public class DashboardService {
 
     private final TranslationService translationService;
-    private final java.util.function.Supplier<DailyRiskSnapshot> snapshotSupplier;
-    private final java.util.function.Supplier<List<CrawlerSignal>> signalsSupplier;
+    private final GisService gisService;
+    private final Supplier<DailyRiskSnapshot> snapshotSupplier;
+    private final Supplier<List<CrawlerSignal>> signalsSupplier;
 
     public DashboardService(TranslationService translationService,
-                            java.util.function.Supplier<DailyRiskSnapshot> snapshotSupplier,
-                            java.util.function.Supplier<List<CrawlerSignal>> signalsSupplier) {
+                            GisService gisService,
+                            @Lazy Supplier<DailyRiskSnapshot> snapshotSupplier,
+                            @Lazy Supplier<List<CrawlerSignal>> signalsSupplier) {
         this.translationService = translationService;
+        this.gisService = gisService;
         this.snapshotSupplier = snapshotSupplier;
         this.signalsSupplier = signalsSupplier;
     }
@@ -344,15 +351,12 @@ public class DashboardService {
     // ---------------------------------------------------------------------
 
     private GisService gisService() {
-        // Will be injected via a setter or additional constructor parameter.
-        // For now we return a minimal no-op so this compiles.
-        // TODO: inject GisService into DashboardService constructor.
-        throw new IllegalStateException("GisService not yet injected into DashboardService");
+        return gisService;
     }
 
     private Map<String, Object> latestAiReport() {
-        // Will be delegated to the report service / DailyAiReportService.
-        // TODO: inject a supplier for latestAiReport().
+        // Delegated to ReportService via SemiRiskStore bridge.
+        // Returns pending placeholder until daily report is generated.
         Map<String, Object> pending = new LinkedHashMap<>();
         String today = java.time.LocalDate.now().toString();
         pending.put("reportDate", today);

@@ -9,6 +9,7 @@ import com.semirisk.repository.PreparedRiskRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.net.http.HttpClient;
@@ -27,12 +28,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
+import org.springframework.stereotype.Service;
 
 /**
  * Extracted report-generation service. Owns all report-job lifecycle,
  * AI report compilation, and daily-report scheduling that previously lived
  * inside SemiRiskStore.
  */
+@Service
 public class ReportService {
 
     private final Map<String, ReportJob> reportJobs = new ConcurrentHashMap<>();
@@ -74,8 +77,8 @@ public class ReportService {
             GisService gisService,
             EnterpriseService enterpriseService,
             PreparedRiskRepository repository,
-            Supplier<DailyRiskSnapshot> snapshotSupplier,
-            Supplier<List<CrawlerSignal>> signalsSupplier) {
+            @Lazy Supplier<DailyRiskSnapshot> snapshotSupplier,
+            @Lazy Supplier<List<CrawlerSignal>> signalsSupplier) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.defaultAiApiKey = defaultAiApiKey;

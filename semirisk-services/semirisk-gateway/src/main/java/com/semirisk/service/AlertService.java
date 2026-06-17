@@ -4,6 +4,7 @@ import com.semirisk.model.CrawlerSignal;
 import com.semirisk.model.RiskAlert;
 import com.semirisk.repository.PreparedRiskRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.Comparator;
@@ -18,6 +19,7 @@ import java.util.function.Supplier;
  * Alert management service extracted from {@link SemiRiskStore}.
  * Owns alert state maps and all alert-related CRUD / persistence logic.
  */
+@Service
 public class AlertService {
 
     private final Map<String, RiskAlert> alerts = new ConcurrentHashMap<>();
