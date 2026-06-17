@@ -1145,7 +1145,7 @@ th { color: var(--muted); font-size: 12px; }
 .format-lock { color: var(--muted); font-size: 13px; padding: 8px 4px; }
 
 /* Enterprise page */
-.enterprise-workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; }
+.enterprise-workspace { display: grid; grid-template-columns: minmax(280px, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .enterprise-row { grid-template-columns: 42px minmax(0, 1fr); }
 .enterprise-row-info { display: grid; gap: 2px; }
 .enterprise-row-info em { font-style: normal; font-size: 12px; color: var(--muted); }
