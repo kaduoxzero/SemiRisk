@@ -1,6 +1,8 @@
 package com.semirisk.config;
 
 import com.semirisk.repository.PreparedRiskRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
@@ -13,11 +15,12 @@ import java.util.List;
  * 启动时容错建表。
  *
  * <p>在应用上下文就绪后尝试创建本项目新增的持久化表（全部 {@code CREATE TABLE IF NOT EXISTS}，幂等），
- * 使「所有信息入库 MySQL」无需手动执行 schema 脚本即可生效。MySQL 暂不可达时整段 try/catch 跳过，
- * 不影响 Gateway 在无 VM 情况下启动（与既有本地兜底一致）。</p>
+ * 使「所有信息入库 MySQL」无需手动执行 schema 脚本即可生效。</p>
  */
 @Component
 public class SchemaInitializer {
+
+    private static final Logger log = LoggerFactory.getLogger(SchemaInitializer.class);
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -151,9 +154,9 @@ public class SchemaInitializer {
         for (String ddl : DDL) {
             try {
                 jdbcTemplate.execute(ddl);
-            } catch (Exception ignored) {
-                // MySQL 暂不可达或权限不足时跳过，不影响启动；脚本 script/semirisk-schema.sql 仍可手动应用。
-            }
+        } catch (Exception ex) {
+            log.error("Failed to execute DDL: {}", ddl, ex);
+        }
         }
     }
 }

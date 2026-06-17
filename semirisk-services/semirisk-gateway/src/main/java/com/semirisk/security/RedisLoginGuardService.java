@@ -1,16 +1,18 @@
 package com.semirisk.security;
 
 import com.semirisk.model.LoginState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Optional;
 
 @Service
 public class RedisLoginGuardService {
 
+    private static final Logger log = LoggerFactory.getLogger(RedisLoginGuardService.class);
     private static final Duration FAILURE_WINDOW = Duration.ofMinutes(5);
     private static final Duration LOCK_WINDOW = Duration.ofMinutes(30);
     private static final int MAX_FAILURES = 5;
@@ -21,25 +23,26 @@ public class RedisLoginGuardService {
         this.redisTemplate = redisTemplate;
     }
 
-    public Optional<LoginState> loginState(String username) {
+    public LoginState loginState(String username) {
         try {
             String lockValue = redisTemplate.opsForValue().get(lockKey(username));
             if (lockValue != null) {
-                return Optional.of(new LoginState(true, MAX_FAILURES, Instant.parse(lockValue)));
+                return new LoginState(true, MAX_FAILURES, Instant.parse(lockValue));
             }
             String failureValue = redisTemplate.opsForValue().get(failureKey(username));
             int failures = failureValue == null ? 0 : Integer.parseInt(failureValue);
-            return Optional.of(new LoginState(false, failures, null));
+            return new LoginState(false, failures, null);
         } catch (Exception ex) {
-            return Optional.empty();
+            log.warn("Redis unavailable for login state check, returning default state for user={}", username, ex);
+            return new LoginState(false, 0, null);
         }
     }
 
-    public Optional<LoginState> recordFailure(String username) {
+    public LoginState recordFailure(String username) {
         try {
             String lockValue = redisTemplate.opsForValue().get(lockKey(username));
             if (lockValue != null) {
-                return Optional.of(new LoginState(true, MAX_FAILURES, Instant.parse(lockValue)));
+                return new LoginState(true, MAX_FAILURES, Instant.parse(lockValue));
             }
             Long failures = redisTemplate.opsForValue().increment(failureKey(username));
             if (failures != null && failures == 1L) {
@@ -49,11 +52,12 @@ public class RedisLoginGuardService {
             if (count >= MAX_FAILURES) {
                 Instant lockedUntil = Instant.now().plus(LOCK_WINDOW);
                 redisTemplate.opsForValue().set(lockKey(username), lockedUntil.toString(), LOCK_WINDOW);
-                return Optional.of(new LoginState(true, count, lockedUntil));
+                return new LoginState(true, count, lockedUntil);
             }
-            return Optional.of(new LoginState(false, count, null));
+            return new LoginState(false, count, null);
         } catch (Exception ex) {
-            return Optional.empty();
+            log.warn("Redis unavailable for recording login failure for user={}", username, ex);
+            return new LoginState(false, 0, null);
         }
     }
 
@@ -61,8 +65,8 @@ public class RedisLoginGuardService {
         try {
             redisTemplate.delete(failureKey(username));
             redisTemplate.delete(lockKey(username));
-        } catch (Exception ignored) {
-            // Redis is optional for local demonstration.
+        } catch (Exception ex) {
+            log.warn("Redis unavailable for clearing login state for user={}", username, ex);
         }
     }
 

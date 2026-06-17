@@ -14,17 +14,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Bearer Token 认证服务。
  *
- * <p>Token 以 MySQL {@code auth_token} 表为事实源，支持 30 分钟滑动续期、重启恢复与多实例共享；
- * 内存 {@link java.util.concurrent.ConcurrentHashMap} 仅在 MySQL 暂不可达时作降级兜底，
- * 不再依赖纯内存 Token（避免重启即失效）。</p>
+ * <p>Token 以 MySQL {@code auth_token} 表为事实源，支持 30 分钟滑动续期、重启恢复与多实例共享。</p>
  */
 @Service
 public class TokenAuthService {
 
+    private static final Logger log = LoggerFactory.getLogger(TokenAuthService.class);
     private static final SecureRandom RANDOM = new SecureRandom();
     private final Map<String, AuthPrincipal> tokens = new ConcurrentHashMap<>();
     private final PreparedRiskRepository repository;
@@ -46,8 +47,8 @@ public class TokenAuthService {
         tokens.put(token, principal);
         try {
             repository.insertAuthToken(token, account.username(), account.displayName(), account.role(), now, expiresAt);
-        } catch (Exception ignored) {
-            // MySQL 暂不可达时使用内存兜底，保证本地可登录。
+        } catch (Exception ex) {
+            log.error("Failed to persist auth token for user={} to MySQL", account.username(), ex);
         }
         return new IssuedToken(token, expiresAt);
     }
@@ -71,7 +72,7 @@ public class TokenAuthService {
         Instant now = Instant.now();
         Instant renewed = now.plus(ttlMinutes, ChronoUnit.MINUTES);
 
-        // 1) DB 优先：以 auth_token 表为事实源。
+        // DB 优先：以 auth_token 表为事实源。
         try {
             List<Map<String, Object>> rows = repository.findAuthToken(token);
             if (!rows.isEmpty()) {
@@ -91,23 +92,12 @@ public class TokenAuthService {
                 tokens.put(token, principal);
                 return Optional.of(principal);
             }
-            // DB 可达但无该 Token：可能内存兜底签发，向下回退判断。
-        } catch (Exception ignored) {
-            // DB 不可达，使用内存兜底。
+        } catch (Exception ex) {
+            log.warn("Failed to validate token from MySQL (DB may be unavailable), token={}", token, ex);
         }
 
-        // 2) 内存兜底（仅 DB 不可达或兜底签发时命中）。
-        AuthPrincipal principal = tokens.get(token);
-        if (principal == null) {
-            return Optional.empty();
-        }
-        if (principal.expiresAt().isBefore(now)) {
-            tokens.remove(token);
-            return Optional.empty();
-        }
-        AuthPrincipal next = new AuthPrincipal(principal.username(), principal.displayName(), principal.role(), renewed);
-        tokens.put(token, next);
-        return Optional.of(next);
+        // No token found in DB (or DB unavailable): not authenticated.
+        return Optional.empty();
     }
 
     public void revoke(String authorization) {
@@ -116,8 +106,8 @@ public class TokenAuthService {
             tokens.remove(token);
             try {
                 repository.deleteAuthToken(token);
-            } catch (Exception ignored) {
-                // 忽略 DB 不可达，内存已清除。
+            } catch (Exception ex) {
+                log.error("Failed to revoke token from MySQL, token={}", token, ex);
             }
         }
     }
@@ -127,10 +117,9 @@ public class TokenAuthService {
     public void purgeExpired() {
         try {
             repository.deleteExpiredAuthTokens(Instant.now());
-        } catch (Exception ignored) {
-            // DB 不可达时跳过本轮清理。
+        } catch (Exception ex) {
+            log.error("Failed to purge expired auth tokens from MySQL", ex);
         }
-        tokens.values().removeIf(principal -> principal.expiresAt().isBefore(Instant.now()));
     }
 
     private Instant toInstant(Object value) {

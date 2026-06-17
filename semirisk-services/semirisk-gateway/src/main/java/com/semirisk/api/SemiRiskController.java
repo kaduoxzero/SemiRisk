@@ -26,6 +26,8 @@ import com.semirisk.service.MinioStorageService;
 import com.semirisk.service.PublicCrawlerClient;
 import com.semirisk.service.HealthProbeService;
 import com.semirisk.service.UploadParseService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -34,7 +36,6 @@ import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -63,6 +64,8 @@ import java.util.concurrent.Executors;
 @RestController
 @RequestMapping("/api")
 public class SemiRiskController {
+
+    private static final Logger log = LoggerFactory.getLogger(SemiRiskController.class);
 
     private final SemiRiskStore store;
     private final PublicCrawlerClient publicCrawlerClient;
@@ -105,7 +108,7 @@ public class SemiRiskController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> login(@Valid @RequestBody LoginRequest request) {
         String username = inputSanitizer.username(request.username());
         String password = inputSanitizer.loginPassword(request.password());
-        LoginState state = redisLoginGuardService.loginState(username).orElseGet(() -> store.loginState(username));
+        LoginState state = redisLoginGuardService.loginState(username);
         if (state.locked()) {
             return ResponseEntity.status(423).body(ApiResponse.fail("账号已锁定至 " + state.lockedUntil()));
         }
@@ -126,7 +129,7 @@ public class SemiRiskController {
                     return ResponseEntity.ok(ApiResponse.ok("登录成功", body));
                 })
                 .orElseGet(() -> {
-                    LoginState failed = redisLoginGuardService.recordFailure(username).orElseGet(() -> store.recordFailure(username));
+                    LoginState failed = redisLoginGuardService.recordFailure(username);
                     String message = failed.locked()
                             ? "密码错误次数达到 5 次，账号锁定 30 分钟"
                             : "账号或密码错误，当前 5 分钟窗口失败次数：" + failed.failures();
@@ -155,48 +158,36 @@ public class SemiRiskController {
     }
 
     private Optional<UserAccount> authenticate(String username, String password) {
-        try {
-            List<Map<String, Object>> rows = preparedRiskRepository.findAuthUserByUsername(username);
-            if (!rows.isEmpty()) {
-                Map<String, Object> row = rows.get(0);
-                String status = rowString(row, "status");
-                String hash = rowString(row, "passwordHash");
-                if (!"启用".equals(status) || !passwordHashService.verify(password, hash)) {
-                    return Optional.empty();
-                }
-                String id = rowString(row, "id");
-                String role = normalizeRole(rowString(row, "role"));
-                String displayName = rowString(row, "displayName").isBlank() ? username : rowString(row, "displayName");
-                preparedRiskRepository.updateSystemUserLastLogin(id);
-                preparedRiskRepository.insertAuditLog("INFO", "auth login success " + username);
-                return Optional.of(new UserAccount(username, "", displayName, role, true));
+        List<Map<String, Object>> rows = preparedRiskRepository.findAuthUserByUsername(username);
+        if (!rows.isEmpty()) {
+            Map<String, Object> row = rows.get(0);
+            String status = rowString(row, "status");
+            String hash = rowString(row, "passwordHash");
+            if (!"启用".equals(status) || !passwordHashService.verify(password, hash)) {
+                return Optional.empty();
             }
-        } catch (Exception ignored) {
-            // Local fallback keeps registration/login usable before VM MySQL is connected.
+            String id = rowString(row, "id");
+            String role = normalizeRole(rowString(row, "role"));
+            String displayName = rowString(row, "displayName").isBlank() ? username : rowString(row, "displayName");
+            preparedRiskRepository.updateSystemUserLastLogin(id);
+            preparedRiskRepository.insertAuditLog("INFO", "auth login success " + username);
+            return Optional.of(new UserAccount(username, "", displayName, role, true));
         }
-        return store.authenticate(username, password);
+        return Optional.empty();
     }
 
     private UserAccount registerPersisted(String username, String password, String displayName, String email) {
-        try {
-            if (!preparedRiskRepository.findAuthUserByUsername(username).isEmpty()) {
-                throw new IllegalArgumentException("账号已存在");
-            }
-            if (preparedRiskRepository.emailExists(email)) {
-                throw new IllegalArgumentException("邮箱已被注册");
-            }
-            String role = preparedRiskRepository.countLoginUsers() == 0 ? SemiriskConstants.ROLE_ADMIN : SemiriskConstants.ROLE_OPERATOR;
-            String id = "U-" + UUID.randomUUID().toString().substring(0, 8);
-            preparedRiskRepository.insertSystemUser(id, username, displayName, email, passwordHashService.hash(password), role, "启用");
-            preparedRiskRepository.insertAuditLog("INFO", "public registration persisted username=" + username + " role=" + role);
-            return new UserAccount(username, "", displayName, role, true);
-        } catch (IllegalArgumentException ex) {
-            throw ex;
-        } catch (DuplicateKeyException ex) {
-            throw new IllegalArgumentException("账号或邮箱已存在");
-        } catch (Exception ignored) {
-            return store.register(username, password, displayName, email);
+        if (!preparedRiskRepository.findAuthUserByUsername(username).isEmpty()) {
+            throw new IllegalArgumentException("账号已存在");
         }
+        if (preparedRiskRepository.emailExists(email)) {
+            throw new IllegalArgumentException("邮箱已被注册");
+        }
+        String role = preparedRiskRepository.countLoginUsers() == 0 ? SemiriskConstants.ROLE_ADMIN : SemiriskConstants.ROLE_OPERATOR;
+        String id = "U-" + UUID.randomUUID().toString().substring(0, 8);
+        preparedRiskRepository.insertSystemUser(id, username, displayName, email, passwordHashService.hash(password), role, "启用");
+        preparedRiskRepository.insertAuditLog("INFO", "public registration persisted username=" + username + " role=" + role);
+        return new UserAccount(username, "", displayName, role, true);
     }
 
     private String rowString(Map<String, Object> row, String key) {
@@ -313,23 +304,16 @@ public class SemiRiskController {
         try {
             preparedRiskRepository.insertUploadTask(task.id(), task.filename(), task.size(), task.status(), task.rows(), task.createdAt());
             preparedRiskRepository.insertAuditLog("INFO", "upload accepted " + task.filename() + (stored ? " stored=minio:" + objectKey : " stored=none"));
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to persist upload task to MySQL, task={}", task.id(), ex);
         }
         return ApiResponse.ok(stored ? "文件已上传至 MinIO 对象存储并进入解析队列" : "文件已进入解析队列（对象存储暂不可达）", task);
     }
 
     @GetMapping("/data/uploads")
     public ApiResponse<List<?>> uploads() {
-        try {
-            List<Map<String, Object>> rows = preparedRiskRepository.findUploadTasks(100);
-            if (!rows.isEmpty()) {
-                return ApiResponse.ok((List<?>) rows);
-            }
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
-        }
-        return ApiResponse.ok((List<?>) store.uploadTasks());
+        List<Map<String, Object>> rows = preparedRiskRepository.findUploadTasks(100);
+        return ApiResponse.ok((List<?>) rows);
     }
 
     @PostMapping("/data/uploads/{id}/parse")
@@ -355,8 +339,8 @@ public class SemiRiskController {
         try {
             preparedRiskRepository.updateUploadTask(task.id(), task.status(), task.rows());
             preparedRiskRepository.insertAuditLog("INFO", "upload parsed " + task.id() + " rows=" + task.rows());
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to persist upload parse result to MySQL, task={}", task.id(), ex);
         }
         return ApiResponse.ok("AI 解析与导入完成，真实解析 " + task.rows() + " 行", task);
     }
@@ -373,7 +357,8 @@ public class SemiRiskController {
                     .map(row -> String.valueOf(row.get("filename")))
                     .findFirst()
                     .orElse(null);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to lookup upload filename from MySQL, id={}", id, ex);
             return null;
         }
     }
@@ -448,8 +433,8 @@ public class SemiRiskController {
         try {
             preparedRiskRepository.upsertReportJob(job.id(), job.template(), job.language(), job.format(), job.threshold(), job.status(), job.progress(), job.step(), job.downloadUrl(), job.createdAt());
             preparedRiskRepository.insertAuditLog("INFO", "report job created " + job.id());
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to persist report job to MySQL, job={}", job.id(), ex);
         }
         return ApiResponse.ok("报告生成任务已启动", job);
     }
@@ -460,18 +445,14 @@ public class SemiRiskController {
             ReportJob advanced = store.advanceReport(id);
             try {
                 preparedRiskRepository.upsertReportJob(advanced.id(), advanced.template(), advanced.language(), advanced.format(), advanced.threshold(), advanced.status(), advanced.progress(), advanced.step(), advanced.downloadUrl(), advanced.createdAt());
-            } catch (Exception ignored) {
-                // Local fallback keeps the project runnable before VM middleware is connected.
+            } catch (Exception ex) {
+                log.error("Failed to persist report job update to MySQL, job={}", advanced.id(), ex);
             }
             return ApiResponse.ok(advanced);
         }
-        try {
-            Map<String, Object> row = preparedRiskRepository.findReportJob(id).stream().findFirst().orElse(Map.of());
-            if (!row.isEmpty()) {
-                return ApiResponse.ok(row);
-            }
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        Map<String, Object> row = preparedRiskRepository.findReportJob(id).stream().findFirst().orElse(Map.of());
+        if (!row.isEmpty()) {
+            return ApiResponse.ok(row);
         }
         return ApiResponse.fail("报告任务不存在");
     }
@@ -482,11 +463,7 @@ public class SemiRiskController {
         ReportJob job = store.reportJob(id).orElse(null);
         Map<String, Object> persisted = Map.of();
         if (job == null) {
-            try {
-                persisted = preparedRiskRepository.findReportJob(id).stream().findFirst().orElse(Map.of());
-            } catch (Exception ignored) {
-                // Local fallback keeps the project runnable before VM middleware is connected.
-            }
+            persisted = preparedRiskRepository.findReportJob(id).stream().findFirst().orElse(Map.of());
         }
         String template = job == null ? String.valueOf(persisted.getOrDefault("template", "risk-assessment")) : job.template();
         String language = job == null ? String.valueOf(persisted.getOrDefault("language", "中文")) : job.language();
@@ -514,14 +491,7 @@ public class SemiRiskController {
         if (!store.dailyRiskSnapshot().signals().isEmpty() || "待采集".equals(store.dailyRiskSnapshot().level())) {
             return ApiResponse.ok(List.of());
         }
-        try {
-            List<Map<String, Object>> rows = preparedRiskRepository.findAlerts(kw.isBlank() ? null : kw, blankToNull(level), blankToNull(status), 100);
-            if (!rows.isEmpty()) {
-                return ApiResponse.ok((List<?>) rows);
-            }
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
-        }
+        List<Map<String, Object>> rows = preparedRiskRepository.findAlerts(kw.isBlank() ? null : kw, blankToNull(level), blankToNull(status), 100);
         List<RiskAlert> filtered = filterAlerts(store.alerts(), kw, level, status);
         return ApiResponse.ok((List<?>) filtered);
     }
@@ -670,8 +640,8 @@ public class SemiRiskController {
             if (!users.isEmpty()) {
                 overview.put("users", users);
             }
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to fetch system users from MySQL", ex);
         }
         return ApiResponse.ok(overview);
     }
@@ -685,8 +655,8 @@ public class SemiRiskController {
         try {
             preparedRiskRepository.insertSystemUser(user.id(), user.username(), user.username(), user.email(), null, user.role(), user.status());
             preparedRiskRepository.insertAuditLog("INFO", "system user created " + user.username());
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to persist system user to MySQL, user={}", user.username(), ex);
         }
         return ApiResponse.ok("系统用户已创建", user);
     }
@@ -703,8 +673,8 @@ public class SemiRiskController {
             String id = "U-" + UUID.randomUUID().toString().substring(0, 8);
             preparedRiskRepository.upsertSystemLoginUser(id, username, displayName, email, passwordHashService.hash(password), role, "启用");
             preparedRiskRepository.insertAuditLog("INFO", "login user upserted " + username + " role=" + role);
-        } catch (Exception ignored) {
-            // Local fallback keeps admin provisioning usable before VM MySQL is connected.
+        } catch (Exception ex) {
+            log.error("Failed to persist login user to MySQL, username={}", username, ex);
         }
         return ApiResponse.ok("登录用户已创建/更新", Map.of(
                 "username", account.username(),
@@ -721,8 +691,8 @@ public class SemiRiskController {
         try {
             preparedRiskRepository.updateSystemUserStatus(id, cleanStatus);
             preparedRiskRepository.insertAuditLog("WARN", "system user status changed " + id + " -> " + cleanStatus);
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to update system user status in MySQL, id={}", id, ex);
         }
         return ApiResponse.ok("用户状态已更新，后续请求需重新获取 Token", user);
     }
@@ -733,8 +703,8 @@ public class SemiRiskController {
         try {
             preparedRiskRepository.deleteSystemUser(id);
             preparedRiskRepository.insertAuditLog("ERROR", "system user deleted " + id);
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to delete system user from MySQL, id={}", id, ex);
         }
         return ApiResponse.ok("用户已物理删除", Map.of("id", id));
     }
@@ -757,25 +727,18 @@ public class SemiRiskController {
         try {
             preparedRiskRepository.upsertAiModelConfig(config.model(), config.endpoint(), config.maskedApiKey(), config.configured(), config.updatedAt());
             preparedRiskRepository.insertAuditLog("INFO", "AI model config saved " + config.model());
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to persist AI model config to MySQL, model={}", config.model(), ex);
         }
         return ApiResponse.ok("AI 模型 API Key 已保存", config);
     }
 
     @GetMapping("/system/models/config")
     public ApiResponse<?> modelConfigs() {
-        try {
-            List<Map<String, Object>> rows = preparedRiskRepository.findAiModelConfigs();
-            if (!rows.isEmpty()) {
-                Map<String, Map<String, Object>> configs = new HashMap<>();
-                rows.forEach(row -> configs.put(String.valueOf(row.get("model")), row));
-                return ApiResponse.ok(configs);
-            }
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
-        }
-        return ApiResponse.ok(store.aiModelConfigs());
+        List<Map<String, Object>> rows = preparedRiskRepository.findAiModelConfigs();
+        Map<String, Map<String, Object>> configs = new HashMap<>();
+        rows.forEach(row -> configs.put(String.valueOf(row.get("model")), row));
+        return ApiResponse.ok(configs);
     }
 
     @GetMapping("/risk-score/today")
@@ -805,8 +768,8 @@ public class SemiRiskController {
         }
         try {
             preparedRiskRepository.insertAuditLog("INFO", "agent triggered " + name + " -> " + result);
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to insert audit log for agent trigger, agent={}", name, ex);
         }
         return ApiResponse.ok("Agent 已手动触发", Map.of("agent", name, "result", result, "triggeredAt", Instant.now().toString()));
     }
@@ -817,8 +780,8 @@ public class SemiRiskController {
         boolean reachable = Boolean.TRUE.equals(probe.get("reachable"));
         try {
             preparedRiskRepository.insertAuditLog(reachable ? "INFO" : "WARN", "datasource reconnect " + name + " reachable=" + reachable);
-        } catch (Exception ignored) {
-            // Local fallback keeps the project runnable before VM middleware is connected.
+        } catch (Exception ex) {
+            log.error("Failed to insert audit log for datasource reconnect, name={}", name, ex);
         }
         return ApiResponse.ok(reachable ? "数据源连通正常" : "数据源不可达，请检查中间件状态", probe);
     }

@@ -4,6 +4,8 @@ import com.semirisk.common.SemiriskConstants;
 import com.semirisk.repository.PreparedRiskRepository;
 import com.semirisk.security.PasswordHashService;
 import com.semirisk.service.SemiRiskStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -11,6 +13,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class BootstrapAdminProvisioner implements ApplicationRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(BootstrapAdminProvisioner.class);
 
     private final SemiRiskStore store;
     private final PreparedRiskRepository preparedRiskRepository;
@@ -57,8 +61,9 @@ public class BootstrapAdminProvisioner implements ApplicationRunner {
                     "启用"
             );
             preparedRiskRepository.insertAuditLog("INFO", "bootstrap admin synchronized username=" + username);
-        } catch (Exception ignored) {
-            // VM middleware may be offline during local development; the in-memory account remains usable.
+        } catch (Exception ex) {
+            log.error("Failed to persist bootstrap admin user to MySQL, username={}", username, ex);
+            throw new RuntimeException("Bootstrap admin provision failed: MySQL write error", ex);
         }
     }
 }

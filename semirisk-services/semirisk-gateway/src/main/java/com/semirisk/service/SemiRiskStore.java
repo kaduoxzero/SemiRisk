@@ -17,6 +17,8 @@ import com.semirisk.service.AiChatService.AiAnswer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -51,6 +53,8 @@ import java.util.regex.Pattern;
 
 @Service
 public class SemiRiskStore {
+
+    private static final Logger log = LoggerFactory.getLogger(SemiRiskStore.class);
 
     private final Map<String, UserAccount> users = new ConcurrentHashMap<>();
     private final Map<String, LoginCounter> loginCounters = new ConcurrentHashMap<>();
@@ -198,8 +202,8 @@ public class SemiRiskStore {
                 rebuildSnapshot(persisted);
                 auditLogs.add("[INFO] recovered " + persisted.size() + " crawler signals from MySQL on startup");
             }
-        } catch (Exception ignored) {
-            // MySQL 暂不可达时等待首次爬虫同步。
+        } catch (Exception ex) {
+            log.error("Failed to recover crawler signals from MySQL on startup", ex);
         }
         loadAlertStatusesFromDb();
         seedEnterpriseWatchlist();
@@ -214,7 +218,8 @@ public class SemiRiskStore {
             return repository.findRecentCrawlerSignals(since, 300).stream()
                     .map(this::rowToSignal)
                     .toList();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to load recent crawler signals from MySQL", ex);
             return List.of();
         }
     }
@@ -239,8 +244,8 @@ public class SemiRiskStore {
                         riskSignalLabel(s.riskScore()), s.riskScore(), s.status(), s.fetchedAt());
             }
             repository.deleteOldCrawlerSignals(Instant.now().minus(7, ChronoUnit.DAYS));
-        } catch (Exception ignored) {
-            // 入库失败时仍以内存快照对外服务。
+        } catch (Exception ex) {
+            log.error("Failed to persist crawler signals to MySQL", ex);
         }
     }
 
@@ -248,7 +253,8 @@ public class SemiRiskStore {
         try {
             repository.insertRiskSnapshot(snapshot.score(), snapshot.level(), truncate(snapshot.summary(), 1000),
                     snapshot.signals().size(), snapshot.calculatedAt());
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to persist risk snapshot to MySQL", ex);
         }
     }
 
@@ -259,7 +265,8 @@ public class SemiRiskStore {
                 repository.upsertPublicAlert(s.id(), s.fetchedAt(), riskLevel(s.riskScore()),
                         truncate(s.title(), 250), truncate(s.source(), 120), status, "risk-detail.html");
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to persist public alerts to MySQL", ex);
         }
     }
 
@@ -268,7 +275,8 @@ public class SemiRiskStore {
             repository.upsertPublicAlert(id, alert.time(), alert.level(), truncate(alert.title(), 250),
                     truncate(alert.source(), 120), status, "risk-detail.html");
             repository.updateAlertStatus(id, status);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to persist alert status to MySQL, alert={}", id, ex);
         }
     }
 
@@ -281,7 +289,8 @@ public class SemiRiskStore {
                     publicAlertStatuses.put(id, status);
                 }
             });
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to load alert statuses from MySQL", ex);
         }
     }
 
@@ -303,7 +312,8 @@ public class SemiRiskStore {
                 }
             }
             auditLogs.add("[INFO] recovered " + rows.size() + " upload tasks from MySQL");
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to recover upload tasks from MySQL", ex);
         }
     }
 
@@ -327,7 +337,8 @@ public class SemiRiskStore {
                 reportJobs.put(id, job);
             }
             auditLogs.add("[INFO] recovered " + rows.size() + " report jobs from MySQL");
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to recover report jobs from MySQL", ex);
         }
     }
 
@@ -340,7 +351,8 @@ public class SemiRiskStore {
                         truncate(s.source(), 250), truncate(s.sourceUrl(), 1000), truncate(s.dimension(), 60),
                         s.riskScore(), null, s.fetchedAt());
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to persist knowledge docs to MySQL", ex);
         }
     }
 
@@ -378,8 +390,8 @@ public class SemiRiskStore {
                 repository.upsertKnowledgeDoc(doc[0], KNOWLEDGE_INTERNAL, doc[1], doc[2],
                         "SemiRisk 内部知识库", "", doc[3], 0, null, Instant.now());
             }
-        } catch (Exception ignored) {
-            // MySQL 不可达时 localKnowledgeLines 会使用内存兜底文案。
+        } catch (Exception ex) {
+            log.error("Failed to seed internal knowledge docs to MySQL", ex);
         }
     }
 
@@ -409,7 +421,8 @@ public class SemiRiskStore {
                 }
                 auditLogs.add("[INFO] enterprise watchlist seeded into MySQL count=" + ENTERPRISE_WATCHLIST.length);
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to seed enterprise watchlist to MySQL", ex);
         }
     }
 
@@ -430,7 +443,8 @@ public class SemiRiskStore {
                         industry, stringValue(record.get("location")), score, riskLevel(score),
                         "公开主体观察名单 + 公开源事件", "待接入权威源", eventsJson, signalsJson, Instant.now());
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to refresh enterprise records in MySQL", ex);
         }
     }
 
@@ -493,7 +507,8 @@ public class SemiRiskStore {
     private List<Map<String, Object>> findAllSystemUsers() {
         try {
             return repository.findSystemUsers();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to fetch system users from MySQL", ex);
             return List.of();
         }
     }
@@ -712,8 +727,8 @@ public class SemiRiskStore {
                         .map(row -> stringValue(row.get("createdAt")) + " [" + stringValue(row.get("level")) + "] " + stringValue(row.get("message")))
                         .toList();
             }
-        } catch (Exception ignored) {
-            // MySQL 不可达时回退内存审计日志。
+        } catch (Exception ex) {
+            log.error("Failed to fetch audit logs from MySQL", ex);
         }
         String today = LocalDate.now().toString();
         return auditLogs.stream()
@@ -1003,7 +1018,8 @@ public class SemiRiskStore {
     private Optional<Map<String, Object>> findEnterpriseRecord(String keyword) {
         try {
             return repository.findEnterpriseRecordByKeyword(keyword).stream().findFirst();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to find enterprise record by keyword in MySQL, keyword={}", keyword, ex);
             return Optional.empty();
         }
     }
@@ -1011,7 +1027,8 @@ public class SemiRiskStore {
     private Map<String, Object> repositoryFirstEnterprise() {
         try {
             return repository.findEnterpriseRecords(1).stream().findFirst().orElse(null);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to fetch first enterprise record from MySQL", ex);
             return null;
         }
     }
@@ -1032,7 +1049,8 @@ public class SemiRiskStore {
             String signalsJson = writeJson(related.stream().map(this::enterpriseSignal).toList());
             repository.upsertEnterpriseRecord(id, truncate(name, 250), "", truncate(industry, 120), "待核验",
                     score, riskLevel(score), "公开源事件聚合（用户搜索）", "待接入权威源", eventsJson, signalsJson, Instant.now());
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to persist searched enterprise to MySQL, name={}", name, ex);
         }
     }
 
@@ -1050,7 +1068,8 @@ public class SemiRiskStore {
                         return item;
                     })
                     .toList();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to fetch enterprise catalog from MySQL", ex);
             return List.of();
         }
     }
@@ -1058,7 +1077,8 @@ public class SemiRiskStore {
     private List<Map<String, Object>> enterpriseRecordsForReport(int limit) {
         try {
             return repository.findEnterpriseRecords(limit);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to fetch enterprise records from MySQL", ex);
             return List.of();
         }
     }
@@ -1273,7 +1293,8 @@ public class SemiRiskStore {
                         return item;
                     })
                     .toList();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to fetch knowledge docs from MySQL, category={}", category, ex);
             return List.of();
         }
     }
@@ -1288,7 +1309,8 @@ public class SemiRiskStore {
     private int countKnowledge(String category) {
         try {
             return repository.countKnowledgeDocsByCategory(category);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to count knowledge docs in MySQL, category={}", category, ex);
             return 0;
         }
     }
@@ -1412,7 +1434,8 @@ public class SemiRiskStore {
     private List<Map<String, Object>> probeDataSources() {
         try {
             return healthProbeService.probeAll();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to probe data sources", ex);
             return List.of();
         }
     }
