@@ -5,7 +5,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -29,6 +28,25 @@ public class SchemaInitializer {
     }
 
     private static final List<String> DDL = List.of(
+            """
+            CREATE TABLE IF NOT EXISTS system_user (
+                id VARCHAR(64) PRIMARY KEY,
+                username VARCHAR(128) NOT NULL,
+                display_name VARCHAR(128) NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                password_hash VARCHAR(255) NULL,
+                role VARCHAR(64) NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                last_login_at DATETIME NULL,
+                password_updated_at DATETIME NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_system_user_username(username),
+                UNIQUE KEY uk_system_user_email(email),
+                INDEX idx_system_user_role(role),
+                INDEX idx_system_user_status(status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
             """
             CREATE TABLE IF NOT EXISTS auth_token (
                 token VARCHAR(96) PRIMARY KEY,
@@ -149,14 +167,42 @@ public class SchemaInitializer {
     );
 
     @EventListener(ContextRefreshedEvent.class)
-    @Order(10)
     public void ensureSchema() {
+        log.info("SchemaInitializer.ensureSchema: starting table/column initialization");
         for (String ddl : DDL) {
             try {
                 jdbcTemplate.execute(ddl);
-        } catch (Exception ex) {
-            log.error("Failed to execute DDL: {}", ddl, ex);
+            } catch (Exception ex) {
+                log.warn("DDL skipped (table may already exist): {}", ddl.substring(0, Math.min(80, ddl.length())), ex);
+            }
         }
+        // ALTER: add missing columns if the table already exists with an old schema
+        List<String> alters = List.of(
+                "ALTER TABLE system_user ADD COLUMN display_name VARCHAR(128) NOT NULL DEFAULT '' AFTER username",
+                "ALTER TABLE system_user ADD COLUMN password_hash VARCHAR(255) NULL AFTER email",
+                "ALTER TABLE system_user ADD COLUMN last_login_at DATETIME NULL AFTER status",
+                "ALTER TABLE system_user ADD COLUMN password_updated_at DATETIME NULL AFTER last_login_at"
+        );
+        for (String alter : alters) {
+            try {
+                jdbcTemplate.execute(alter);
+                log.info("Added column: {}", alter);
+            } catch (Exception ex) {
+                // Column may already exist — check if it's a duplicate column error (SQLSTATE 42S21)
+                String sqlState = null;
+                if (ex instanceof org.springframework.jdbc.BadSqlGrammarException bsge) {
+                    Throwable cause = bsge.getCause();
+                    if (cause != null && cause.getMessage() != null) {
+                        sqlState = cause.getMessage();
+                    }
+                }
+                if (sqlState != null && sqlState.contains("Duplicate column name")) {
+                    log.debug("Column already exists, skipping: {}", alter);
+                } else {
+                    log.warn("ALTER failed (unexpected): {}", alter, ex);
+                }
+            }
         }
+        log.info("SchemaInitializer.ensureSchema: completed");
     }
 }
