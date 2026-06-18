@@ -148,8 +148,6 @@ public class ReportService {
         List<String> lines = new ArrayList<>();
         lines.add(reportTitle(type));
         lines.add("报告编号：" + id);
-        lines.add("写作方式：AI 结合公开源、风险规则、企业画像和处置 SOP 生成");
-        lines.add("AI状态：" + aiAnswer.status());
         if (!aiAnswer.answer().isBlank()) {
             aiChatService.splitAnswer(aiAnswer.answer()).forEach(lines::add);
         } else {

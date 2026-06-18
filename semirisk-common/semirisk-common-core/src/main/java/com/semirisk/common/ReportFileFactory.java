@@ -61,23 +61,18 @@ public final class ReportFileFactory {
     private record Section(String heading, List<String> paragraphs) {}
 
     private record Report(String title, String reportId, String templateName, String language,
-                          String date, String riskLevel, String modelStatus, List<Section> sections) {}
+                          String date, String riskLevel, List<Section> sections) {}
 
     private static Report parse(String id, String template, String language, List<String> findings) {
         String templateName = templateName(template);
         String title = "SemiRisk 企业供应链风险报告";
-        String modelStatus = "";
         String riskLevel = "";
         List<Section> sections = new ArrayList<>();
         Section current = null;
         List<String> source = findings == null ? List.of() : findings;
         for (String raw : source) {
             String line = raw == null ? "" : raw.trim();
-            if (line.isEmpty() || line.startsWith("报告编号") || line.startsWith("写作方式")) continue;
-            if (line.startsWith("AI状态") || line.startsWith("AI 状态")) {
-                modelStatus = line.replaceFirst("^AI\\s*状态[:：]?", "").trim();
-                continue;
-            }
+            if (line.isEmpty() || line.startsWith("报告编号")) continue;
             if (line.startsWith("SemiRisk") && line.contains("报告")) { title = line; continue; }
             if (riskLevel.isEmpty()) {
                 if (line.contains("高危")) riskLevel = "高危";
@@ -100,7 +95,7 @@ public final class ReportFileFactory {
         return new Report(title, id, templateName,
                 language == null || language.isBlank() ? "中文" : language,
                 LocalDate.now().toString(),
-                riskLevel.isEmpty() ? "待研判" : riskLevel, modelStatus, sections);
+                riskLevel.isEmpty() ? "待研判" : riskLevel, sections);
     }
 
     private static String templateName(String template) {
