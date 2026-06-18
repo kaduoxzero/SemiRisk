@@ -33,7 +33,6 @@ export function useSemiRiskApp() {
     dashboard: {},
     dashboardPage: 1,
     uploads: [],
-    logs: [],
     analysisWindow: '24h',
     analysis: {},
     selectedRiskId: '',

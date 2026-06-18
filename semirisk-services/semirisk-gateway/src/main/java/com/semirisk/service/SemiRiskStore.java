@@ -308,7 +308,7 @@ public class SemiRiskStore {
                 int rowsCount = asInt(row.get("rows"));
                 Instant createdAt = toInstant(row.get("createdAt"));
                 // 只恢复非完成状态的任务
-                if (!"导入成功".equals(status) && !"无有效数据".equals(status) && !"失败".equals(status)) {
+                if (!"已入库".equals(status) && !"AI评估失败".equals(status)) {
                     UploadTask task = new UploadTask(id, filename, size, status, createdAt, rowsCount, List.of());
                     uploadTasks.put(id, task);
                 }
@@ -557,11 +557,6 @@ public class SemiRiskStore {
 
     public Optional<UploadTask> uploadTask(String id) {
         return uploadService.uploadTask(id);
-    }
-
-    /** 上传处理 SSE 的真实日志行，反映文件接收、MinIO 落库与真实解析结果。 */
-    public List<String> uploadLogLines(String id) {
-        return uploadService.uploadLogLines(id);
     }
 
     public List<UploadTask> uploadTasks() {

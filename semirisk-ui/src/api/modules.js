@@ -26,10 +26,8 @@ export const dashboardApi = {
 
 export const uploadApi = {
   list: () => request('/api/data/uploads'),
-  parse: id => request(`/api/data/uploads/${id}/parse`, { method: 'POST' }),
   upload: form => request('/api/data/uploads', { method: 'POST', body: form }),
-  templateUrl: '/api/data/templates/supplier',
-  logsUrl: '/api/data/uploads/logs'
+  templateUrl: '/api/data/templates/supplier'
 };
 
 export const riskApi = {

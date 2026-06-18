@@ -27,7 +27,7 @@ import com.semirisk.service.KnowledgeSearchIndexService;
 import com.semirisk.service.MinioStorageService;
 import com.semirisk.service.PublicCrawlerClient;
 import com.semirisk.service.HealthProbeService;
-import com.semirisk.service.UploadParseService;
+import com.semirisk.service.UploadAiEvaluateService;
 import com.semirisk.service.EmailService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,7 +50,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -64,8 +63,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 @Validated
 @RestController
@@ -84,15 +81,14 @@ public class SemiRiskController {
     private final TokenAuthService tokenAuthService;
     private final CsrfTokenService csrfTokenService;
     private final MinioStorageService minioStorageService;
-    private final UploadParseService uploadParseService;
+    private final UploadAiEvaluateService uploadAiEvaluateService;
     private final HealthProbeService healthProbeService;
     private final EmailService emailService;
     private final VerificationCodeService verificationCodeService;
     private final PasswordResetTokenService passwordResetTokenService;
-    private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
     private volatile Instant lastCrawlerSync = Instant.EPOCH;
 
-    public SemiRiskController(SemiRiskStore store, PublicCrawlerClient publicCrawlerClient, KnowledgeSearchIndexService knowledgeSearchIndexService, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService, PasswordHashService passwordHashService, InputSanitizer inputSanitizer, TokenAuthService tokenAuthService, CsrfTokenService csrfTokenService, MinioStorageService minioStorageService, UploadParseService uploadParseService, HealthProbeService healthProbeService, EmailService emailService, VerificationCodeService verificationCodeService, PasswordResetTokenService passwordResetTokenService) {
+    public SemiRiskController(SemiRiskStore store, PublicCrawlerClient publicCrawlerClient, KnowledgeSearchIndexService knowledgeSearchIndexService, PreparedRiskRepository preparedRiskRepository, RedisLoginGuardService redisLoginGuardService, PasswordHashService passwordHashService, InputSanitizer inputSanitizer, TokenAuthService tokenAuthService, CsrfTokenService csrfTokenService, MinioStorageService minioStorageService, UploadAiEvaluateService uploadAiEvaluateService, HealthProbeService healthProbeService, EmailService emailService, VerificationCodeService verificationCodeService, PasswordResetTokenService passwordResetTokenService) {
         this.store = store;
         this.publicCrawlerClient = publicCrawlerClient;
         this.knowledgeSearchIndexService = knowledgeSearchIndexService;
@@ -103,7 +99,7 @@ public class SemiRiskController {
         this.tokenAuthService = tokenAuthService;
         this.csrfTokenService = csrfTokenService;
         this.minioStorageService = minioStorageService;
-        this.uploadParseService = uploadParseService;
+        this.uploadAiEvaluateService = uploadAiEvaluateService;
         this.healthProbeService = healthProbeService;
         this.emailService = emailService;
         this.verificationCodeService = verificationCodeService;
@@ -356,14 +352,7 @@ public class SemiRiskController {
     }
 
     private String determineUploadFlow(HttpServletRequest request) {
-        Optional<TokenAuthService.AuthPrincipal> principal = tokenAuthService.validate(
-                request == null ? null : request.getHeader("Authorization"));
-        if (principal.isEmpty()) return "上传→清洗→人工复核→导入";
-        String role = principal.get().role();
-        if ("ADMIN".equals(role) || "ANALYST".equals(role)) {
-            return "上传→AI自动清洗→自动导入→日志追踪";
-        }
-        return "上传→清洗→人工复核→导入";
+        return "上传→AI自动分析→自动入库";
     }
 
     @PostMapping(value = "/data/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -375,7 +364,7 @@ public class SemiRiskController {
             minioStorageService.putObject(objectKey, file.getBytes(), file.getContentType());
             stored = true;
         } catch (Exception ignored) {
-            // MinIO 暂不可达时仍接收任务，前端显示明确状态。
+            // MinIO 暂不可达时仍接收任务
         }
         try {
             preparedRiskRepository.insertUploadTask(task.id(), task.filename(), task.size(), task.status(), task.rows(), task.createdAt());
@@ -383,42 +372,17 @@ public class SemiRiskController {
         } catch (Exception ex) {
             log.error("Failed to persist upload task to MySQL, task={}", task.id(), ex);
         }
-        return ApiResponse.ok(stored ? "文件已上传至 MinIO 对象存储并进入解析队列" : "文件已进入解析队列（对象存储暂不可达）", task);
+        // 异步触发 AI 评估
+        if (stored) {
+            uploadAiEvaluateService.evaluateAsync(task.id(), objectKey, task.filename());
+        }
+        return ApiResponse.ok(stored ? "文件已上传，AI 自动分析中" : "文件已接收，AI 分析将稍后进行（对象存储暂不可达）", task);
     }
 
     @GetMapping("/data/uploads")
     public ApiResponse<List<?>> uploads() {
         List<Map<String, Object>> rows = preparedRiskRepository.findUploadTasks(100);
         return ApiResponse.ok((List<?>) rows);
-    }
-
-    @PostMapping("/data/uploads/{id}/parse")
-    public ApiResponse<UploadTask> parseUpload(@PathVariable String id) {
-        String filename = store.uploadTask(id).map(UploadTask::filename).orElseGet(() -> lookupUploadFilename(id));
-        if (filename == null || filename.isBlank()) {
-            return ApiResponse.fail("上传任务不存在或对象已过期");
-        }
-        String objectKey = uploadObjectKey(id, filename);
-        UploadParseService.ParseResult result;
-        try {
-            byte[] content = minioStorageService.getObject(objectKey);
-            result = uploadParseService.parse(filename, content);
-        } catch (Exception ex) {
-            return ApiResponse.fail("无法从对象存储读取文件进行解析：" + ex.getClass().getSimpleName());
-        }
-        UploadTask task;
-        try {
-            task = store.completeUpload(id, result.rows(), result.warnings());
-        } catch (IllegalArgumentException ex) {
-            task = new UploadTask(id, filename, 0, result.rows() > 0 ? "导入成功" : "无有效数据", Instant.now(), result.rows(), result.warnings());
-        }
-        try {
-            preparedRiskRepository.updateUploadTask(task.id(), task.status(), task.rows());
-            preparedRiskRepository.insertAuditLog("INFO", "upload parsed " + task.id() + " rows=" + task.rows());
-        } catch (Exception ex) {
-            log.error("Failed to persist upload parse result to MySQL, task={}", task.id(), ex);
-        }
-        return ApiResponse.ok("AI 解析与导入完成，真实解析 " + task.rows() + " 行", task);
     }
 
     private String uploadObjectKey(String id, String filename) {
@@ -437,23 +401,6 @@ public class SemiRiskController {
             log.warn("Failed to lookup upload filename from MySQL, id={}", id, ex);
             return null;
         }
-    }
-
-    @GetMapping("/data/uploads/logs")
-    public SseEmitter uploadLogs() {
-        SseEmitter emitter = new SseEmitter(30_000L);
-        sseExecutor.submit(() -> {
-            try {
-                for (String log : store.uploadLogLines(null)) {
-                    emitter.send(SseEmitter.event().name("log").data(Map.of("time", Instant.now().toString(), "message", log)));
-                    Thread.sleep(360);
-                }
-                emitter.complete();
-            } catch (Exception ex) {
-                emitter.completeWithError(ex);
-            }
-        });
-        return emitter;
     }
 
     @GetMapping("/risk/analysis")

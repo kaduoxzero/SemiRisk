@@ -123,6 +123,21 @@ public class KnowledgeSearchIndexService {
         }
     }
 
+    /** 将用户上传的 AI 评估文档索引到 Elasticsearch。 */
+    public void indexUploadedDoc(String docId, String title, String content, String dimension, int riskScore, String objectKey) throws Exception {
+        Map<String, Object> document = Map.of(
+                "id", docId,
+                "title", title,
+                "content", content,
+                "source", "用户上传",
+                "sourceUrl", objectKey,
+                "dimension", dimension,
+                "riskScore", riskScore,
+                "fetchedAt", Instant.now().toString()
+        );
+        httpClient.send(jsonRequest("PUT", "/" + indexName + "/_doc/" + docId, objectMapper.writeValueAsString(document)), HttpResponse.BodyHandlers.discarding());
+    }
+
     private void ensureIndex() throws Exception {
         String mapping = """
                 {

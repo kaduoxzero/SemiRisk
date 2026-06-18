@@ -7,7 +7,7 @@ public final class RolePermissionPolicy {
 
     private static final Map<String, Set<String>> ROLE_MODULES = Map.of(
             SemiriskConstants.ROLE_ADMIN, Set.of("dashboard", "upload", "analysis", "detail", "report", "alerts", "gis", "enterprise", "knowledge", "system"),
-            SemiriskConstants.ROLE_ANALYST, Set.of("dashboard", "analysis", "detail", "report", "alerts", "gis", "enterprise", "knowledge"),
+            SemiriskConstants.ROLE_ANALYST, Set.of("dashboard", "upload", "analysis", "detail", "report", "alerts", "gis", "enterprise", "knowledge"),
             SemiriskConstants.ROLE_OPERATOR, Set.of("dashboard", "upload", "alerts", "gis", "enterprise", "knowledge")
     );
 
