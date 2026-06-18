@@ -119,7 +119,7 @@ public class SemiRiskStore {
             @Lazy ReportService reportService,
             DashboardService dashboardService,
             SystemManagementService systemManagementService,
-            AiChatService aiChatService) {
+            @Lazy AiChatService aiChatService) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.defaultAiApiKey = defaultAiApiKey;
