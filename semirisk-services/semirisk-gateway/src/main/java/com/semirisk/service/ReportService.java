@@ -68,7 +68,7 @@ public class ReportService {
     public ReportService(
             @Value("${semirisk.ai.default.model:" + AiModelDefaults.DEFAULT_MODEL + "}") String defaultAiModel,
             @Value("${semirisk.ai.default.endpoint:" + AiModelDefaults.DEFAULT_ENDPOINT + "}") String defaultAiEndpoint,
-            SemiRiskStore store,
+            @Lazy SemiRiskStore store,
             ObjectMapper objectMapper,
             AiChatService aiChatService,
             HealthProbeService healthProbeService,
