@@ -95,23 +95,24 @@ public class HealthProbeService {
     /** 对 AI 模型 endpoint 发起真实连通性探测，返回真实可达状态与延迟。 */
     public Map<String, Object> probeModelEndpoint(String model, String endpoint) {
         String base = endpoint == null || endpoint.isBlank() ? "https://api.deepseek.com/v1" : endpoint.trim();
-        String probeUrl = base.replaceAll("/+$", "");
+        String probeUrl = base.replaceAll("/+$", "") + "/chat/completions";
         long start = System.nanoTime();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("model", model);
         result.put("endpoint", base);
         try {
-            String detail = probeHttp(probeUrl);
+            // 先用 HTTP GET 探测基础连通性（端口是否在线）
+            String detail = probeHttp(base);
             long latencyMs = Math.max(1, (System.nanoTime() - start) / 1_000_000);
             result.put("reachable", true);
             result.put("latencyMs", latencyMs);
             result.put("status", "可达");
-            result.put("detail", detail);
+            result.put("detail", "HTTP 连通测试通过 (" + detail + ")，API Key 需在模型配置中设置后验证");
         } catch (Exception ex) {
             result.put("reachable", false);
             result.put("latencyMs", 0);
             result.put("status", "不可达");
-            result.put("detail", ex.getClass().getSimpleName());
+            result.put("detail", ex.getClass().getSimpleName() + ": " + ex.getMessage());
         }
         return result;
     }

@@ -18,50 +18,50 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * AI 聊天服务。
+ *
+ * <p>API Key 和 Endpoint 统一从 SemiRiskStore 读取，确保单一事实源。</p>
+ */
 @Service
 public class AiChatService {
 
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
-    private final String defaultAiApiKey;
+    private final SemiRiskStore store;
     private final ObjectMapper objectMapper;
     private final PreparedRiskRepository repository;
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
 
-    private final Map<String, AiModelConfig> aiModelConfigs;
-    private final Map<String, String> aiModelApiKeys;
     private final List<String> auditLogs;
 
     public AiChatService(
             @Value("${semirisk.ai.default.model:" + AiModelDefaults.DEFAULT_MODEL + "}") String defaultAiModel,
             @Value("${semirisk.ai.default.endpoint:" + AiModelDefaults.DEFAULT_ENDPOINT + "}") String defaultAiEndpoint,
-            @Value("${semirisk.ai.default.api-key:}") String defaultAiApiKey,
+            SemiRiskStore store,
             ObjectMapper objectMapper,
             PreparedRiskRepository repository) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
-        this.defaultAiApiKey = defaultAiApiKey;
+        this.store = store;
         this.objectMapper = objectMapper;
         this.repository = repository;
-        this.aiModelConfigs = new ConcurrentHashMap<>();
-        this.aiModelApiKeys = new ConcurrentHashMap<>();
         this.auditLogs = new ArrayList<>();
     }
 
-    void setSharedState(Map<String, AiModelConfig> configs, Map<String, String> keys, List<String> logs) {
-        this.aiModelConfigs.putAll(configs);
-        this.aiModelApiKeys.putAll(keys);
-    }
-
     public AiAnswer callDeepSeek(String question, List<String> contextLines) {
-        String apiKey = aiModelApiKeys.getOrDefault(defaultAiModel, defaultAiApiKey == null ? "" : defaultAiApiKey);
+        // 统一从 SemiRiskStore 获取 API Key（优先动态配置，回退到 application.properties 默认值）
+        String apiKey = store.getAiApiKey(defaultAiModel);
         if (apiKey == null || apiKey.isBlank()) {
             return new AiAnswer(false, "", "未配置 API Key，当前使用本地 RAG 摘要", Map.of());
         }
-        String endpoint = aiModelConfigs.getOrDefault(defaultAiModel,
-                new AiModelConfig(defaultAiModel, defaultAiEndpoint, mask(apiKey), true, Instant.now())).endpoint();
+
+        // 获取 endpoint：优先动态配置，回退到默认值
+        Map<String, AiModelConfig> configs = store.aiModelConfigs();
+        AiModelConfig config = configs.get(defaultAiModel);
+        String endpoint = config != null ? config.endpoint() : defaultAiEndpoint;
+
         String url = endpoint.endsWith("/chat/completions")
                 ? endpoint
                 : endpoint.replaceAll("/+$", "") + "/chat/completions";
@@ -199,11 +199,6 @@ public class AiChatService {
 
     public String getDefaultAiModel() {
         return defaultAiModel;
-    }
-
-    private String mask(String value) {
-        if (value == null || value.length() < 8) return "***";
-        return value.substring(0, 4) + "***" + value.substring(value.length() - 4);
     }
 
     private String stringValue(Object value) {

@@ -1442,8 +1442,7 @@ public class SemiRiskStore {
     }
 
     private boolean aiConfigured() {
-        String apiKey = aiModelApiKeys.getOrDefault(defaultAiModel, defaultAiApiKey == null ? "" : defaultAiApiKey);
-        return apiKey != null && !apiKey.isBlank();
+        return isAiConfigured();
     }
 
     public List<CrawlerSignal> availableSignals() {
@@ -1536,6 +1535,8 @@ public class SemiRiskStore {
         aiModelConfigs.put(model, config);
         if (apiKey != null && !apiKey.isBlank()) {
             aiModelApiKeys.put(model, apiKey);
+        } else {
+            aiModelApiKeys.remove(model);
         }
         auditLogs.add("[INFO] AI model config saved for " + model + " endpoint=" + endpoint);
         return config;
@@ -1543,6 +1544,19 @@ public class SemiRiskStore {
 
     public Map<String, AiModelConfig> aiModelConfigs() {
         return Map.copyOf(aiModelConfigs);
+    }
+
+    public Map<String, String> aiModelApiKeys() {
+        return Map.copyOf(aiModelApiKeys);
+    }
+
+    public String getAiApiKey(String model) {
+        return aiModelApiKeys.getOrDefault(model, defaultAiApiKey == null ? "" : defaultAiApiKey);
+    }
+
+    public boolean isAiConfigured() {
+        String key = getAiApiKey(defaultAiModel);
+        return key != null && !key.isBlank();
     }
 
     public DailyRiskSnapshot dailyRiskSnapshot() {

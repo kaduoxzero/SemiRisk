@@ -48,7 +48,7 @@ public class ReportService {
     private final AtomicBoolean reportGenerating = new AtomicBoolean(false);
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
-    private final String defaultAiApiKey;
+    private final SemiRiskStore store;
     private final AiChatService aiChatService;
     private final HealthProbeService healthProbeService;
     private final TranslationService translationService;
@@ -68,7 +68,7 @@ public class ReportService {
     public ReportService(
             @Value("${semirisk.ai.default.model:" + AiModelDefaults.DEFAULT_MODEL + "}") String defaultAiModel,
             @Value("${semirisk.ai.default.endpoint:" + AiModelDefaults.DEFAULT_ENDPOINT + "}") String defaultAiEndpoint,
-            @Value("${semirisk.ai.default.api-key:}") String defaultAiApiKey,
+            SemiRiskStore store,
             ObjectMapper objectMapper,
             AiChatService aiChatService,
             HealthProbeService healthProbeService,
@@ -80,7 +80,7 @@ public class ReportService {
             @Lazy Supplier<List<CrawlerSignal>> signalsSupplier) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
-        this.defaultAiApiKey = defaultAiApiKey;
+        this.store = store;
         this.objectMapper = objectMapper;
         this.aiChatService = aiChatService;
         this.healthProbeService = healthProbeService;
@@ -464,8 +464,7 @@ public class ReportService {
     }
 
     private boolean aiConfigured() {
-        String apiKey = defaultAiApiKey;
-        return apiKey != null && !apiKey.isBlank();
+        return store.isAiConfigured();
     }
 
     private String stringValue(Object value) {
@@ -524,9 +523,7 @@ public class ReportService {
     private volatile String dailyAiReportDate = "";
 
     private void seedDefaultAiModel() {
-        if (defaultAiApiKey != null && !defaultAiApiKey.isBlank()) {
-            // no-op: model config stored in SemiRiskStore
-        }
+        // no-op: model config stored in SemiRiskStore
     }
 
     private String mask(String key) {

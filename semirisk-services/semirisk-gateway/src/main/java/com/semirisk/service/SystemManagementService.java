@@ -18,32 +18,31 @@ import java.util.Map;
 
 /**
  * 系统管理相关功能：系统用户 CRUD、AI 模型配置管理、系统概览、审计日志、数据源探测。
+ *
+ * <p>AI 模型配置委托给 SemiRiskStore 作为单一事实源。</p>
  */
 @Service
 public class SystemManagementService {
 
     private final Map<String, SystemUser> systemUsers = new ConcurrentHashMap<>();
-    private final Map<String, AiModelConfig> aiModelConfigs = new ConcurrentHashMap<>();
-    private final Map<String, String> aiModelApiKeys = new ConcurrentHashMap<>();
     private final List<String> auditLogs = new ArrayList<>();
     private final PreparedRiskRepository repository;
     private final HealthProbeService healthProbeService;
+    private final SemiRiskStore store;
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
-    private final String defaultAiApiKey;
 
     public SystemManagementService(
             PreparedRiskRepository repository,
             HealthProbeService healthProbeService,
+            SemiRiskStore store,
             @Value("${semirisk.ai.default.model:}") String defaultAiModel,
-            @Value("${semirisk.ai.default.endpoint:}") String defaultAiEndpoint,
-            @Value("${semirisk.ai.default.api-key:}") String defaultAiApiKey) {
+            @Value("${semirisk.ai.default.endpoint:}") String defaultAiEndpoint) {
         this.repository = repository;
         this.healthProbeService = healthProbeService;
+        this.store = store;
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
-        this.defaultAiApiKey = defaultAiApiKey;
-        seedDefaultAiModel();
         auditLogs.add("[INFO] gateway route table initialized");
     }
 
@@ -110,21 +109,15 @@ public class SystemManagementService {
     }
 
     // -----------------------------------------------------------------
-    // AI 模型配置
+    // AI 模型配置（委托给 SemiRiskStore）
     // -----------------------------------------------------------------
 
     public AiModelConfig saveAiModelConfig(String model, String endpoint, String apiKey) {
-        AiModelConfig config = new AiModelConfig(model, endpoint, mask(apiKey), apiKey != null && !apiKey.isBlank(), Instant.now());
-        aiModelConfigs.put(model, config);
-        if (apiKey != null && !apiKey.isBlank()) {
-            aiModelApiKeys.put(model, apiKey);
-        }
-        auditLogs.add("[INFO] AI model config saved for " + model + " endpoint=" + endpoint);
-        return config;
+        return store.saveAiModelConfig(model, endpoint, apiKey);
     }
 
     public Map<String, AiModelConfig> aiModelConfigs() {
-        return Map.copyOf(aiModelConfigs);
+        return store.aiModelConfigs();
     }
 
     // -----------------------------------------------------------------
@@ -144,7 +137,7 @@ public class SystemManagementService {
                         "detail", "实时爬取公开 RSS / 政策法规源"),
                 Map.of("name", "风险测算 Agent", "status", "待采集", "cron", "0 0 */12 * * *", "lastPull", "待采集",
                         "detail", "基于公开源信号与规则自动测算每日风险分"),
-                Map.of("name", "AI 报告 Agent", "status", aiConfigured() ? "运行中" : "待配置 API Key", "cron", "0 0 */12 * * *", "lastPull", "待采集",
+                Map.of("name", "AI 报告 Agent", "status", store.isAiConfigured() ? "运行中" : "待配置 API Key", "cron", "0 0 */12 * * *", "lastPull", "待采集",
                         "detail", "聚合公开源 + 风险快照调用 DeepSeek 生成本日报告")
         ));
         overview.put("logs", auditLogs());
@@ -164,26 +157,18 @@ public class SystemManagementService {
         }
     }
 
-    private boolean aiConfigured() {
-        String apiKey = aiModelApiKeys.getOrDefault(defaultAiModel, defaultAiApiKey == null ? "" : defaultAiApiKey);
-        return apiKey != null && !apiKey.isBlank();
-    }
-
     private Map<String, Object> modelOverview(String name, String endpoint) {
-        AiModelConfig config = aiModelConfigs.get(name);
+        Map<String, AiModelConfig> configs = store.aiModelConfigs();
+        AiModelConfig config = configs.get(name);
+        String apiKey = store.getAiApiKey(name);
         Map<String, Object> map = new HashMap<>();
         map.put("name", name);
         map.put("endpoint", config == null ? endpoint : config.endpoint());
-        map.put("status", config != null && config.configured() ? "已配置" : "待配置 API Key");
+        boolean configured = (config != null && config.configured()) || (apiKey != null && !apiKey.isBlank());
+        map.put("configured", configured);
+        map.put("status", configured ? "已配置" : "待配置 API Key");
         map.put("hint", "延迟请用连通性测试实测");
         return map;
-    }
-
-    private void seedDefaultAiModel() {
-        if (defaultAiApiKey != null && !defaultAiApiKey.isBlank()) {
-            aiModelConfigs.put(defaultAiModel, new AiModelConfig(defaultAiModel, defaultAiEndpoint, mask(defaultAiApiKey), true, Instant.now()));
-            aiModelApiKeys.put(defaultAiModel, defaultAiApiKey);
-        }
     }
 
     private String mask(String key) {
@@ -195,25 +180,5 @@ public class SystemManagementService {
 
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value);
-    }
-
-    // -----------------------------------------------------------------
-    // 包级私有映射 getter（供 SemiRiskStore 使用）
-    // -----------------------------------------------------------------
-
-    Map<String, SystemUser> systemUsersMap() {
-        return systemUsers;
-    }
-
-    Map<String, AiModelConfig> aiModelConfigsMap() {
-        return aiModelConfigs;
-    }
-
-    Map<String, String> aiModelApiKeysMap() {
-        return aiModelApiKeys;
-    }
-
-    List<String> auditLogsList() {
-        return auditLogs;
     }
 }
