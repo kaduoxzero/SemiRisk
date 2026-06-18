@@ -137,8 +137,8 @@ Authorization: Bearer <login/register 返回的 token>
 | semirisk-data-service:8081 | POST | `/api/crawler/refresh` | 手动实时重新爬取公开源记录 |
 | semirisk-risk-service:8082 | GET | `/api/risk-score/today` | 查询本日风险测算 |
 | semirisk-risk-service:8082 | POST | `/api/risk-score/recalculate` | 手动重算风险 |
-| semirisk-ai-service:8083 | POST | `/api/ai/models/config` | 保存 DeepSeek 模型 Endpoint 与 API Key |
-| semirisk-ai-service:8083 | GET | `/api/ai/reports/latest` | 真实生成本日 AI 报告：拉取 data-service 公开源记录并调用 DeepSeek（默认显示模型 `deepseek-v4-pro`，实际请求 `deepseek-chat`），未配置 Key 时回退基于真实记录的本地聚合摘要 |
+| semirisk-ai-service:8083 | POST | `/api/ai/models/config` | 保存 DeepSeek 模型 Endpoint 与 API Key（可选覆盖，启动时已通过 `SEMIRISK_AI_API_KEY` 自动注入） |
+| semirisk-ai-service:8083 | GET | `/api/ai/reports/latest` | 真实生成本日 AI 报告：拉取 data-service 公开源记录并调用 DeepSeek（默认显示模型 `deepseek-v4-pro`，实际请求模型 `deepseek-v4-pro`），未配置 Key 时回退基于真实记录的本地聚合摘要 |
 | semirisk-alert-service:8084 | GET | `/api/alerts` | 数据库告警查询 |
 | semirisk-alert-service:8084 | PUT | `/api/alerts/{id}/ignore` | 告警忽略 |
 | semirisk-report-service:8085 | POST | `/api/reports/jobs` | 创建报告任务 |
@@ -180,7 +180,7 @@ X-CSRF-Token: <csrf-token>
 - `citations`：引用原文标题、来源、URL、风险分
 - `modelStatus`：当前是否已配置 DeepSeek API Key
 - `aiCalled`：是否真实调用 AI
-- `usage`：模型返回的 token 使用量；`deepseek-v4-pro` 当前作为显示模型，实际请求模型写入 `usage.apiModel`（解析为 `deepseek-chat`）
+- `usage`：模型返回的 token 使用量；`deepseek-v4-pro` 当前作为显示模型与实际请求模型一致（`usage.apiModel` 为 `deepseek-v4-pro`）
 
 ## 14. Elasticsearch 知识库检索
 

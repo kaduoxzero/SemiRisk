@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,7 +31,8 @@ public class ReportController {
 
     @PostMapping("/jobs")
     public ApiResponse<ReportJob> create(@Valid @RequestBody ReportRequest request) {
-        String id = "RP-" + System.currentTimeMillis();
+        String ts = Instant.now().atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+        String id = "PR-" + ts;
         ReportJob job = new ReportJob(id, request.template(), request.language(), request.format(), request.threshold(), "排队中", 0, "任务已进入 AI 编译队列", null, Instant.now());
         jobs.put(id, job);
         return ApiResponse.ok("报告生成任务已启动", job);

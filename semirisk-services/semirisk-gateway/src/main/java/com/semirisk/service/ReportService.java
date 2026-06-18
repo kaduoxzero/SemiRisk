@@ -17,6 +17,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -98,7 +100,8 @@ public class ReportService {
     // -----------------------------------------------------------------
 
     public ReportJob createReport(String template, String language, String format, int threshold) {
-        String id = "RP-" + System.currentTimeMillis();
+        String ts = Instant.now().atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+        String id = "PR-" + ts;
         ReportJob job = new ReportJob(id, template, language, format, threshold, "排队中", 0, "任务已进入 AI 编译队列", null, Instant.now());
         reportJobs.put(id, job);
         return job;

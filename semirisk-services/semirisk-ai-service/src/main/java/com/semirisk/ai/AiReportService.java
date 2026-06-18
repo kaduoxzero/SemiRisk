@@ -201,7 +201,7 @@ public class AiReportService {
 
     private String resolveApiModel(String model) {
         if ("deepseekv4-pro".equalsIgnoreCase(model) || "deepseek-v4-pro".equalsIgnoreCase(model)) {
-            return "deepseek-chat";
+            return "deepseek-v4-pro";
         }
         return model;
     }
