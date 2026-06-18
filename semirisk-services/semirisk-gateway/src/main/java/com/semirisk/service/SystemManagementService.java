@@ -4,6 +4,7 @@ import com.semirisk.model.AiModelConfig;
 import com.semirisk.model.SystemUser;
 import com.semirisk.repository.PreparedRiskRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -35,7 +36,7 @@ public class SystemManagementService {
     public SystemManagementService(
             PreparedRiskRepository repository,
             HealthProbeService healthProbeService,
-            SemiRiskStore store,
+            @Lazy SemiRiskStore store,
             @Value("${semirisk.ai.default.model:}") String defaultAiModel,
             @Value("${semirisk.ai.default.endpoint:}") String defaultAiEndpoint) {
         this.repository = repository;
