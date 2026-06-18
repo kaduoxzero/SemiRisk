@@ -3,11 +3,19 @@ import { request } from './client';
 export const authApi = {
   login: payload => request('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
   register: payload => request('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
+  sendVerificationCode: email => request('/api/auth/send-verification-code', {
+    method: 'POST',
+    body: JSON.stringify({ email })
+  }),
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   me: () => request('/api/auth/me'),
   requestPasswordReset: email => request('/api/auth/password-reset/request', {
     method: 'POST',
     body: JSON.stringify({ email })
+  }),
+  confirmPasswordReset: payload => request('/api/auth/password-reset/confirm', {
+    method: 'POST',
+    body: JSON.stringify(payload)
   })
 };
 

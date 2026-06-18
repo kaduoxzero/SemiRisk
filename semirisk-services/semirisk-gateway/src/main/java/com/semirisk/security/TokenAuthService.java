@@ -13,7 +13,9 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,6 +100,14 @@ public class TokenAuthService {
 
         // 数据库中未找到 Token（或数据库不可用）：未认证。
         return Optional.empty();
+    }
+
+    public Set<String> getActiveUsernames() {
+        Instant now = Instant.now();
+        return tokens.values().stream()
+                .filter(p -> p.expiresAt().isAfter(now))
+                .map(AuthPrincipal::username)
+                .collect(Collectors.toSet());
     }
 
     public void revoke(String authorization) {

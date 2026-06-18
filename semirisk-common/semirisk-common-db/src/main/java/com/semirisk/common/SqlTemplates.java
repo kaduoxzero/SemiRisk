@@ -103,7 +103,7 @@ public final class SqlTemplates {
             """;
 
     public static final String FIND_UPLOAD_TASKS = """
-            SELECT id, filename, file_size AS size, status, created_at AS createdAt, rows_count AS rows
+            SELECT id, filename, file_size AS size, status, created_at AS createdAt, rows_count AS `rows`
             FROM upload_task
             ORDER BY created_at DESC
             LIMIT ?
@@ -186,6 +186,12 @@ public final class SqlTemplates {
     public static final String DELETE_EXPIRED_AUTH_TOKENS = """
             DELETE FROM auth_token
             WHERE expires_at < ?
+            """;
+
+    public static final String FIND_ACTIVE_USERNAMES = """
+            SELECT DISTINCT username
+            FROM auth_token
+            WHERE expires_at > NOW()
             """;
 
     public static final String UPSERT_CRAWLER_SIGNAL = """
@@ -350,6 +356,50 @@ public final class SqlTemplates {
             FROM risk_alert
             WHERE id = ?
             LIMIT 1
+            """;
+
+    // ── Password Reset Tokens ──────────────────────────────────────────
+
+    public static final String INSERT_RESET_TOKEN = """
+            INSERT INTO password_reset_tokens(token, email, expires_at)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              expires_at = VALUES(expires_at),
+              consumed = 0
+            """;
+
+    public static final String FIND_ACTIVE_RESET_TOKEN = """
+            SELECT token, email, expires_at, consumed
+            FROM password_reset_tokens
+            WHERE token = ? AND consumed = 0 AND expires_at > NOW()
+            LIMIT 1
+            """;
+
+    public static final String MARK_RESET_TOKEN_CONSUMED = """
+            UPDATE password_reset_tokens
+            SET consumed = 1
+            WHERE token = ?
+            """;
+
+    public static final String FIND_ACTIVE_RESET_TOKEN_BY_EMAIL = """
+            SELECT token, expires_at
+            FROM password_reset_tokens
+            WHERE email = ? AND consumed = 0 AND expires_at > NOW()
+            ORDER BY created_at DESC
+            LIMIT 1
+            """;
+
+    public static final String FIND_AUTH_USER_BY_EMAIL = """
+            SELECT id, username, display_name AS displayName, email, password_hash AS passwordHash, role, status
+            FROM system_user
+            WHERE email = ?
+            LIMIT 1
+            """;
+
+    public static final String UPDATE_SYSTEM_USER_PASSWORD = """
+            UPDATE system_user
+            SET password_hash = ?, password_updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
             """;
 
     private SqlTemplates() {

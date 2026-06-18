@@ -30,7 +30,13 @@
     <template #register>
       <div class="auth-form">
         <input v-model="state.registerForm.username" class="input" placeholder="账号（3-32位字母/数字/下划线）" autocomplete="username" />
-        <input v-model="state.registerForm.email" class="input" placeholder="QQ 邮箱，如 123456@qq.com" type="email" autocomplete="email" />
+        <div style="display:flex;gap:8px;">
+          <input v-model="state.registerForm.email" class="input" style="flex:1" placeholder="QQ 邮箱，如 123456@qq.com" type="email" autocomplete="email" />
+          <button class="btn secondary" :disabled="state.authSubmitting" @click="actions.sendRegistrationCode" style="white-space:nowrap;min-width:90px">
+            {{ state.authSubmitting ? '发送中...' : '获取验证码' }}
+          </button>
+        </div>
+        <input v-model="state.registerForm.verificationCode" class="input" placeholder="6 位验证码" maxlength="6" />
         <input v-model="state.registerForm.displayName" class="input" placeholder="姓名/昵称（至少2字）" />
         <input v-model="state.registerForm.password" class="input" placeholder="密码（至少8位）" type="password" autocomplete="new-password" @keydown.enter="actions.register" />
         <button class="btn auth-btn" :disabled="state.authSubmitting" @click="actions.register">
@@ -42,13 +48,20 @@
       </div>
     </template>
 
-    <!-- 忘记密码 slot -->
+    <!-- 忘记密码 slot — 两步流程 -->
     <template #forgot>
       <div class="auth-form">
         <input v-model="state.registerForm.email" class="input" placeholder="注册时的 QQ 邮箱" type="email" autocomplete="email" />
         <button class="btn auth-btn" :disabled="state.authSubmitting" @click="actions.resetPassword">
-          获取重置 Token
+          {{ state.authSubmitting ? '发送中...' : '发送验证码' }}
         </button>
+        <template v-if="showResetForm">
+          <input v-model="state.registerForm.resetCode" class="input" placeholder="6 位验证码" maxlength="6" />
+          <input v-model="state.registerForm.newPassword" class="input" placeholder="新密码（至少8位）" type="password" />
+          <button class="btn auth-btn" :disabled="state.authSubmitting" @click="actions.confirmReset">
+            {{ state.authSubmitting ? '重置中...' : '确认重置' }}
+          </button>
+        </template>
         <div class="auth-links">
           <button class="auth-link-btn" @click="actions.setAuthMode('login')">返回登录</button>
         </div>
@@ -62,7 +75,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import ToastMessage from './components/ToastMessage.vue';
 import { useSemiRiskApp } from './composables/useSemiRiskApp';
 import AppShell from './layout/AppShell.vue';
@@ -93,4 +106,11 @@ const viewComponents = {
 };
 
 const currentViewComponent = computed(() => viewComponents[state.view] || DashboardView);
+
+// 忘记密码第二步：发送验证码后显示重置表单
+const showResetForm = ref(false);
+
+watch(() => state.authMode, (mode) => {
+  if (mode !== 'forgot') showResetForm.value = false;
+});
 </script>

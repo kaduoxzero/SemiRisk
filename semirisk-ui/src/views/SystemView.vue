@@ -66,10 +66,14 @@
         <h3>用户</h3>
         <div class="user-list">
           <div v-for="u in state.system.users || []" :key="u.id" class="user-row">
-            <span class="badge" :class="u.role === 'ADMIN' ? 'high' : 'low'">{{ u.role }}</span>
+            <span class="badge" :class="u.role === '管理员' ? 'high' : 'low'">{{ u.role }}</span>
             <strong>{{ u.username }}</strong>
-            <span class="muted">{{ u.displayName || u.display_name || '-' }}</span>
-            <span class="badge" :class="u.status === '启用' ? 'low' : 'mid'">{{ u.status }}</span>
+            <span class="badge" :class="loginStatusClass(u.loginStatus)" style="font-size:11px">{{ u.loginStatus }}</span>
+            <span class="user-modules" v-if="u.modules && u.modules.length" :title="moduleLabels(u.modules).join(', ')">
+              <span class="badge tiny" v-for="m in (u.modules.slice(0, 4))" :key="m">{{ moduleLabel(m) }}</span>
+              <span v-if="u.modules.length > 4" class="muted">+{{ u.modules.length - 4 }}</span>
+            </span>
+            <span class="muted user-time" v-if="u.lastLoginAtFormatted">{{ u.lastLoginAtFormatted }}</span>
           </div>
         </div>
         <p v-if="!(state.system.users || []).length" class="muted">暂无用户。</p>
@@ -100,6 +104,25 @@ const props = defineProps({
 });
 
 const pageSize = 8;
+
+const moduleLabelMap = {
+  dashboard: '首页', upload: '上传', analysis: '分析', detail: '详情', report: '报告',
+  alerts: '告警', gis: '地图', enterprise: '企业', knowledge: '知识库', system: '系统'
+};
+
+function moduleLabel(key) {
+  return moduleLabelMap[key] || key;
+}
+
+function moduleLabels(modules) {
+  return (modules || []).map(moduleLabel);
+}
+
+function loginStatusClass(status) {
+  if (status === '在线') return 'low';
+  if (status === '上次登录') return 'mid';
+  return 'mid';
+}
 
 const logs = computed(() => props.state.system.logs || []);
 const filteredLogs = computed(() => {

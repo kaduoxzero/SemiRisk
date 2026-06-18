@@ -24,7 +24,7 @@
     <!-- 忘记密码卡片 -->
     <div v-else-if="authMode === 'forgot'" class="auth-card" key="forgot">
       <h2>找回密码</h2>
-      <p class="auth-tip">输入注册 QQ 邮箱，获取重置 Token</p>
+      <p class="auth-tip">输入注册 QQ 邮箱，获取重置验证码</p>
       <slot name="forgot" />
     </div>
 
@@ -46,8 +46,16 @@
         </button>
       </nav>
       <div class="sidebar-footer">
-        <div class="account-name">{{ session.displayName || session.username }}</div>
-        <div class="account-role">{{ session.role }} · {{ session.username }}</div>
+        <div class="account-info">
+          <div class="account-name">
+            <span class="online-dot" :class="{ active: session?.active }"></span>
+            {{ session?.displayName || session?.username || '-' }}
+          </div>
+          <div class="account-role">{{ session?.role }} · {{ session?.username }}</div>
+          <div class="account-perms" v-if="session?.modules">
+            权限: {{ session.modules.length }} 模块
+          </div>
+        </div>
         <button class="btn secondary full" @click="$emit('switch-account')">切换账户</button>
         <button class="btn danger full" @click="$emit('logout')">退出登录</button>
       </div>
@@ -57,7 +65,12 @@
       <header class="topbar">
         <h2 class="page-title">{{ currentTitle }}</h2>
         <div class="topbar-meta">
-          <span class="muted">{{ session.displayName || session.username }} · {{ session.role }} · {{ now }}</span>
+          <span class="muted">
+            <span class="online-dot" :class="{ active: session?.active }" style="margin-right:4px"></span>
+            {{ session?.displayName || session?.username }} · {{ session?.role }}
+            <span v-if="session?.modules" class="muted-badge">({{ session.modules.length }} 模块)</span>
+            · {{ now }}
+          </span>
         </div>
       </header>
       <section class="main-content">

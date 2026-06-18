@@ -7,6 +7,10 @@ import org.springframework.stereotype.Repository;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.stream.Collectors;
 
 @Repository
 public class PreparedRiskRepository {
@@ -139,6 +143,17 @@ public class PreparedRiskRepository {
         return jdbcTemplate.update(SqlTemplates.DELETE_EXPIRED_AUTH_TOKENS, now);
     }
 
+    public Set<String> findActiveUsernames() {
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(SqlTemplates.FIND_ACTIVE_USERNAMES);
+            return rows.stream()
+                    .map(r -> String.valueOf(r.get("username")))
+                    .collect(Collectors.toCollection(HashSet::new));
+        } catch (Exception ex) {
+            return Set.of();
+        }
+    }
+
     // --- 实时爬取信号持久化 ---
     public int upsertCrawlerSignal(String id, String source, String sourceUrl, String title, String dimension, String category, String riskSignal, int riskScore, String status, Instant fetchedAt) {
         return jdbcTemplate.update(SqlTemplates.UPSERT_CRAWLER_SIGNAL, id, source, sourceUrl, title, dimension, category, riskSignal, riskScore, status, fetchedAt);
@@ -213,5 +228,33 @@ public class PreparedRiskRepository {
     public String findAlertStatus(String id) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(SqlTemplates.FIND_ALERT_STATUS, id);
         return rows.isEmpty() ? null : String.valueOf(rows.get(0).get("status"));
+    }
+
+    // ── Password Reset Tokens ──────────────────────────────────────────
+
+    public int insertResetToken(String token, String email, java.time.Instant expiresAt) {
+        return jdbcTemplate.update(SqlTemplates.INSERT_RESET_TOKEN, token, email, java.sql.Timestamp.from(expiresAt));
+    }
+
+    public Optional<Map<String, Object>> findActiveResetToken(String token) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(SqlTemplates.FIND_ACTIVE_RESET_TOKEN, token);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    public int markResetTokenConsumed(String token) {
+        return jdbcTemplate.update(SqlTemplates.MARK_RESET_TOKEN_CONSUMED, token);
+    }
+
+    public Optional<Map<String, Object>> findActiveResetTokenByEmail(String email) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(SqlTemplates.FIND_ACTIVE_RESET_TOKEN_BY_EMAIL, email);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    public List<Map<String, Object>> findAuthUserByEmail(String email) {
+        return jdbcTemplate.queryForList(SqlTemplates.FIND_AUTH_USER_BY_EMAIL, email);
+    }
+
+    public int updateSystemUserPassword(String userId, String passwordHash) {
+        return jdbcTemplate.update(SqlTemplates.UPDATE_SYSTEM_USER_PASSWORD, passwordHash, userId);
     }
 }
