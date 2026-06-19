@@ -1,0 +1,99 @@
+# Backend services for SemiRisk - VM deployment (host networking)
+# Uses host network so 127.0.0.1 points to the VM directly
+
+services:
+  semirisk-gateway:
+    image: semirisk/gateway:latest
+    container_name: semirisk-gateway
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
+      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      SEMIRISK_PORT: 8080
+      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
+      SEMIRISK_NACOS_HOST: 127.0.0.1
+      SEMIRISK_REDIS_HOST: 127.0.0.1
+      SEMIRISK_ES_URL: http://127.0.0.1:9200
+      SEMIRISK_ES_INDEX: semirisk_knowledge
+      SEMIRISK_FLYWAY_ENABLED: "false"
+      SEMIRISK_AUTH_TOKEN_TTL_MINUTES: 15
+      SEMIRISK_AI_MODEL: deepseekv4-pro
+      SEMIRISK_AI_ENDPOINT: https://api.deepseek.com/v1
+      SEMIRISK_AI_API_KEY: ""
+      SEMIRISK_MINIO_ENDPOINT: http://127.0.0.1:9000
+      SEMIRISK_RABBITMQ_HOST: 127.0.0.1
+
+  semirisk-data-service:
+    image: semirisk/data-service:latest
+    container_name: semirisk-data-service
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
+      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      SEMIRISK_DATA_PORT: 8081
+      SEMIRISK_CRAWLER_SOURCES: "https://www.reuters.com/markets/commodities/,https://www.freightwaves.com/news"
+      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
+      SEMIRISK_NACOS_HOST: 127.0.0.1
+
+  semirisk-risk-service:
+    image: semirisk/risk-service:latest
+    container_name: semirisk-risk-service
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
+      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      SEMIRISK_RISK_PORT: 8082
+      SEMIRISK_DATA_SERVICE_URL: http://127.0.0.1:8081
+      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
+      SEMIRISK_NACOS_HOST: 127.0.0.1
+    depends_on:
+      - semirisk-data-service
+
+  semirisk-ai-service:
+    image: semirisk/ai-service:latest
+    container_name: semirisk-ai-service
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
+      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      SEMIRISK_AI_PORT: 8083
+      SEMIRISK_RISK_SERVICE_URL: http://127.0.0.1:8082
+      SEMIRISK_DATA_SERVICE_URL: http://127.0.0.1:8081
+      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
+      SEMIRISK_NACOS_HOST: 127.0.0.1
+      SEMIRISK_AI_MODEL: deepseekv4-pro
+      SEMIRISK_AI_ENDPOINT: https://api.deepseek.com/v1
+      SEMIRISK_AI_API_KEY: ""
+    depends_on:
+      - semirisk-risk-service
+
+  semirisk-alert-service:
+    image: semirisk/alert-service:latest
+    container_name: semirisk-alert-service
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
+      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      SEMIRISK_ALERT_PORT: 8084
+      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
+      SEMIRISK_NACOS_HOST: 127.0.0.1
+      SEMIRISK_DB_URL: "jdbc:mysql://127.0.0.1:3306/semirisk?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai"
+      SEMIRISK_DB_USERNAME: semirisk
+      SEMIRISK_DB_PASSWORD: semirisk
+
+  semirisk-report-service:
+    image: semirisk/report-service:latest
+    container_name: semirisk-report-service
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
+      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      SEMIRISK_REPORT_PORT: 8085
+      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
+      SEMIRISK_NACOS_HOST: 127.0.0.1

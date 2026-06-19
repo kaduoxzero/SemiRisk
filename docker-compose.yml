@@ -1,0 +1,211 @@
+# SemiRisk -- unified single-image deployment
+# Usage:
+#   docker compose up -d          # start all services
+#   docker compose down           # stop all services
+#   docker compose logs -f        # watch logs
+#   docker compose ps             # check status
+#
+# Prerequisites on the target machine:
+#   - Docker 24+ / Docker Compose v2
+#   - Java 21 JDK + Maven (for building backend JARs)
+#   - Node.js 22 LTS (for building frontend)
+#   - At least 16 GB RAM recommended (6 Java services × 512MB + middleware)
+#
+# Environment variables (optional, set in .env.local or on command line):
+#   SEMIRISK_AI_API_KEY       - DeepSeek API key (required for AI features)
+#   MYSQL_ROOT_PASSWORD       - MySQL root password (default: root)
+#   MYSQL_PASSWORD            - MySQL app user password (default: semirisk)
+#   SEMIRISK_AI_MODEL         - AI model name (default: deepseekv4-pro)
+#   SEMIRISK_AI_ENDPOINT      - AI API endpoint (default: https://api.deepseek.com/v1)
+#   SEMIRISK_FLYWAY_ENABLED   - Enable Flyway migrations (default: false)
+
+services:
+  # ============================================================
+  # Middleware Layer
+  # ============================================================
+
+  mysql:
+    image: mysql:8.4
+    container_name: semirisk-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: semirisk
+      MYSQL_USER: semirisk
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-semirisk}
+    ports:
+      - "3306:3306"
+    volumes:
+      - semirisk-mysql:/var/lib/mysql
+      - ./compose/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7.4
+    container_name: semirisk-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: semirisk-es
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - semirisk-es:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    container_name: semirisk-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-semirisk}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-semirisk123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - semirisk-minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: semirisk-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nacos:
+    image: nacos/nacos-server:v2.4.3
+    container_name: semirisk-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/actuator/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  zipkin:
+    image: openzipkin/zipkin:3.4
+    container_name: semirisk-zipkin
+    restart: unless-stopped
+    ports:
+      - "9411:9411"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9411/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # Application (single container with all 6 services + nginx)
+  # ============================================================
+
+  semirisk-app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.single
+    image: semirisk/app:latest
+    container_name: semirisk-app
+    restart: unless-stopped
+    environment:
+      # --- Gateway (port 8080) ---
+      SEMIRISK_PORT: 8080
+      SEMIRISK_MIDDLEWARE_HOST: semirisk-mysql
+      SEMIRISK_NACOS_HOST: semirisk-nacos
+      SEMIRISK_REDIS_HOST: semirisk-redis
+      SEMIRISK_ES_URL: http://semirisk-es:9200
+      SEMIRISK_ES_INDEX: semirisk_knowledge
+      SEMIRISK_FLYWAY_ENABLED: ${SEMIRISK_FLYWAY_ENABLED:-false}
+      SEMIRISK_AUTH_TOKEN_TTL_MINUTES: ${SEMIRISK_AUTH_TOKEN_TTL_MINUTES:-15}
+      SEMIRISK_AI_MODEL: ${SEMIRISK_AI_MODEL:-deepseekv4-pro}
+      SEMIRISK_AI_ENDPOINT: ${SEMIRISK_AI_ENDPOINT:-https://api.deepseek.com/v1}
+      SEMIRISK_AI_API_KEY: ${SEMIRISK_AI_API_KEY:-}
+      SEMIRISK_MINIO_ENDPOINT: http://semirisk-minio:9000
+      SEMIRISK_RABBITMQ_HOST: semirisk-rabbitmq
+      # --- Data Service (port 8081) ---
+      SEMIRISK_DATA_PORT: 8081
+      SEMIRISK_CRAWLER_SOURCES: ${SEMIRISK_CRAWLER_SOURCES:-https://www.reuters.com/markets/commodities/,https://www.freightwaves.com/news}
+      # --- Risk Service (port 8082) ---
+      SEMIRISK_RISK_PORT: 8082
+      SEMIRISK_DATA_SERVICE_URL: http://127.0.0.1:8081
+      # --- AI Service (port 8083) ---
+      SEMIRISK_AI_PORT: 8083
+      SEMIRISK_RISK_SERVICE_URL: http://127.0.0.1:8082
+      SEMIRISK_DATA_SERVICE_URL: http://127.0.0.1:8081
+      # --- Alert Service (port 8084) ---
+      SEMIRISK_ALERT_PORT: 8084
+      SEMIRISK_DB_URL: jdbc:mysql://semirisk-mysql:3306/semirisk?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+      # --- Report Service (port 8085) ---
+      SEMIRISK_REPORT_PORT: 8085
+    ports:
+      - "80:80"        # Nginx (Vue frontend)
+      - "8080:8080"    # Gateway (direct API access)
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
+# ============================================================
+# Named Volumes
+# ============================================================
+
+volumes:
+  semirisk-mysql:
+  semirisk-es:
+  semirisk-minio:

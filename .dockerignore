@@ -1,0 +1,47 @@
+# Maven build output
+target/
+**/target/
+
+# IDE
+.idea/
+*.iws
+*.iml
+*.ipr
+*.class
+**/.settings/
+**/.project
+**/.classpath
+
+# Node.js
+node_modules/
+**/node_modules/
+semirisk-ui/node_modules/
+
+# Frontend build
+semirisk-ui/dist/
+semirisk-ui/.vite/
+semirisk-ui/build/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Env files with secrets
+.env.local
+.env.*.local
+
+# Script build artifacts
+*.spec.js
+test-results/
+semirisk-ui/test-results/
+
+# Claude
+.claude/

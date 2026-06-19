@@ -1,3 +1,5 @@
+# NOTE: For unified deployment, use the root docker-compose.yml instead.
+# This file is kept for partial/standalone middleware deployments.
 services:
   mysql:
     image: mysql:8.4

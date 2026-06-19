@@ -118,6 +118,15 @@ public class AlertService {
         return publicAlertStatuses;
     }
 
+    /** 查询单条告警的当前状态（优先内存 alerts，回退到 publicAlertStatuses，再回退到"未处理"）。 */
+    public String currentStatus(String id) {
+        RiskAlert alert = alerts.get(id);
+        if (alert != null) {
+            return alert.status();
+        }
+        return publicAlertStatuses.getOrDefault(id, "未处理");
+    }
+
     // ---- 私有辅助方法（从 SemiRiskStore 提取）----
 
     private List<RiskAlert> publicAlerts(List<CrawlerSignal> signals) {

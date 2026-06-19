@@ -1,0 +1,26 @@
+# frp 服务端配置（安装在云服务器 123.57.239.56 上）
+
+# 绑定地址
+bind_addr = 0.0.0.0
+bind_port = 7000
+
+# 绑定端口（frp 自带的 Web 管理面板）
+bind_addr_dashboard = 0.0.0.0
+bind_port_dashboard = 7500
+dashboard_user = admin
+dashboard_pwd = admin
+
+# 认证 token（客户端必须使用相同的 token）
+authentication_method = token
+token = semirisk-frp-token-2025
+
+# 日志配置
+log_file = /var/log/frps.log
+log_level = info
+log_max_days = 7
+
+# 最大连接数
+max_pool_count = 50
+
+# 允许客户端映射的端口范围
+allow_ports = 80-8080,9000-9001,9411,15672

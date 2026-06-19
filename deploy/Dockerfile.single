@@ -1,0 +1,87 @@
+# ==============================================================================
+# SemiRisk -- Single Image Build
+# ==============================================================================
+# This Dockerfile builds a single image containing:
+#   - 6 Spring Boot backend services (JARs)
+#   - Nginx (Vue 3 frontend)
+#   - Supervisord (process manager)
+#
+# Usage:
+#   docker build -t semirisk/app:latest -f deploy/Dockerfile.single .
+#
+# Prerequisites (must be satisfied before building):
+#   - Maven build: ./mvnw -q -DskipTests clean install
+#   - Frontend build: cd semirisk-ui && npm ci && npm run build
+# ==============================================================================
+
+# --------------------------------------------------------------
+# Stage 1: Build frontend (Vue 3 + Vite)
+# --------------------------------------------------------------
+FROM node:22-alpine AS frontend-build
+
+WORKDIR /build
+COPY semirisk-ui/package*.json ./
+RUN npm ci
+COPY semirisk-ui/ .
+RUN npm run build
+
+# --------------------------------------------------------------
+# Stage 2: Build backend (Maven multi-module)
+# --------------------------------------------------------------
+FROM maven:3.9-eclipse-temurin-21 AS backend-build
+
+WORKDIR /build
+COPY pom.xml .
+COPY semirisk-common/ semirisk-common/
+COPY semirisk-services/ semirisk-services/
+RUN mvn -q -DskipTests clean install
+
+# --------------------------------------------------------------
+# Stage 3: Production image
+# --------------------------------------------------------------
+FROM eclipse-temurin:21-jre
+
+ENV TZ=Asia/Shanghai \
+    LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=C.UTF-8
+
+# Install nginx, supervisor, curl, and tini (as proper init)
+RUN apk add --no-cache \
+    nginx \
+    supervisor \
+    curl \
+    tini \
+    && rm -rf /var/cache/apk/*
+
+# Create application and log directories
+WORKDIR /app
+RUN mkdir -p /app/logs /var/log/nginx
+
+# Copy all 6 backend JARs from Maven build stage
+COPY --from=backend-build /build/semirisk-services/semirisk-gateway/target/semirisk-gateway-0.0.1-SNAPSHOT.jar    ./semirisk-gateway.jar
+COPY --from=backend-build /build/semirisk-services/semirisk-data-service/target/semirisk-data-service-0.0.1-SNAPSHOT.jar ./semirisk-data-service.jar
+COPY --from=backend-build /build/semirisk-services/semirisk-risk-service/target/semirisk-risk-service-0.0.1-SNAPSHOT.jar   ./semirisk-risk-service.jar
+COPY --from=backend-build /build/semirisk-services/semirisk-ai-service/target/semirisk-ai-service-0.0.1-SNAPSHOT.jar    ./semirisk-ai-service.jar
+COPY --from=backend-build /build/semirisk-services/semirisk-alert-service/target/semirisk-alert-service-0.0.1-SNAPSHOT.jar ./semirisk-alert-service.jar
+COPY --from=backend-build /build/semirisk-services/semirisk-report-service/target/semirisk-report-service-0.0.1-SNAPSHOT.jar ./semirisk-report-service.jar
+
+# Copy built frontend dist for Nginx
+COPY --from=frontend-build /build/dist /usr/share/nginx/html/semirisk
+
+# Nginx configuration (proxy /api/ to gateway)
+COPY deploy/nginx.conf /etc/nginx/http.d/default.conf
+RUN rm -f /etc/nginx/conf.d/default.conf
+
+# Supervisord configuration
+COPY deploy/supervisord.conf /etc/supervisord.conf
+
+# Health check (gateway actuator)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+  CMD curl -f http://localhost:8080/actuator/health || exit 1
+
+EXPOSE 80 8080
+
+# Use tini as PID 1 for proper signal handling
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

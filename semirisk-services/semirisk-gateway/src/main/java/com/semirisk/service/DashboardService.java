@@ -27,15 +27,18 @@ public class DashboardService {
 
     private final TranslationService translationService;
     private final GisService gisService;
+    private final AlertService alertService;
     private final Supplier<DailyRiskSnapshot> snapshotSupplier;
     private final Supplier<List<CrawlerSignal>> signalsSupplier;
 
     public DashboardService(TranslationService translationService,
                             GisService gisService,
+                            AlertService alertService,
                             @Lazy Supplier<DailyRiskSnapshot> snapshotSupplier,
                             @Lazy Supplier<List<CrawlerSignal>> signalsSupplier) {
         this.translationService = translationService;
         this.gisService = gisService;
+        this.alertService = alertService;
         this.snapshotSupplier = snapshotSupplier;
         this.signalsSupplier = signalsSupplier;
     }
@@ -179,9 +182,8 @@ public class DashboardService {
     // ---------------------------------------------------------------------
 
     private String currentStatus(String id) {
-        // 在原始 SemiRiskStore 中此方法从 publicAlertStatuses 映射读取。
-        // 由于无法直接访问该映射，通过 DashboardService 查询时默认为"未处理"。
-        return "未处理";
+        // 从 AlertService 读取真实的告警状态（包含 publicAlertStatuses 持久化状态）
+        return alertService.currentStatus(id);
     }
 
     private List<CrawlerSignal> availableSignals() {
@@ -202,7 +204,7 @@ public class DashboardService {
     private List<RiskAlert> publicAlerts(List<CrawlerSignal> signals) {
         return signals.stream()
                 .sorted(Comparator.comparing(CrawlerSignal::riskScore).reversed())
-                .map(signal -> new RiskAlert(signal.id(), signal.fetchedAt(), riskLevel(signal.riskScore()), signal.title(), signal.source(), signal.sourceUrl(), "未处理", "risk-detail.html"))
+                .map(signal -> new RiskAlert(signal.id(), signal.fetchedAt(), riskLevel(signal.riskScore()), signal.title(), signal.source(), signal.sourceUrl(), currentStatus(signal.id()), "risk-detail.html"))
                 .toList();
     }
 

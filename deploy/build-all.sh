@@ -1,11 +1,10 @@
 FROM eclipse-temurin:21-jre
 
-ARG APP_NAME=service
 ENV TZ=Asia/Shanghai
 
 WORKDIR /app
 
-COPY ${JAR_FILE} app.jar
+COPY *.jar /app/
 
 EXPOSE 8080
 

@@ -65,8 +65,8 @@ public class SemiRiskStore {
     private final Map<String, ReportJob> reportJobs = new ConcurrentHashMap<>();
     // 缓存已生成的报告内容，避免每次下载重复调用 AI
     private final Map<String, List<String>> reportContentCache = new ConcurrentHashMap<>();
-    private final Map<String, RiskAlert> alerts = new ConcurrentHashMap<>();
-    private final Map<String, String> publicAlertStatuses = new ConcurrentHashMap<>();
+    private final Map<String, RiskAlert> alerts = new ConcurrentHashMap<>(); // 已废弃，由 AlertService 统一管理
+    // publicAlertStatuses 已废弃：所有告警状态由 AlertService 统一管理，SemiRiskStore 通过 alertService 桥接访问
     private final Map<String, SystemUser> systemUsers = new ConcurrentHashMap<>();
     private final Map<String, AiModelConfig> aiModelConfigs = new ConcurrentHashMap<>();
     private final Map<String, String> aiModelApiKeys = new ConcurrentHashMap<>();
@@ -262,8 +262,9 @@ public class SemiRiskStore {
 
     private void persistPublicAlerts(List<CrawlerSignal> signals) {
         try {
+            Map<String, String> statuses = alertService.getPublicAlertStatusesMap();
             for (CrawlerSignal s : signals) {
-                String status = publicAlertStatuses.getOrDefault(s.id(), "未处理");
+                String status = statuses.getOrDefault(s.id(), "未处理");
                 repository.upsertPublicAlert(s.id(), s.fetchedAt(), riskLevel(s.riskScore()),
                         truncate(s.title(), 250), truncate(s.source(), 120), status, "risk-detail.html");
             }
@@ -284,11 +285,12 @@ public class SemiRiskStore {
 
     private void loadAlertStatusesFromDb() {
         try {
+            Map<String, String> statuses = alertService.getPublicAlertStatusesMap();
             repository.findAlerts(null, null, null, 500).forEach(row -> {
                 String id = stringValue(row.get("id"));
                 String status = stringValue(row.get("status"));
                 if (!id.isBlank() && !status.isBlank() && !"未处理".equals(status)) {
-                    publicAlertStatuses.put(id, status);
+                    statuses.put(id, status);
                 }
             });
         } catch (Exception ex) {
@@ -1453,9 +1455,10 @@ public class SemiRiskStore {
     }
 
     private List<RiskAlert> publicAlerts(List<CrawlerSignal> signals) {
+        Map<String, String> statuses = alertService.getPublicAlertStatusesMap();
         return signals.stream()
                 .sorted(Comparator.comparing(CrawlerSignal::riskScore).reversed())
-                .map(signal -> new RiskAlert(signal.id(), signal.fetchedAt(), riskLevel(signal.riskScore()), signal.title(), signal.source(), signal.sourceUrl(), publicAlertStatuses.getOrDefault(signal.id(), "未处理"), "risk-detail.html"))
+                .map(signal -> new RiskAlert(signal.id(), signal.fetchedAt(), riskLevel(signal.riskScore()), signal.title(), signal.source(), signal.sourceUrl(), statuses.getOrDefault(signal.id(), "未处理"), "risk-detail.html"))
                 .toList();
     }
 
