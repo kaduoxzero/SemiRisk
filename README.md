@@ -65,13 +65,82 @@ SEMIRISK_ES_URL=http://127.0.0.1:9200
 - `semirisk-services/semirisk-risk-service`：AI 风险测算
 - `semirisk-services/semirisk-ai-service`：AI API Key 管理与本日风险报告真实生成（拉取公开源 + 调用 DeepSeek）
 
+## 部署方式
+
+### Docker 一键部署（推荐）
+
+```bash
+# 一键部署（自动编译、构建镜像、启动全部容器）
+./script/deploy-docker.sh --local
+
+# 或分步执行
+./mvnw -q -DskipTests clean install
+cd semirisk-ui && npm ci && npm run build && cd ..
+docker compose up -d
+```
+
+详细文档：[Docker部署使用说明.md](doc/Docker部署使用说明.md) | [公网访问部署指南.md](doc/公网访问部署指南.md)
+
+### 本地开发
+
+如果本机不能直连 `192.168.101.130`，先通过中转机建立本地隧道：
+
+```bash
+SEMIRISK_SSH_JUMP_PASSWORD=*** SEMIRISK_VM_PASSWORD=*** ./script/start-vm-tunnels.sh
+VM_HOST=127.0.0.1 ./script/check-vm-middleware.sh
+```
+
+`.env.local` 中保持：
+
+```bash
+SEMIRISK_MIDDLEWARE_HOST=127.0.0.1
+SEMIRISK_ES_URL=http://127.0.0.1:9200
+```
+
+再启动项目：
+
+```bash
+./script/start-backend-services.sh
+./script/start-ui.sh
+```
+
+单独启动某个后端模块时，先安装公共模块依赖：
+
+```bash
+./mvnw -DskipTests install
+./mvnw -pl semirisk-services/semirisk-gateway spring-boot:run
+```
+
+访问：
+
+- Vue 前端：http://localhost:5173
+- API Gateway：http://localhost:8080，构建前端后同样优先托管 `semirisk-ui/dist`
+- 启动管理员：`kaduoxli / 123qwe123`，角色 `ADMIN`
+- 后续 QQ 邮箱注册用户默认为 `OPERATOR`
+- 登录使用 Bearer Token，默认 30 分钟滑动有效，不使用 Cookie 登录态
+
+## 中间件地址
+
+所有中间件默认指向虚拟机 `192.168.101.130`：
+
+- MySQL：`192.168.101.130:3306`
+- Redis：`192.168.101.130:6379`
+- Elasticsearch：`192.168.101.130:9200`
+- MinIO：`192.168.101.130:9000`
+- RabbitMQ：`192.168.101.130:5672`
+- Nacos：`192.168.101.130:8848`
+
+当前 VM 部署目录为 `/opt/semirisk`，中间件 Compose 位于 `/opt/semirisk/middleware`，部署包位于 `/opt/semirisk/packages/semirisk-middleware-deploy.tgz`。
+本机通过中转机访问 VM 时，使用 `script/start-vm-tunnels.sh` 将上述端口映射到 `127.0.0.1`。
+
 ## Gateway 服务层架构
 
 Gateway 核心业务层按领域拆分为以下服务类：
 
 | 服务类 | 职责 |
 |---|---|
-| `SemiRiskStore` | 核心协调：用户认证、风险快照、告警、上传、报告任务、Dashboard 聚合 |
+| `SemiRiskStore` | 核心协调：用户认证、风险快照、上传、报告任务、Dashboard 聚合 |
+| `AlertService` | 告警生命周期管理：状态跟踪、持久化、公开告警查询（单一数据源） |
 | `TranslationService` | 中英文标题翻译、风险等级/状态/维度名称映射 |
 | `GisService` | GIS 地理编码、风险点位计算、供应链路径生成 |
 | `EnterpriseService` | 企业画像、公开公司数据库、Wikipedia 信息查询、互联网搜索 |
