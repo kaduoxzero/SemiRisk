@@ -140,7 +140,8 @@ public final class SqlTemplates {
               status = VALUES(status),
               progress = VALUES(progress),
               step = VALUES(step),
-              download_url = VALUES(download_url)
+              download_url = VALUES(download_url),
+              threshold = VALUES(threshold)
             """;
 
     public static final String INSERT_AUDIT_LOG = """
@@ -223,6 +224,14 @@ public final class SqlTemplates {
             WHERE fetched_at < ?
             """;
 
+    public static final String COUNT_ALL_OK_CRAWLER_SIGNALS = """
+            SELECT COUNT(*) FROM crawler_signal WHERE status = 'OK'
+            """;
+
+    public static final String COUNT_TODAY_OK_CRAWLER_SIGNALS = """
+            SELECT COUNT(*) FROM crawler_signal WHERE status = 'OK' AND DATE(fetched_at) = CURDATE()
+            """;
+
     public static final String INSERT_RISK_SNAPSHOT = """
             INSERT INTO risk_snapshot(score, level, summary, signal_count, calculated_at)
             VALUES (?, ?, ?, ?, ?)
@@ -236,8 +245,8 @@ public final class SqlTemplates {
             """;
 
     public static final String UPSERT_KNOWLEDGE_DOC = """
-            INSERT INTO knowledge_doc(id, category, title, content, source, source_url, dimension, risk_score, object_key, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO knowledge_doc(id, category, title, content, source, source_url, dimension, risk_score, object_key, fetched_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
               category = VALUES(category),
               title = VALUES(title),
@@ -247,14 +256,15 @@ public final class SqlTemplates {
               dimension = VALUES(dimension),
               risk_score = VALUES(risk_score),
               object_key = VALUES(object_key),
-              fetched_at = VALUES(fetched_at)
+              fetched_at = VALUES(fetched_at),
+              status = VALUES(status)
             """;
 
     public static final String FIND_KNOWLEDGE_DOCS_BY_CATEGORY = """
             SELECT id, category, title, content, source, source_url AS sourceUrl, dimension,
                    risk_score AS riskScore, object_key AS objectKey, fetched_at AS fetchedAt
             FROM knowledge_doc
-            WHERE category = ?
+            WHERE category = ? AND is_deleted = 0
             ORDER BY fetched_at DESC
             LIMIT ?
             """;
@@ -263,14 +273,14 @@ public final class SqlTemplates {
             SELECT id, category, title, content, source, source_url AS sourceUrl, dimension,
                    risk_score AS riskScore, object_key AS objectKey, fetched_at AS fetchedAt
             FROM knowledge_doc
-            WHERE id = ?
+            WHERE id = ? AND is_deleted = 0
             LIMIT 1
             """;
 
     public static final String COUNT_KNOWLEDGE_DOCS_BY_CATEGORY = """
             SELECT COUNT(*)
             FROM knowledge_doc
-            WHERE category = ?
+            WHERE category = ? AND is_deleted = 0
             """;
 
     public static final String SEARCH_KNOWLEDGE_DOCS = """
@@ -278,6 +288,7 @@ public final class SqlTemplates {
                    risk_score AS riskScore, object_key AS objectKey, fetched_at AS fetchedAt
             FROM knowledge_doc
             WHERE (? IS NULL OR title LIKE CONCAT('%', ?, '%') OR content LIKE CONCAT('%', ?, '%'))
+              AND is_deleted = 0
             ORDER BY risk_score DESC, fetched_at DESC
             LIMIT ?
             """;
@@ -358,14 +369,78 @@ public final class SqlTemplates {
             LIMIT 1
             """;
 
+    // ── Batch Operations (Phase 1: High Performance) ───────────────────
+
+    /** 批量 upsert crawler_signal（使用 INSERT ... ON DUPLICATE KEY UPDATE 语法）。 */
+    public static final String BATCH_UPSERT_CRAWLER_SIGNALS = """
+            INSERT INTO crawler_signal(id, source, source_url, title, dimension, category, risk_signal, risk_score, status, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              source = VALUES(source),
+              source_url = VALUES(source_url),
+              title = VALUES(title),
+              dimension = VALUES(dimension),
+              category = VALUES(category),
+              risk_signal = VALUES(risk_signal),
+              risk_score = VALUES(risk_score),
+              status = VALUES(status),
+              fetched_at = VALUES(fetched_at)
+            """;
+
+    /** 批量 upsert knowledge_doc。 */
+    public static final String BATCH_UPSERT_KNOWLEDGE_DOCS = """
+            INSERT INTO knowledge_doc(id, category, title, content, source, source_url, dimension, risk_score, object_key, fetched_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              category = VALUES(category),
+              title = VALUES(title),
+              content = VALUES(content),
+              source = VALUES(source),
+              source_url = VALUES(source_url),
+              dimension = VALUES(dimension),
+              risk_score = VALUES(risk_score),
+              object_key = VALUES(object_key),
+              fetched_at = VALUES(fetched_at),
+              status = VALUES(status)
+            """;
+
+    /** 批量 upsert risk_alert。 */
+    public static final String BATCH_UPSERT_PUBLIC_ALERTS = """
+            INSERT INTO risk_alert(id, alert_time, level, title, source, status, target)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              alert_time = VALUES(alert_time),
+              level = VALUES(level),
+              title = VALUES(title),
+              source = VALUES(source),
+              target = VALUES(target)
+            """;
+
+    /** 批量 upsert enterprise_record。 */
+    public static final String BATCH_UPSERT_ENTERPRISE_RECORDS = """
+            INSERT INTO enterprise_record(id, name, credit_code, industry, location, risk_score, credit_level,
+                   source_mode, registry_status, events_json, signals_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              credit_code = VALUES(credit_code),
+              industry = VALUES(industry),
+              location = VALUES(location),
+              risk_score = VALUES(risk_score),
+              credit_level = VALUES(credit_level),
+              source_mode = VALUES(source_mode),
+              registry_status = VALUES(registry_status),
+              events_json = VALUES(events_json),
+              signals_json = VALUES(signals_json),
+              updated_at = VALUES(updated_at)
+            """;
+
     // ── Password Reset Tokens ──────────────────────────────────────────
 
     public static final String INSERT_RESET_TOKEN = """
             INSERT INTO password_reset_tokens(token, email, expires_at)
             VALUES (?, ?, ?)
             ON DUPLICATE KEY UPDATE
-              expires_at = VALUES(expires_at),
-              consumed = 0
+              expires_at = VALUES(expires_at)
             """;
 
     public static final String FIND_ACTIVE_RESET_TOKEN = """
@@ -400,6 +475,37 @@ public final class SqlTemplates {
             UPDATE system_user
             SET password_hash = ?, password_updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
+            """;
+
+    // ── Knowledge Doc Soft Delete & Status ─────────────────────────────
+
+    public static final String SOFT_DELETE_KNOWLEDGE_DOC = """
+            UPDATE knowledge_doc
+            SET is_deleted = 1, update_time = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """;
+
+    public static final String UPDATE_KNOWLEDGE_DOC_STATUS = """
+            UPDATE knowledge_doc
+            SET status = ?, update_time = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """;
+
+    // ── Crawler Signal Archive ─────────────────────────────────────────
+
+    public static final String CREATE_ARCHIVE_TABLE = """
+            CREATE TABLE IF NOT EXISTS crawler_signal_archive LIKE crawler_signal
+            """;
+
+    public static final String ARCHIVE_CRAWLER_SIGNALS = """
+            INSERT INTO crawler_signal_archive
+            SELECT * FROM crawler_signal
+            WHERE fetched_at < ?
+            """;
+
+    public static final String DELETE_ARCHIVED_CRAWLER_SIGNALS = """
+            DELETE FROM crawler_signal
+            WHERE fetched_at < ?
             """;
 
     private SqlTemplates() {
