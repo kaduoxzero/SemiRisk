@@ -8,11 +8,17 @@ import com.semirisk.service.AiChatService.AiAnswer;
 import com.semirisk.repository.PreparedRiskRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.semirisk.config.DistributedLockManager;
+import com.semirisk.config.ThreadPoolConfig;
+import com.semirisk.util.SafeLogger;
+import com.semirisk.util.ReportUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Instant;
@@ -26,8 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import org.springframework.stereotype.Service;
@@ -39,15 +43,14 @@ import org.springframework.stereotype.Service;
 @Service
 public class ReportService {
 
+    private static final Logger log = LoggerFactory.getLogger(ReportService.class);
+
     private final Map<String, ReportJob> reportJobs = new ConcurrentHashMap<>();
     // 缓存已生成的报告内容，避免每次下载重复调用 AI
     private final Map<String, List<String>> reportContentCache = new ConcurrentHashMap<>();
-    private final ExecutorService reportExecutor = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "semirisk-ai-report");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor reportExecutor;
     private final AtomicBoolean reportGenerating = new AtomicBoolean(false);
+    private final DistributedLockManager lockManager;
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
     private final SemiRiskStore store;
@@ -57,7 +60,7 @@ public class ReportService {
     private final GisService gisService;
     private final EnterpriseService enterpriseService;
     private final PreparedRiskRepository repository;
-    private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
+    private final java.net.http.HttpClient httpClient = ThreadPoolConfig.sharedHttpClient();
 
     /** 共享每日风险快照的 Supplier（在 SemiRiskStore 中为易失字段）。 */
     private final Supplier<DailyRiskSnapshot> snapshotSupplier;
@@ -78,8 +81,10 @@ public class ReportService {
             GisService gisService,
             EnterpriseService enterpriseService,
             PreparedRiskRepository repository,
+            @Qualifier("semiriskReportPool") org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor reportExecutor,
             @Lazy Supplier<DailyRiskSnapshot> snapshotSupplier,
-            @Lazy Supplier<List<CrawlerSignal>> signalsSupplier) {
+            @Lazy Supplier<List<CrawlerSignal>> signalsSupplier,
+            DistributedLockManager lockManager) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.store = store;
@@ -90,9 +95,19 @@ public class ReportService {
         this.gisService = gisService;
         this.enterpriseService = enterpriseService;
         this.repository = repository;
+        this.reportExecutor = reportExecutor;
         this.snapshotSupplier = snapshotSupplier;
         this.signalsSupplier = signalsSupplier;
+        this.lockManager = lockManager;
         seedDefaultAiModel();
+    }
+
+    @jakarta.annotation.PreDestroy
+    public void shutdown() {
+        httpClient.close();
+        // 清理已完成的任务和内容缓存，防止内存泄漏
+        reportJobs.entrySet().removeIf(e -> e.getValue().progress() >= 100);
+        reportContentCache.clear();
     }
 
     // -----------------------------------------------------------------
@@ -199,7 +214,8 @@ public class ReportService {
             repository.upsertAiReport(today, stringValue(report.get("title")), defaultAiModel, aiConfigured(),
                     truncate(ai.status(), 500), truncate(summary, 2000), truncate(recommendation, 2000),
                     writeJson(sections), Instant.now());
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to persist AI report to MySQL", ex);
         }
         return report;
     }
@@ -209,7 +225,12 @@ public class ReportService {
         if (today.equals(dailyAiReportDate)) {
             return;
         }
-        if (reportGenerating.compareAndSet(false, true)) {
+        // Phase 2: 分布式锁替代 AtomicBoolean CAS
+        lockManager.executeWithLock("daily-report-gen", 0, 0, () -> {
+            if (today.equals(dailyAiReportDate)) {
+                return Boolean.FALSE;
+            }
+            reportGenerating.set(true);
             reportExecutor.submit(() -> {
                 try {
                     generateDailyAiReport();
@@ -217,7 +238,8 @@ public class ReportService {
                     reportGenerating.set(false);
                 }
             });
-        }
+            return Boolean.TRUE;
+        });
     }
 
     /** 读取本日 AI 报告（DB 优先，不存在则返回待生成态，不阻塞调用线程触发模型）。 */
@@ -236,7 +258,8 @@ public class ReportService {
                 }
                 return report;
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to persist AI report to MySQL", ex);
         }
         // 尚无报告：后台异步生成，先返回待生成态。
         maybeGenerateDailyReportAsync();
@@ -277,7 +300,8 @@ public class ReportService {
                 ReportJob job = new ReportJob(id, template, language, format, threshold, status, progress, step, downloadUrl, createdAt);
                 reportJobs.put(id, job);
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.error("Failed to persist AI report to MySQL", ex);
         }
     }
 
@@ -429,7 +453,8 @@ public class ReportService {
         }
         try {
             return Instant.parse(String.valueOf(value));
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            SafeLogger.debug(log, "Failed to parse Instant from '" + value + "'", ex);
             return Instant.now();
         }
     }
@@ -441,7 +466,8 @@ public class ReportService {
         }
         try {
             return objectMapper.readValue(String.valueOf(value), type);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            SafeLogger.debug(log, "JSON read failed for value", ex);
             return fallback;
         }
     }
@@ -459,7 +485,8 @@ public class ReportService {
     private List<Map<String, Object>> enterpriseRecordsForReport(int limit) {
         try {
             return repository.findEnterpriseRecords(limit);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            SafeLogger.warn(log, "Failed to fetch enterprise records for report (limit=" + limit + ")", ex);
             return List.of();
         }
     }
@@ -478,7 +505,8 @@ public class ReportService {
         }
         try {
             return Integer.parseInt(String.valueOf(value));
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            SafeLogger.debug(log, "Failed to parse int from '" + value + "'", ex);
             return 0;
         }
     }
@@ -499,7 +527,8 @@ public class ReportService {
     private String writeJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            SafeLogger.warn(log, "JSON write failed for value of type " + (value == null ? "null" : value.getClass().getSimpleName()), ex);
             return "[]";
         }
     }

@@ -1,6 +1,8 @@
 package com.semirisk.service;
 
 import com.semirisk.model.CrawlerSignal;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -11,6 +13,8 @@ import java.util.Map;
 
 @Service
 public class GisService {
+
+    private static final Logger log = LoggerFactory.getLogger(GisService.class);
 
     private static final Object[][] PLACE_GEO = {
             {new String[]{"shanghai", "上海", "外高桥", "洋山"}, "上海", 121.49, 31.23},
@@ -48,7 +52,7 @@ public class GisService {
             {new String[]{"china", "中国", "中国大陆"}, "中国", 116.40, 39.90},
             {new String[]{"europe", "欧盟", "eu ", "欧洲", "wto", "世贸组织"}, "欧盟", 4.35, 50.85},
             {new String[]{"middle east", "中东", "uae", "阿联酋", "saudi", "沙特"}, "中东", 55.30, 25.26},
-            {new String[]{"africa", "非洲", "congo", "刚果", "cobalt", "钴"}, "非洲", 23.65, -3.39}
+            {new String[]{"africa", "非洲", "congo", "刚果", "cobalt", "钴"}, "非洲", 15.30, -3.30}
     };
 
     private static final Object[][] SOURCE_GEO = {
@@ -162,7 +166,8 @@ public class GisService {
         }
         try {
             return Integer.parseInt(String.valueOf(value));
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("Failed to parse int from '{}': {}", value, ex.getMessage());
             return 0;
         }
     }

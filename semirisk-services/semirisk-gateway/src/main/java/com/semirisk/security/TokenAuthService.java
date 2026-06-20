@@ -147,7 +147,8 @@ public class TokenAuthService {
         }
         try {
             return Instant.parse(String.valueOf(value));
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("Failed to parse Instant from '{}': {}", value, ex.getMessage());
             return null;
         }
     }

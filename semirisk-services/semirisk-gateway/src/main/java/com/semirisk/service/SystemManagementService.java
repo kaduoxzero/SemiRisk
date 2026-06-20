@@ -3,6 +3,9 @@ package com.semirisk.service;
 import com.semirisk.model.AiModelConfig;
 import com.semirisk.model.SystemUser;
 import com.semirisk.repository.PreparedRiskRepository;
+import com.semirisk.security.PasswordHashService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -25,11 +28,14 @@ import java.util.Map;
 @Service
 public class SystemManagementService {
 
+    private static final Logger log = LoggerFactory.getLogger(SystemManagementService.class);
+
     private final Map<String, SystemUser> systemUsers = new ConcurrentHashMap<>();
     private final List<String> auditLogs = new ArrayList<>();
     private final PreparedRiskRepository repository;
     private final HealthProbeService healthProbeService;
     private final SemiRiskStore store;
+    private final PasswordHashService passwordHashService;
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
 
@@ -37,11 +43,13 @@ public class SystemManagementService {
             PreparedRiskRepository repository,
             HealthProbeService healthProbeService,
             @Lazy SemiRiskStore store,
+            PasswordHashService passwordHashService,
             @Value("${semirisk.ai.default.model:}") String defaultAiModel,
             @Value("${semirisk.ai.default.endpoint:}") String defaultAiEndpoint) {
         this.repository = repository;
         this.healthProbeService = healthProbeService;
         this.store = store;
+        this.passwordHashService = passwordHashService;
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         auditLogs.add("[INFO] gateway route table initialized");
@@ -100,8 +108,8 @@ public class SystemManagementService {
                         .map(row -> stringValue(row.get("createdAt")) + " [" + stringValue(row.get("level")) + "] " + stringValue(row.get("message")))
                         .toList();
             }
-        } catch (Exception ignored) {
-            // MySQL 不可达时回退内存审计日志。
+        } catch (Exception ex) {
+            log.warn("Failed to fetch audit logs from MySQL, falling back to memory", ex);
         }
         String today = LocalDate.now().toString();
         return auditLogs.stream()
@@ -153,7 +161,8 @@ public class SystemManagementService {
     private List<Map<String, Object>> probeDataSources() {
         try {
             return healthProbeService.probeAll();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to probe data sources", ex);
             return List.of();
         }
     }
@@ -181,5 +190,9 @@ public class SystemManagementService {
 
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value);
+    }
+
+    public PasswordHashService getPasswordHashService() {
+        return passwordHashService;
     }
 }

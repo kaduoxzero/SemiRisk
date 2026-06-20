@@ -7,11 +7,15 @@ import com.semirisk.model.SystemUser;
 import com.semirisk.model.UserAccount;
 import com.semirisk.repository.PreparedRiskRepository;
 import com.semirisk.security.PasswordHashService;
+import com.semirisk.util.SafeLogger;
+import com.semirisk.util.CircularBuffer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -22,11 +26,13 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class AuthService {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+
     private final Map<String, UserAccount> users = new ConcurrentHashMap<>();
     private final Map<String, LoginCounter> loginCounters = new ConcurrentHashMap<>();
     private final Map<String, Instant> resetTokens = new ConcurrentHashMap<>();
     private final Map<String, SystemUser> systemUsers = new ConcurrentHashMap<>();
-    private final List<String> auditLogs = new ArrayList<>();
+    private final List<String> auditLogs = Collections.synchronizedList(new CircularBuffer<>(10000));
 
     private final PreparedRiskRepository repository;
     private final PasswordHashService passwordHashService;
@@ -66,9 +72,11 @@ public class AuthService {
 
     public Optional<UserAccount> authenticate(String username, String password) {
         UserAccount account = users.get(username);
-        if (account != null && account.enabled() && account.password().equals(password)) {
-            loginCounters.remove(username);
-            return Optional.of(account);
+        if (account != null && account.enabled()) {
+            if (passwordHashService.verify(password, account.password())) {
+                loginCounters.remove(username);
+                return Optional.of(account);
+            }
         }
         return Optional.empty();
     }
@@ -85,13 +93,14 @@ public class AuthService {
                     if (displayName.isBlank()) displayName = username;
                     String role = stringValue(row.get("role"));
                     if (!users.containsKey(username)) {
+                        // 恢复时密码字段为空，实际登录走 DB 路径（SemiRiskController.authenticate）
                         users.put(username, new UserAccount(username, "", displayName, role, true));
                     }
                 }
             }
             auditLogs.add("[INFO] recovered " + allUsers.size() + " users from MySQL to memory");
-        } catch (Exception ignored) {
-            // MySQL 不可达时跳过
+        } catch (Exception ex) {
+            log.warn("Failed to recover users from MySQL to memory: {}", ex.getMessage());
         }
     }
 
@@ -104,7 +113,8 @@ public class AuthService {
             throw new IllegalArgumentException("邮箱已被注册");
         }
         String role = users.isEmpty() ? SemiriskConstants.ROLE_ADMIN : SemiriskConstants.ROLE_OPERATOR;
-        UserAccount account = new UserAccount(username, password, displayName, role);
+        String hashed = passwordHashService.hash(password);
+        UserAccount account = new UserAccount(username, hashed, displayName, role);
         users.put(username, account);
         addSystemUser(username, email, role);
         auditLogs.add("[INFO] public registration completed username=" + username);
@@ -112,7 +122,8 @@ public class AuthService {
     }
 
     public UserAccount upsertLoginUser(String username, String password, String displayName, String email, String role) {
-        UserAccount account = new UserAccount(username, password, displayName, role);
+        String hashed = passwordHashService.hash(password);
+        UserAccount account = new UserAccount(username, hashed, displayName, role);
         users.put(username, account);
         systemUsers.values().stream()
                 .filter(user -> user.username().equals(username))
@@ -215,7 +226,8 @@ public class AuthService {
     private List<Map<String, Object>> findAllSystemUsers() {
         try {
             return repository.findSystemUsers();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to fetch system users from MySQL: {}", ex.getMessage());
             return List.of();
         }
     }

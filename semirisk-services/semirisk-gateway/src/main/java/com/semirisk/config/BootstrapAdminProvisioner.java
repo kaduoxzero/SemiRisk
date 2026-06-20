@@ -30,10 +30,10 @@ public class BootstrapAdminProvisioner implements ApplicationRunner {
             PreparedRiskRepository preparedRiskRepository,
             PasswordHashService passwordHashService,
             @Value("${semirisk.bootstrap.admin.enabled:true}") boolean enabled,
-            @Value("${semirisk.bootstrap.admin.username:kaduoxli}") String username,
-            @Value("${semirisk.bootstrap.admin.password:123qwe123}") String password,
-            @Value("${semirisk.bootstrap.admin.display-name:kaduoxli}") String displayName,
-            @Value("${semirisk.bootstrap.admin.email:600000002@qq.com}") String email) {
+            @Value("${semirisk.bootstrap.admin.username:}") String username,
+            @Value("${semirisk.bootstrap.admin.password:}") String password,
+            @Value("${semirisk.bootstrap.admin.display-name:}") String displayName,
+            @Value("${semirisk.bootstrap.admin.email:}") String email) {
         this.store = store;
         this.preparedRiskRepository = preparedRiskRepository;
         this.passwordHashService = passwordHashService;
@@ -49,14 +49,15 @@ public class BootstrapAdminProvisioner implements ApplicationRunner {
         if (!enabled || username.isBlank() || password.isBlank()) {
             return;
         }
-        store.upsertLoginUser(username, password, displayName, email, SemiriskConstants.ROLE_ADMIN);
+        String hashedPassword = passwordHashService.hash(password);
+        store.upsertLoginUser(username, hashedPassword, displayName, email, SemiriskConstants.ROLE_ADMIN);
         try {
             preparedRiskRepository.upsertSystemLoginUser(
                     "U-BOOTSTRAP-ADMIN",
                     username,
                     displayName,
                     email,
-                    passwordHashService.hash(password),
+                    hashedPassword,
                     SemiriskConstants.ROLE_ADMIN,
                     "启用"
             );

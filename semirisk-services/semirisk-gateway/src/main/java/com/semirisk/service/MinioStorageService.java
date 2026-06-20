@@ -5,8 +5,11 @@ import io.minio.GetObjectArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +26,8 @@ import java.io.InputStream;
 @Service
 public class MinioStorageService {
 
+    private static final Logger log = LoggerFactory.getLogger(MinioStorageService.class);
+
     private final String endpoint;
     private final String accessKey;
     private final String secretKey;
@@ -31,9 +36,9 @@ public class MinioStorageService {
     private volatile boolean bucketReady = false;
 
     public MinioStorageService(
-            @Value("${semirisk.minio.endpoint:http://${semirisk.middleware.host:192.168.101.130}:9000}") String endpoint,
-            @Value("${semirisk.minio.access-key:minioadmin}") String accessKey,
-            @Value("${semirisk.minio.secret-key:minioadmin}") String secretKey,
+            @Value("${semirisk.minio.endpoint:http://${semirisk.middleware.host}:9000}") String endpoint,
+            @Value("${semirisk.minio.access-key}") String accessKey,
+            @Value("${semirisk.minio.secret-key}") String secretKey,
             @Value("${semirisk.minio.bucket:semirisk}") String bucket) {
         this.endpoint = endpoint;
         this.accessKey = accessKey;
@@ -95,6 +100,23 @@ public class MinioStorageService {
             client().statObject(StatObjectArgs.builder().bucket(bucket).object(objectKey).build());
             return true;
         } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    /** 删除 MinIO 对象。失败返回 false 但不抛异常，供调用方安全回退。 */
+    public boolean removeObject(String objectKey) {
+        if (objectKey == null || objectKey.isBlank()) {
+            return false;
+        }
+        try {
+            client().removeObject(RemoveObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(objectKey)
+                    .build());
+            return true;
+        } catch (Exception ex) {
+            log.warn("Failed to remove MinIO object {}: {}", objectKey, ex.getMessage());
             return false;
         }
     }

@@ -3,12 +3,13 @@ package com.semirisk.service;
 import com.semirisk.model.CrawlerSignal;
 import com.semirisk.repository.PreparedRiskRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Value;
+import com.semirisk.config.ThreadPoolConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -25,36 +26,50 @@ import java.util.UUID;
 @Service
 public class EnterpriseService {
 
+    private static final Logger log = LoggerFactory.getLogger(EnterpriseService.class);
+
     private final PreparedRiskRepository repository;
     private final ObjectMapper objectMapper;
-    private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
+    private final java.net.http.HttpClient httpClient = ThreadPoolConfig.sharedHttpClient();
 
     private static final String KNOWLEDGE_PUBLIC = "公开情报";
 
-    private static final Map<String, Map<String, String>> PUBLIC_COMPANY_DB = new HashMap<>();
+    private static final Map<String, Map<String, String>> PUBLIC_COMPANY_DB = new java.util.HashMap<>();
     static {
-        PUBLIC_COMPANY_DB.put("tsmc", Map.of("成立时间","1987年","总部所在地","台湾新竹科学园区","行业分类","半导体代工","企业类型","上市公司（NYSE: TSM / TWSE: 2330）","营收（公开披露）","约 NT$2.16兆元（2023年）","员工人数","约 73,000人（2023年）","公司简介","全球最大的纯晶圆代工厂，主要为苹果、英伟达、AMD等制造芯片，制程技术覆盖2nm至成熟节点。"));
-        PUBLIC_COMPANY_DB.put("台积电", PUBLIC_COMPANY_DB.get("tsmc"));
-        PUBLIC_COMPANY_DB.put("samsung", Map.of("成立时间","1969年（半导体业务）","总部所在地","韩国京畿道水原市","行业分类","半导体/消费电子","企业类型","上市公司（KRX: 005930）","营收（公开披露）","约 KRW 258兆韩元（2023年）","员工人数","约 270,000人","公司简介","全球最大DRAM/NAND Flash制造商，同时提供代工服务，IDM模式运营。"));
-        PUBLIC_COMPANY_DB.put("三星", PUBLIC_COMPANY_DB.get("samsung"));
-        PUBLIC_COMPANY_DB.put("asml", Map.of("成立时间","1984年","总部所在地","荷兰埃因霍温","行业分类","半导体设备","企业类型","上市公司（NASDAQ: ASML）","营收（公开披露）","约 €27.6亿（2023年）","员工人数","约 42,000人","公司简介","全球唯一EUV光刻机制造商，DUV/EUV设备是先进制程不可或缺的核心设备。"));
-        PUBLIC_COMPANY_DB.put("nvidia", Map.of("成立时间","1993年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/GPU/AI","企业类型","上市公司（NASDAQ: NVDA）","营收（公开披露）","约 $609亿美元（FY2024）","员工人数","约 36,000人","公司简介","全球领先的GPU和AI加速器制造商，H100/H200系列是当前AI训练的主流算力平台。"));
-        PUBLIC_COMPANY_DB.put("英伟达", PUBLIC_COMPANY_DB.get("nvidia"));
-        PUBLIC_COMPANY_DB.put("amd", Map.of("成立时间","1969年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/CPU/GPU","企业类型","上市公司（NASDAQ: AMD）","营收（公开披露）","约 $227亿美元（2023年）","员工人数","约 26,000人","公司简介","x86 CPU（EPYC服务器处理器）和Radeon GPU制造商，近年AI加速器MI系列快速增长。"));
-        PUBLIC_COMPANY_DB.put("intel", Map.of("成立时间","1968年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/CPU","企业类型","上市公司（NASDAQ: INTC）","营收（公开披露）","约 $542亿美元（2023年）","员工人数","约 124,800人","公司简介","全球最大的x86 CPU制造商之一，IDM模式运营，正在亚利桑那建设IFS代工厂。"));
-        PUBLIC_COMPANY_DB.put("英特尔", PUBLIC_COMPANY_DB.get("intel"));
-        PUBLIC_COMPANY_DB.put("qualcomm", Map.of("成立时间","1985年","总部所在地","美国加利福尼亚州圣地亚哥","行业分类","半导体/无线通信","企业类型","上市公司（NASDAQ: QCOM）","营收（公开披露）","约 $358亿美元（FY2023）","员工人数","约 51,000人","公司简介","全球领先的移动处理器和基带芯片设计公司，Snapdragon系列广泛用于智能手机。"));
-        PUBLIC_COMPANY_DB.put("高通", PUBLIC_COMPANY_DB.get("qualcomm"));
-        PUBLIC_COMPANY_DB.put("sk hynix", Map.of("成立时间","1983年","总部所在地","韩国京畿道利川市","行业分类","半导体/存储","企业类型","上市公司（KRX: 000660）","营收（公开披露）","约 KRW 32.8兆韩元（2023年）","员工人数","约 37,000人","公司简介","全球第二大DRAM制造商，HBM高带宽存储器是目前AI训练芯片的核心配套组件。"));
-        PUBLIC_COMPANY_DB.put("海力士", PUBLIC_COMPANY_DB.get("sk hynix"));
+        Map<String, String> tsmcData = Map.of("成立时间","1987年","总部所在地","台湾新竹科学园区","行业分类","半导体代工","企业类型","上市公司（NYSE: TSM / TWSE: 2330）","营收（公开披露）","约 NT$2.16兆元（2023年）","员工人数","约 73,000人（2023年）","公司简介","全球最大的纯晶圆代工厂，主要为苹果、英伟达、AMD等制造芯片，制程技术覆盖2nm至成熟节点。");
+        PUBLIC_COMPANY_DB.put("tsmc", tsmcData);
+        PUBLIC_COMPANY_DB.put("台积电", new java.util.HashMap<>(tsmcData));
+        Map<String, String> samsungData = Map.of("成立时间","1969年（半导体业务）","总部所在地","韩国京畿道水原市","行业分类","半导体/消费电子","企业类型","上市公司（KRX: 005930）","营收（公开披露）","约 KRW 258兆韩元（2023年）","员工人数","约 270,000人","公司简介","全球最大DRAM/NAND Flash制造商，同时提供代工服务，IDM模式运营。");
+        PUBLIC_COMPANY_DB.put("samsung", samsungData);
+        PUBLIC_COMPANY_DB.put("三星", new java.util.HashMap<>(samsungData));
+        Map<String, String> asmlData = Map.of("成立时间","1984年","总部所在地","荷兰埃因霍温","行业分类","半导体设备","企业类型","上市公司（NASDAQ: ASML）","营收（公开披露）","约 €27.6亿（2023年）","员工人数","约 42,000人","公司简介","全球唯一EUV光刻机制造商，DUV/EUV设备是先进制程不可或缺的核心设备。");
+        PUBLIC_COMPANY_DB.put("asml", asmlData);
+        Map<String, String> nvidiaData = Map.of("成立时间","1993年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/GPU/AI","企业类型","上市公司（NASDAQ: NVDA）","营收（公开披露）","约 $609亿美元（FY2024）","员工人数","约 36,000人","公司简介","全球领先的GPU和AI加速器制造商，H100/H200系列是当前AI训练的主流算力平台。");
+        PUBLIC_COMPANY_DB.put("nvidia", nvidiaData);
+        PUBLIC_COMPANY_DB.put("英伟达", new java.util.HashMap<>(nvidiaData));
+        Map<String, String> amdData = Map.of("成立时间","1969年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/CPU/GPU","企业类型","上市公司（NASDAQ: AMD）","营收（公开披露）","约 $227亿美元（2023年）","员工人数","约 26,000人","公司简介","x86 CPU（EPYC服务器处理器）和Radeon GPU制造商，近年AI加速器MI系列快速增长。");
+        PUBLIC_COMPANY_DB.put("amd", amdData);
+        Map<String, String> intelData = Map.of("成立时间","1968年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/CPU","企业类型","上市公司（NASDAQ: INTC）","营收（公开披露）","约 $542亿美元（2023年）","员工人数","约 124,800人","公司简介","全球最大的x86 CPU制造商之一，IDM模式运营，正在亚利桑那建设IFS代工厂。");
+        PUBLIC_COMPANY_DB.put("intel", intelData);
+        PUBLIC_COMPANY_DB.put("英特尔", new java.util.HashMap<>(intelData));
+        Map<String, String> qualcommData = Map.of("成立时间","1985年","总部所在地","美国加利福尼亚州圣地亚哥","行业分类","半导体/无线通信","企业类型","上市公司（NASDAQ: QCOM）","营收（公开披露）","约 $358亿美元（FY2023）","员工人数","约 51,000人","公司简介","全球领先的移动处理器和基带芯片设计公司，Snapdragon系列广泛用于智能手机。");
+        PUBLIC_COMPANY_DB.put("qualcomm", qualcommData);
+        PUBLIC_COMPANY_DB.put("高通", new java.util.HashMap<>(qualcommData));
+        Map<String, String> skHynixData = Map.of("成立时间","1983年","总部所在地","韩国京畿道利川市","行业分类","半导体/存储","企业类型","上市公司（KRX: 000660）","营收（公开披露）","约 KRW 32.8兆韩元（2023年）","员工人数","约 37,000人","公司简介","全球第二大DRAM制造商，HBM高带宽存储器是目前AI训练芯片的核心配套组件。");
+        PUBLIC_COMPANY_DB.put("sk hynix", skHynixData);
+        PUBLIC_COMPANY_DB.put("海力士", new java.util.HashMap<>(skHynixData));
         PUBLIC_COMPANY_DB.put("micron", Map.of("成立时间","1978年","总部所在地","美国爱达荷州博伊西","行业分类","半导体/存储","企业类型","上市公司（NASDAQ: MU）","营收（公开披露）","约 $154亿美元（FY2023）","员工人数","约 48,000人","公司简介","全球主要DRAM和NAND Flash制造商，是美国本土唯一的存储芯片大厂。"));
-        PUBLIC_COMPANY_DB.put("applied materials", Map.of("成立时间","1967年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体设备","企业类型","上市公司（NASDAQ: AMAT）","营收（公开披露）","约 $266亿美元（FY2023）","员工人数","约 34,000人","公司简介","全球最大的半导体设备公司，覆盖CVD、PVD、CMP、离子注入等核心制程设备。"));
-        PUBLIC_COMPANY_DB.put("broadcom", Map.of("成立时间","1991年（Avago前身）","总部所在地","美国加利福尼亚州圣何塞","行业分类","半导体/网络/AI","企业类型","上市公司（NASDAQ: AVGO）","营收（公开披露）","约 $359亿美元（FY2023）","员工人数","约 20,000人","公司简介","全球领先的网络芯片和定制AI ASIC设计公司，为谷歌等超大规模数据中心提供TPU等ASIC。"));
-        PUBLIC_COMPANY_DB.put("博通", PUBLIC_COMPANY_DB.get("broadcom"));
-        PUBLIC_COMPANY_DB.put("arm", Map.of("成立时间","1990年","总部所在地","英国剑桥","行业分类","半导体IP/指令集架构","企业类型","上市公司（NASDAQ: ARM）","营收（公开披露）","约 $27.3亿美元（FY2024）","员工人数","约 6,500人","公司简介","全球主导的CPU IP授权公司，超过99%的智能手机和大量服务器/AI芯片使用ARM架构。"));
-        PUBLIC_COMPANY_DB.put("安谋", PUBLIC_COMPANY_DB.get("arm"));
-        PUBLIC_COMPANY_DB.put("mediatek", Map.of("成立时间","1997年","总部所在地","台湾新竹","行业分类","半导体/SoC","企业类型","上市公司（TWSE: 2454）","营收（公开披露）","约 NT$4,414亿元（2023年）","员工人数","约 20,000人","公司简介","全球第三大无晶圆半导体公司，Dimensity系列SoC广泛应用于中高端安卓手机和IoT设备。"));
-        PUBLIC_COMPANY_DB.put("联发科", PUBLIC_COMPANY_DB.get("mediatek"));
+        Map<String, String> appliedMaterialsData = Map.of("成立时间","1967年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体设备","企业类型","上市公司（NASDAQ: AMAT）","营收（公开披露）","约 $266亿美元（FY2023）","员工人数","约 34,000人","公司简介","全球最大的半导体设备公司，覆盖CVD、PVD、CMP、离子注入等核心制程设备。");
+        PUBLIC_COMPANY_DB.put("applied materials", appliedMaterialsData);
+        Map<String, String> broadcomData = Map.of("成立时间","1991年（Avago前身）","总部所在地","美国加利福尼亚州圣何塞","行业分类","半导体/网络/AI","企业类型","上市公司（NASDAQ: AVGO）","营收（公开披露）","约 $359亿美元（FY2023）","员工人数","约 20,000人","公司简介","全球领先的网络芯片和定制AI ASIC设计公司，为谷歌等超大规模数据中心提供TPU等ASIC。");
+        PUBLIC_COMPANY_DB.put("broadcom", broadcomData);
+        PUBLIC_COMPANY_DB.put("博通", new java.util.HashMap<>(broadcomData));
+        Map<String, String> armData = Map.of("成立时间","1990年","总部所在地","英国剑桥","行业分类","半导体IP/指令集架构","企业类型","上市公司（NASDAQ: ARM）","营收（公开披露）","约 $27.3亿美元（FY2024）","员工人数","约 6,500人","公司简介","全球主导的CPU IP授权公司，超过99%的智能手机和大量服务器/AI芯片使用ARM架构。");
+        PUBLIC_COMPANY_DB.put("arm", armData);
+        PUBLIC_COMPANY_DB.put("安谋", new java.util.HashMap<>(armData));
+        Map<String, String> mediatekData = Map.of("成立时间","1997年","总部所在地","台湾新竹","行业分类","半导体/SoC","企业类型","上市公司（TWSE: 2454）","营收（公开披露）","约 NT$4,414亿元（2023年）","员工人数","约 20,000人","公司简介","全球第三大无晶圆半导体公司，Dimensity系列SoC广泛应用于中高端安卓手机和IoT设备。");
+        PUBLIC_COMPANY_DB.put("mediatek", mediatekData);
+        PUBLIC_COMPANY_DB.put("联发科", new java.util.HashMap<>(mediatekData));
     }
 
     public EnterpriseService(PreparedRiskRepository repository, ObjectMapper objectMapper) {
@@ -121,7 +136,7 @@ public class EnterpriseService {
                     .timeout(java.time.Duration.ofSeconds(8))
                     .header("Ocp-Apim-Subscription-Key", apiKey)
                     .GET().build();
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = ThreadPoolConfig.sharedHttpClient().send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) {
                 return fallbackWebSearch(keyword);
             }
@@ -148,9 +163,12 @@ public class EnterpriseService {
                     String content = "标题：" + name + "\n来源：" + item.getOrDefault("provider", Map.of("name", "Bing").toString()) + "\n摘要：" + desc + "\n链接：" + url + "\n发布时间：" + date;
                     repository.upsertKnowledgeDoc(docId, KNOWLEDGE_PUBLIC, truncate(name, 1000), content,
                             "Bing News 搜索", url, "企业信息", 0, null, now);
-                } catch (Exception ignored) {}
+                } catch (Exception ex) {
+                    log.debug("Failed to persist knowledge doc for search result: {}", ex.getMessage());
+                }
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Bing news search failed for keyword '{}': {}", keyword, ex.getMessage());
             return fallbackWebSearch(keyword);
         }
         return results.isEmpty() ? fallbackWebSearch(keyword) : results;
@@ -166,7 +184,7 @@ public class EnterpriseService {
                     .timeout(java.time.Duration.ofSeconds(6))
                     .header("User-Agent", "SemiRisk/1.0 (supply chain risk platform; research use)")
                     .GET().build();
-            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = ThreadPoolConfig.sharedHttpClient().send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) return results;
             String body = resp.body();
             java.util.regex.Matcher titleMatcher = java.util.regex.Pattern.compile("<a rel=\"nofollow\" class=\"result__a\" href=\"([^\"]+)\"[^>]*>([^<]+)</a>").matcher(body);
@@ -195,16 +213,21 @@ public class EnterpriseService {
                             String.valueOf(r.get("title")),
                             "搜索词：" + keyword + "\n来源：" + r.get("source") + "\n摘要：" + r.get("snippet") + "\n链接：" + r.get("url"),
                             "网络搜索", String.valueOf(r.get("url")), "企业信息", 0, null, now);
-                } catch (Exception ignored) {}
+                } catch (Exception ex) {
+                    log.debug("Failed to persist knowledge doc for web search result: {}", ex.getMessage());
+                }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ex) {
+            log.debug("DuckDuckGo fallback search failed for keyword '{}': {}", keyword, ex.getMessage());
+        }
         return results;
     }
 
     public Optional<Map<String, Object>> findEnterpriseRecord(String keyword) {
         try {
             return repository.findEnterpriseRecordByKeyword(keyword).stream().findFirst();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to find enterprise record by keyword '{}': {}", keyword, ex.getMessage());
             return Optional.empty();
         }
     }
@@ -212,7 +235,8 @@ public class EnterpriseService {
     public Map<String, Object> repositoryFirstEnterprise() {
         try {
             return repository.findEnterpriseRecords(1).stream().findFirst().orElse(null);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to fetch first enterprise record from MySQL: {}", ex.getMessage());
             return null;
         }
     }
@@ -231,7 +255,8 @@ public class EnterpriseService {
                         return item;
                     })
                     .toList();
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to fetch enterprise catalog from MySQL: {}", ex.getMessage());
             return List.of();
         }
     }
@@ -239,7 +264,8 @@ public class EnterpriseService {
     public List<Map<String, Object>> enterpriseRecordsForReport(int limit) {
         try {
             return repository.findEnterpriseRecords(limit);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to fetch enterprise records for report (limit={}): {}", limit, ex.getMessage());
             return List.of();
         }
     }
@@ -251,7 +277,9 @@ public class EnterpriseService {
             String signalsJson = writeJson(related.stream().map(this::enterpriseSignal).toList());
             repository.upsertEnterpriseRecord(id, truncate(name, 250), "", truncate(industry, 120), "待核验",
                     score, riskLevel, "公开源事件聚合（用户搜索）", "待接入权威源", eventsJson, signalsJson, Instant.now());
-        } catch (Exception ignored) {}
+        } catch (Exception ex) {
+            log.warn("Failed to persist searched enterprise '{}': {}", name, ex.getMessage());
+        }
     }
 
     public Map<String, Object> enterpriseSignal(CrawlerSignal signal) {
@@ -309,7 +337,9 @@ public class EnterpriseService {
             if (paras.length > 0 && !paras[0].isBlank()) {
                 result.put("description", truncate(paras[0].replaceAll("\\s+", " ").trim(), 200));
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ex) {
+            log.debug("Wikipedia business info fetch failed for '{}': {}", companyName, ex.getMessage());
+        }
         return result;
     }
 
@@ -332,7 +362,9 @@ public class EnterpriseService {
     private String writeJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("JSON write failed for value of type {}: {}",
+                    value == null ? "null" : value.getClass().getSimpleName(), ex.getMessage());
             return "[]";
         }
     }

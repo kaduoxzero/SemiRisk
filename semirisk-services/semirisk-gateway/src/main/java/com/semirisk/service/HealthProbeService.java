@@ -1,12 +1,14 @@
 package com.semirisk.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import com.semirisk.config.ThreadPoolConfig;
 
 import java.net.Socket;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -25,13 +27,12 @@ import java.util.Map;
 @Service
 public class HealthProbeService {
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
+    private static final Logger log = LoggerFactory.getLogger(HealthProbeService.class);
+
     private final JdbcTemplate jdbcTemplate;
     private final String middlewareHost;
     private final String esUrl;
-    private final int redisPort;
+    private final String redisNodes;
     private final int minioApiPort;
     private final int rabbitHttpPort;
     private final int nacosPort;
@@ -40,7 +41,7 @@ public class HealthProbeService {
             JdbcTemplate jdbcTemplate,
             @Value("${semirisk.middleware.host:}") String middlewareHost,
             @Value("${semirisk.elasticsearch.url:http://127.0.0.1:9200}") String esUrl,
-            @Value("${spring.data.redis.port:6379}") int redisPort,
+            @Value("${semirisk.redis.cluster.nodes:127.0.0.1:6379}") String redisNodes,
             @Value("${semirisk.minio.api-port:9000}") int minioApiPort,
             @Value("${semirisk.rabbitmq.http-port:15672}") int rabbitHttpPort,
             @Value("${semirisk.nacos.port:8848}") int nacosPort) {
@@ -48,7 +49,7 @@ public class HealthProbeService {
         // 如果配置为空，尝试检测两个候选主机
         this.middlewareHost = resolveMiddlewareHost(middlewareHost);
         this.esUrl = esUrl;
-        this.redisPort = redisPort;
+        this.redisNodes = redisNodes;
         this.minioApiPort = minioApiPort;
         this.rabbitHttpPort = rabbitHttpPort;
         this.nacosPort = nacosPort;
@@ -58,24 +59,15 @@ public class HealthProbeService {
         if (configuredHost != null && !configuredHost.isBlank()) {
             return configuredHost;
         }
-        if (tryConnect("127.0.0.1", 3306, 2000)) return "127.0.0.1";
-        return "192.168.101.130";
-    }
-
-    private boolean tryConnect(String host, int port, int timeoutMs) {
-        try (java.net.Socket s = new java.net.Socket()) {
-            s.connect(new java.net.InetSocketAddress(host, port), timeoutMs);
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        // No fallback: SEMIRISK_MIDDLEWARE_HOST must be set explicitly
+        throw new IllegalStateException("SEMIRISK_MIDDLEWARE_HOST is not set. Please configure it via environment variable.");
     }
 
     /** 探测全部中间件，返回真实健康清单。 */
     public List<Map<String, Object>> probeAll() {
         List<Map<String, Object>> sources = new ArrayList<>();
         sources.add(probe("MySQL", "数据库", middlewareHost + ":3306", this::probeMysql));
-        sources.add(probe("Redis", "缓存/失败计数", middlewareHost + ":" + redisPort, () -> probeTcp(redisPort)));
+        sources.add(probe("Redis", "缓存/失败计数/限流", redisNodes, () -> probeRedisCluster()));
         sources.add(probe("Elasticsearch", "知识库检索", hostPort(esUrl), this::probeEs));
         sources.add(probe("MinIO", "对象存储", middlewareHost + ":" + minioApiPort, this::probeMinio));
         sources.add(probe("RabbitMQ", "消息队列", middlewareHost + ":" + rabbitHttpPort, () -> probeHttp("http://" + middlewareHost + ":" + rabbitHttpPort)));
@@ -160,7 +152,7 @@ public class HealthProbeService {
                 .timeout(Duration.ofSeconds(3))
                 .GET()
                 .build();
-        HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+        HttpResponse<Void> response = ThreadPoolConfig.sharedHttpClient().send(request, HttpResponse.BodyHandlers.discarding());
         int code = response.statusCode();
         // 任意 HTTP 响应（含 401/403/404）都说明端口在线、服务可达。
         return "HTTP " + code;
@@ -173,12 +165,33 @@ public class HealthProbeService {
         }
     }
 
+    /** 探测 Redis 集群所有节点的健康状态。 */
+    private String probeRedisCluster() throws Exception {
+        String[] nodes = redisNodes.split(",");
+        List<String> results = new ArrayList<>();
+        int ok = 0;
+        for (String node : nodes) {
+            String[] parts = node.trim().split(":");
+            String host = parts[0];
+            int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6379;
+            try (Socket s = new Socket()) {
+                s.connect(new java.net.InetSocketAddress(host, port), 2000);
+                results.add(host + ":" + port + "=ok");
+                ok++;
+            } catch (Exception e) {
+                results.add(host + ":" + port + "=fail");
+            }
+        }
+        return ok + "/" + nodes.length + " reachable (" + String.join("; ", results) + ")";
+    }
+
     private String hostPort(String url) {
         try {
             URI uri = URI.create(url);
             int port = uri.getPort() == -1 ? 9200 : uri.getPort();
             return uri.getHost() + ":" + port;
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("Failed to parse host:port from '{}': {}", url, ex.getMessage());
             return url;
         }
     }

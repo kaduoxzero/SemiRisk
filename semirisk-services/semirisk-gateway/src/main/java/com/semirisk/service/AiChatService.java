@@ -1,15 +1,17 @@
 package com.semirisk.service;
 
+import com.semirisk.ai.AiStructuredOutputService;
 import com.semirisk.common.AiModelDefaults;
 import com.semirisk.model.AiModelConfig;
 import com.semirisk.repository.PreparedRiskRepository;
+import com.semirisk.config.ThreadPoolConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.semirisk.util.SafeLogger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Instant;
@@ -20,19 +22,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * AI 聊天服务。
+ * AI 聊天服务（Phase 3 重构：优先结构化输出，回退到文本模式）。
  *
- * <p>API Key 和 Endpoint 统一从 SemiRiskStore 读取，确保单一事实源。</p>
+ * <p>变更：
+ * <ul>
+ *   <li>新增 callDeepSeekStructured() 使用 JSON Schema 强制结构化输出</li>
+ *   <li>原有 callDeepSeek() 保留作为回退路径</li>
+ *   <li>自动降级：结构化失败 → 文本模式 → 本地摘要</li>
+ * </ul>
+ * </p>
  */
 @Service
 public class AiChatService {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AiChatService.class);
 
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
     private final SemiRiskStore store;
     private final ObjectMapper objectMapper;
     private final PreparedRiskRepository repository;
-    private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
+    private final AiStructuredOutputService structuredOutputService;
 
     private final List<String> auditLogs;
 
@@ -41,23 +51,69 @@ public class AiChatService {
             @Value("${semirisk.ai.default.endpoint:" + AiModelDefaults.DEFAULT_ENDPOINT + "}") String defaultAiEndpoint,
             SemiRiskStore store,
             ObjectMapper objectMapper,
-            PreparedRiskRepository repository) {
+            PreparedRiskRepository repository,
+            AiStructuredOutputService structuredOutputService) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.store = store;
         this.objectMapper = objectMapper;
         this.repository = repository;
+        this.structuredOutputService = structuredOutputService;
         this.auditLogs = new ArrayList<>();
     }
 
+    /**
+     * 调用 DeepSeek（优先结构化输出）。
+     */
     public AiAnswer callDeepSeek(String question, List<String> contextLines) {
-        // 统一从 SemiRiskStore 获取 API Key（优先动态配置，回退到 application.properties 默认值）
         String apiKey = store.getAiApiKey(defaultAiModel);
         if (apiKey == null || apiKey.isBlank()) {
             return new AiAnswer(false, "", "未配置 API Key，当前使用本地 RAG 摘要", Map.of());
         }
 
-        // 获取 endpoint：优先动态配置，回退到默认值
+        // Phase 3: 优先尝试结构化输出
+        AiStructuredOutputService.AiQaOutput structured = structuredOutputService.askQuestionStructured(question, contextLines);
+        if (structured != null) {
+            String answer = buildAnswerFromStructured(structured);
+            Map<String, Object> usage = new HashMap<>();
+            usage.put("mode", "structured");
+            usage.put("confidence", structured.confidence);
+            auditLogs.add("[INFO] DeepSeek structured QA called model=" + defaultAiModel);
+            return new AiAnswer(true, answer, "已调用 DeepSeek 结构化输出", usage);
+        }
+
+        // 回退到原有文本模式
+        return callDeepSeekText(question, contextLines);
+    }
+
+    /** 将结构化输出组装为自然语言答案。 */
+    private String buildAnswerFromStructured(AiStructuredOutputService.AiQaOutput structured) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(structured.conclusion != null ? structured.conclusion : "暂无结论");
+        if (structured.evidence != null && !structured.evidence.isEmpty()) {
+            sb.append("\n\n依据：");
+            for (var ev : structured.evidence) {
+                sb.append("\n- [").append(ev.source != null ? ev.source : "?").append("] ")
+                  .append(ev.title != null ? ev.title : "?")
+                  .append(" (").append(ev.relevance != null ? ev.relevance : "相关").append(")");
+            }
+        }
+        if (structured.suggestedActions != null && !structured.suggestedActions.isEmpty()) {
+            sb.append("\n\n建议行动：");
+            for (int i = 0; i < structured.suggestedActions.size(); i++) {
+                sb.append("\n").append(i + 1).append(". ").append(structured.suggestedActions.get(i));
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 原有文本模式（保留作为回退）。 */
+    private AiAnswer callDeepSeekText(String question, List<String> contextLines) {
+        String apiKey = store.getAiApiKey(defaultAiModel);
+        if (apiKey == null || apiKey.isBlank()) {
+            return new AiAnswer(false, "", "未配置 API Key", Map.of());
+        }
+
         Map<String, AiModelConfig> configs = store.aiModelConfigs();
         AiModelConfig config = configs.get(defaultAiModel);
         String endpoint = config != null ? config.endpoint() : defaultAiEndpoint;
@@ -74,7 +130,7 @@ public class AiChatService {
                     "messages", List.of(
                             Map.of("role", "system", "content",
                                     "你是 SemiRisk 半导体供应链风险顾问，为企业高管提供决策级分析。" +
-                                    "规则：1)绝对不输出任何Markdown符号（不用#*-`---[]()）；" +
+                                    "规则：1)绝对不输出任何Markdown符号；" +
                                     "2)不使用'以下是''根据您提供的''以下为'等引导语，直接给出结论；" +
                                     "3)每段以中文序号开头（一、二、三…）；" +
                                     "4)必须引用给定上下文中的具体信号标题和分数来支撑判断；" +
@@ -89,18 +145,18 @@ public class AiChatService {
                     .header("Authorization", "Bearer " + apiKey)
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
                     .build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = ThreadPoolConfig.sharedHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 String errorBody = response.body() != null ? response.body().substring(0, Math.min(200, response.body().length())) : "(empty)";
                 auditLogs.add("[WARN] DeepSeek call failed status=" + response.statusCode() + " body=" + errorBody);
-                return new AiAnswer(false, "", "DeepSeek 调用失败，HTTP " + response.statusCode() + "，已回退本地 RAG 摘要",
+                return new AiAnswer(false, "", "DeepSeek 调用失败，HTTP " + response.statusCode(),
                         Map.of("httpStatus", response.statusCode(), "error", errorBody));
             }
             JsonNode root = objectMapper.readTree(response.body());
             String answer = root.path("choices").path(0).path("message").path("content").asText("");
             if (answer.isBlank()) {
                 auditLogs.add("[WARN] DeepSeek returned empty answer");
-                return new AiAnswer(false, "", "DeepSeek 返回空答案，已回退本地 RAG 摘要", Map.of());
+                return new AiAnswer(false, "", "DeepSeek 返回空答案", Map.of());
             }
             Map<String, Object> usage = new HashMap<>();
             JsonNode usageNode = root.path("usage");
@@ -110,11 +166,12 @@ public class AiChatService {
                 usage.put("totalTokens", usageNode.path("total_tokens").asInt(0));
             }
             usage.put("apiModel", apiModel);
+            usage.put("mode", "text");
             auditLogs.add("[INFO] DeepSeek knowledge agent called model=" + apiModel + " displayModel=" + defaultAiModel + " totalTokens=" + usage.getOrDefault("totalTokens", 0));
-            return new AiAnswer(true, answer, "已调用 DeepSeek Chat Completions，模型返回成功；显示模型 " + defaultAiModel + "，实际请求模型 " + apiModel, usage);
+            return new AiAnswer(true, answer, "已调用 DeepSeek Chat Completions（文本模式）", usage);
         } catch (Exception ex) {
             auditLogs.add("[WARN] DeepSeek call exception " + ex.getClass().getSimpleName());
-            return new AiAnswer(false, "", "DeepSeek 调用异常：" + ex.getClass().getSimpleName() + "，已回退本地 RAG 摘要", Map.of("error", ex.getClass().getSimpleName()));
+            return new AiAnswer(false, "", "DeepSeek 调用异常：" + ex.getClass().getSimpleName(), Map.of("error", ex.getClass().getSimpleName()));
         }
     }
 
@@ -150,7 +207,9 @@ public class AiChatService {
                         .map(doc -> "内部知识库 | " + stringValue(doc.get("dimension")) + " | " + stringValue(doc.get("title")) + "：" + stringValue(doc.get("content")))
                         .toList();
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ex) {
+            SafeLogger.debug(log, "Failed to load internal knowledge docs", ex);
+        }
         return List.of(
                 "内部知识库 | 处置 | 高危供应链告警先核验公开源原文，再确认影响物料、库存覆盖天数和替代供应商。",
                 "内部知识库 | 半导体 | 半导体供应链风险重点关注先进制程产能、封测排期、关键设备出口管制、物流节点拥堵和汇率/关税变化。",

@@ -2,6 +2,9 @@ package com.semirisk.service;
 
 import com.semirisk.model.UploadTask;
 import com.semirisk.repository.PreparedRiskRepository;
+import com.semirisk.util.SafeLogger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -20,6 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Service
 public class UploadService {
+
+    private static final Logger log = LoggerFactory.getLogger(UploadService.class);
 
     private final Map<String, UploadTask> uploadTasks = new ConcurrentHashMap<>();
     private final PreparedRiskRepository repository;
@@ -58,7 +63,7 @@ public class UploadService {
         if (task == null) {
             throw new IllegalArgumentException("上传任务不存在");
         }
-        String status = rows > 0 ? "已入库" : "AI评估失败";
+        String status = rows > 0 ? "评估中" : "AI评估失败";
         UploadTask done = new UploadTask(task.id(), task.filename(), task.size(), status, task.createdAt(), rows,
                 warnings == null ? List.of() : warnings);
         uploadTasks.put(id, done);
@@ -90,7 +95,8 @@ public class UploadService {
                     uploadTasks.put(id, task);
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            SafeLogger.error(log, "Failed to recover upload tasks from MySQL", ex);
         }
     }
 
@@ -109,7 +115,8 @@ public class UploadService {
         }
         try {
             return Integer.parseInt(String.valueOf(value));
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            SafeLogger.debug(log, "Failed to parse int from '" + value + "'", ex);
             return 0;
         }
     }
@@ -129,7 +136,8 @@ public class UploadService {
         }
         try {
             return Instant.parse(String.valueOf(value));
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            SafeLogger.debug(log, "Failed to parse Instant from '" + value + "'", ex);
             return Instant.now();
         }
     }

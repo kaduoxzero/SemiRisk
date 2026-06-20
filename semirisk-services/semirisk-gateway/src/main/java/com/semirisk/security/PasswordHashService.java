@@ -39,6 +39,7 @@ public class PasswordHashService {
             byte[] actual = pbkdf2(password, salt, iterations);
             return MessageDigest.isEqual(expected, actual);
         } catch (Exception ignored) {
+            // Intentionally silent: leaking error details could aid timing attacks.
             return false;
         }
     }

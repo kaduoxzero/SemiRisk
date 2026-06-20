@@ -3,6 +3,8 @@ package com.semirisk.service;
 import com.semirisk.model.CrawlerSignal;
 import com.semirisk.model.RiskAlert;
 import com.semirisk.repository.PreparedRiskRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +23,8 @@ import java.util.function.Supplier;
  */
 @Service
 public class AlertService {
+
+    private static final Logger log = LoggerFactory.getLogger(AlertService.class);
 
     private final Map<String, RiskAlert> alerts = new ConcurrentHashMap<>();
     private final Map<String, String> publicAlertStatuses = new ConcurrentHashMap<>();
@@ -78,7 +82,8 @@ public class AlertService {
             repository.upsertPublicAlert(id, alert.time(), alert.level(), alert.title(),
                     alert.source(), status, "risk-detail.html");
             repository.updateAlertStatus(id, status);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to persist alert status to MySQL: {}", ex.getMessage());
         }
     }
 
@@ -90,7 +95,8 @@ public class AlertService {
                 repository.upsertPublicAlert(s.id(), s.fetchedAt(), riskLevel(s.riskScore()),
                         s.title(), s.source(), status, "risk-detail.html");
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to persist alert status to MySQL: {}", ex.getMessage());
         }
     }
 
@@ -104,7 +110,8 @@ public class AlertService {
                     publicAlertStatuses.put(id, status);
                 }
             });
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.warn("Failed to persist alert status to MySQL: {}", ex.getMessage());
         }
     }
 
@@ -142,7 +149,8 @@ public class AlertService {
         }
         try {
             return Integer.parseInt(String.valueOf(value));
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("Failed to parse int from '{}': {}", value, ex.getMessage());
             return 0;
         }
     }

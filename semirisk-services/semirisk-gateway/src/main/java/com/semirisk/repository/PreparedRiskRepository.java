@@ -1,10 +1,16 @@
 package com.semirisk.repository;
 
 import com.semirisk.common.SqlTemplates;
+import com.semirisk.service.MinioStorageService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.BatchUpdateException;
+import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -16,9 +22,12 @@ import java.util.stream.Collectors;
 public class PreparedRiskRepository {
 
     private final JdbcTemplate jdbcTemplate;
+    private final MinioStorageService minioStorageService;
+    private static final Logger log = LoggerFactory.getLogger(PreparedRiskRepository.class);
 
-    public PreparedRiskRepository(JdbcTemplate jdbcTemplate) {
+    public PreparedRiskRepository(JdbcTemplate jdbcTemplate, MinioStorageService minioStorageService) {
         this.jdbcTemplate = jdbcTemplate;
+        this.minioStorageService = minioStorageService;
     }
 
     public List<Map<String, Object>> findAlerts(String keyword, String level, String status, int limit) {
@@ -167,6 +176,18 @@ public class PreparedRiskRepository {
         return jdbcTemplate.update(SqlTemplates.DELETE_OLD_CRAWLER_SIGNALS, before);
     }
 
+    /** 统计数据库中所有 OK 状态的公开源信号总数。 */
+    public int countAllOkCrawlerSignals() {
+        Number count = jdbcTemplate.queryForObject(SqlTemplates.COUNT_ALL_OK_CRAWLER_SIGNALS, Number.class);
+        return count == null ? 0 : count.intValue();
+    }
+
+    /** 统计今日 OK 状态的公开源信号数。 */
+    public int countTodayOkCrawlerSignals() {
+        Number count = jdbcTemplate.queryForObject(SqlTemplates.COUNT_TODAY_OK_CRAWLER_SIGNALS, Number.class);
+        return count == null ? 0 : count.intValue();
+    }
+
     // --- 风险快照持久化 ---
     public int insertRiskSnapshot(int score, String level, String summary, int signalCount, Instant calculatedAt) {
         return jdbcTemplate.update(SqlTemplates.INSERT_RISK_SNAPSHOT, score, level, summary, signalCount, calculatedAt);
@@ -256,5 +277,139 @@ public class PreparedRiskRepository {
 
     public int updateSystemUserPassword(String userId, String passwordHash) {
         return jdbcTemplate.update(SqlTemplates.UPDATE_SYSTEM_USER_PASSWORD, passwordHash, userId);
+    }
+
+    // =====================================================================
+    // Phase 1: Batch DB Upsert Upgrade — 批量写入方法
+    // =====================================================================
+
+    @SuppressWarnings("SqlNoDataSourceInspection")
+    public int[] batchUpsertCrawlerSignals(List<Object[]> signals) {
+        if (signals == null || signals.isEmpty()) {
+            return new int[0];
+        }
+        try {
+            jdbcTemplate.batchUpdate(SqlTemplates.BATCH_UPSERT_CRAWLER_SIGNALS, signals);
+            return new int[signals.size()];
+        } catch (org.springframework.dao.DataAccessException ex) {
+            log.warn("Batch upsert crawler_signals failed: {} total", signals.size(), ex);
+            return new int[0];
+        }
+    }
+
+    /**
+     * 批量 upsert knowledge_doc。
+     */
+    @SuppressWarnings("SqlNoDataSourceInspection")
+    public int[] batchUpsertKnowledgeDocs(List<Object[]> docs) {
+        if (docs == null || docs.isEmpty()) {
+            return new int[0];
+        }
+        try {
+            jdbcTemplate.batchUpdate(SqlTemplates.BATCH_UPSERT_KNOWLEDGE_DOCS, docs);
+            return new int[docs.size()];
+        } catch (org.springframework.dao.DataAccessException ex) {
+            log.warn("Batch upsert knowledge_docs failed: {} total", docs.size(), ex);
+            return new int[0];
+        }
+    }
+
+    /**
+     * 批量 upsert risk_alert（公开源告警）。
+     */
+    @SuppressWarnings("SqlNoDataSourceInspection")
+    public int[] batchUpsertPublicAlerts(List<Object[]> alerts) {
+        if (alerts == null || alerts.isEmpty()) {
+            return new int[0];
+        }
+        try {
+            jdbcTemplate.batchUpdate(SqlTemplates.BATCH_UPSERT_PUBLIC_ALERTS, alerts);
+            return new int[alerts.size()];
+        } catch (org.springframework.dao.DataAccessException ex) {
+            log.warn("Batch upsert risk_alerts failed: {} total", alerts.size(), ex);
+            return new int[0];
+        }
+    }
+
+    /**
+     * 批量 upsert enterprise_record。
+     */
+    @SuppressWarnings("SqlNoDataSourceInspection")
+    public int[] batchUpsertEnterpriseRecords(List<Object[]> records) {
+        if (records == null || records.isEmpty()) {
+            return new int[0];
+        }
+        try {
+            jdbcTemplate.batchUpdate(SqlTemplates.BATCH_UPSERT_ENTERPRISE_RECORDS, records);
+            return new int[records.size()];
+        } catch (org.springframework.dao.DataAccessException ex) {
+            log.warn("Batch upsert enterprise_records failed: {} total", records.size(), ex);
+            return new int[0];
+        }
+    }
+
+    // =====================================================================
+    // Knowledge Doc Soft Delete with MinIO Cleanup
+    // =====================================================================
+
+    /**
+     * 软删除 knowledge_doc，并联动清理 MinIO 物理文件。
+     *
+     * <p>步骤：① 查询 object_key → ② 执行软删除 UPDATE → ③ 调用 MinIO removeObject（最佳努力）。
+     * MinIO 清理失败不影响数据库软删除结果。</p>
+     */
+    public int softDeleteKnowledgeDoc(String id) {
+        // Step 1: 获取 object_key
+        String objectKey = null;
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT object_key FROM knowledge_doc WHERE id = ? AND is_deleted = 0 LIMIT 1", id);
+            if (!rows.isEmpty()) {
+                objectKey = String.valueOf(rows.get(0).get("object_key"));
+                if (objectKey == null || "null".equals(objectKey) || objectKey.isBlank()) {
+                    objectKey = null;
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("Failed to lookup object_key for knowledge_doc {}: {}", id, ex.getMessage());
+        }
+
+        // Step 2: 软删除
+        int affected = jdbcTemplate.update(SqlTemplates.SOFT_DELETE_KNOWLEDGE_DOC, id);
+
+        // Step 3: 清理 MinIO 文件（最佳努力，不阻塞）
+        if (objectKey != null && minioStorageService != null) {
+            try {
+                minioStorageService.removeObject(objectKey);
+            } catch (Exception ex) {
+                log.warn("MinIO file cleanup failed for doc {}: {}", id, ex.getMessage());
+            }
+        }
+
+        return affected;
+    }
+
+    /** 更新 knowledge_doc 状态。 */
+    public int updateKnowledgeDocStatus(String id, String status) {
+        return jdbcTemplate.update(SqlTemplates.UPDATE_KNOWLEDGE_DOC_STATUS, status, id);
+    }
+
+    // =====================================================================
+    // Crawler Signal Archive
+    // =====================================================================
+
+    /** 创建归档表（DDL，自动提交）。 */
+    public int createArchiveTable() {
+        return jdbcTemplate.update(SqlTemplates.CREATE_ARCHIVE_TABLE);
+    }
+
+    /** 将指定时间点之前的爬虫信号迁移到归档表。 */
+    public int archiveCrawlerSignals(Instant before) {
+        return jdbcTemplate.update(SqlTemplates.ARCHIVE_CRAWLER_SIGNALS, before);
+    }
+
+    /** 从主表中删除已归档的爬虫信号。 */
+    public int deleteArchivedCrawlerSignals(Instant before) {
+        return jdbcTemplate.update(SqlTemplates.DELETE_ARCHIVED_CRAWLER_SIGNALS, before);
     }
 }

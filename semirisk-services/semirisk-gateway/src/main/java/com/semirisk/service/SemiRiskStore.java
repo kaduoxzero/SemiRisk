@@ -13,15 +13,21 @@ import com.semirisk.model.SystemUser;
 import com.semirisk.model.UploadTask;
 import com.semirisk.model.UserAccount;
 import com.semirisk.repository.PreparedRiskRepository;
+import com.semirisk.security.PasswordHashService;
 import com.semirisk.service.AiChatService.AiAnswer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.semirisk.util.CircularBuffer;
+import com.semirisk.util.SafeLogger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import jakarta.annotation.PreDestroy;
+import com.semirisk.config.DistributedLockManager;
+import com.semirisk.config.ThreadPoolConfig;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -37,6 +43,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -46,9 +53,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -58,29 +62,26 @@ public class SemiRiskStore {
 
     private static final Logger log = LoggerFactory.getLogger(SemiRiskStore.class);
 
-    private final Map<String, UserAccount> users = new ConcurrentHashMap<>();
-    private final Map<String, LoginCounter> loginCounters = new ConcurrentHashMap<>();
-    private final Map<String, Instant> resetTokens = new ConcurrentHashMap<>();
+    // ---- 用户/认证/系统管理状态已委托给 AuthService，不再重复维护 ----
+    // 以下字段仅保留业务级状态（上传任务、报告任务、AI 模型配置等）
+
     private final Map<String, UploadTask> uploadTasks = new ConcurrentHashMap<>();
     private final Map<String, ReportJob> reportJobs = new ConcurrentHashMap<>();
     // 缓存已生成的报告内容，避免每次下载重复调用 AI
     private final Map<String, List<String>> reportContentCache = new ConcurrentHashMap<>();
-    private final Map<String, RiskAlert> alerts = new ConcurrentHashMap<>(); // 已废弃，由 AlertService 统一管理
-    // publicAlertStatuses 已废弃：所有告警状态由 AlertService 统一管理，SemiRiskStore 通过 alertService 桥接访问
-    private final Map<String, SystemUser> systemUsers = new ConcurrentHashMap<>();
     private final Map<String, AiModelConfig> aiModelConfigs = new ConcurrentHashMap<>();
     private final Map<String, String> aiModelApiKeys = new ConcurrentHashMap<>();
-    private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(8)).build();
+    private final HttpClient httpClient = ThreadPoolConfig.sharedHttpClient();
     private volatile DailyRiskSnapshot dailyRiskSnapshot;
     private volatile Map<String, Object> dailyAiReport;
     private volatile String dailyAiReportDate = "";
     private final AtomicBoolean reportGenerating = new AtomicBoolean(false);
-    private final ExecutorService reportExecutor = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "semirisk-ai-report");
-        thread.setDaemon(true);
-        return thread;
-    });
-    private final List<String> auditLogs = new ArrayList<>();
+    private final org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor reportExecutor;
+    private final DistributedLockManager lockManager;
+    private final List<String> auditLogs = Collections.synchronizedList(new CircularBuffer<>(10000));
+    // Phase 1: 批量写入缓冲区
+    private final List<Object[]> internetSearchDocs = new ArrayList<>();
+    private final List<Map<String, Object>> internetSearchResults = new ArrayList<>();
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
     private final String defaultAiApiKey;
@@ -119,7 +120,9 @@ public class SemiRiskStore {
             @Lazy ReportService reportService,
             DashboardService dashboardService,
             SystemManagementService systemManagementService,
-            @Lazy AiChatService aiChatService) {
+            @Qualifier("semiriskReportPool") org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor reportExecutor,
+            @Lazy AiChatService aiChatService,
+            DistributedLockManager lockManager) {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.defaultAiApiKey = defaultAiApiKey;
@@ -136,8 +139,10 @@ public class SemiRiskStore {
         this.dashboardService = dashboardService;
         this.systemManagementService = systemManagementService;
         this.aiChatService = aiChatService;
+        this.reportExecutor = reportExecutor;
+        this.lockManager = lockManager;
         seedDefaultAiModel();
-        auditLogs.add("[INFO] gateway route table initialized");
+        auditLogs.add("[INFO] gateway initialized");
         refreshDailyRiskRecords();
     }
 
@@ -239,15 +244,30 @@ public class SemiRiskStore {
     }
 
     private void persistSignals(List<CrawlerSignal> signals) {
+        if (signals.isEmpty()) return;
         try {
+            // Phase 1: 批量 upsert 替代循环单条
+            List<Object[]> batch = new ArrayList<>(signals.size());
             for (CrawlerSignal s : signals) {
-                repository.upsertCrawlerSignal(s.id(), truncate(s.source(), 250), truncate(s.sourceUrl(), 1000),
-                        truncate(s.title(), 1000), truncate(s.dimension(), 60), categoryForSignal(s),
-                        riskSignalLabel(s.riskScore()), s.riskScore(), s.status(), s.fetchedAt());
+                batch.add(new Object[]{
+                        s.id(),
+                        truncate(s.source(), 250),
+                        truncate(s.sourceUrl(), 1000),
+                        truncate(s.title(), 1000),
+                        truncate(s.dimension(), 60),
+                        categoryForSignal(s),
+                        riskSignalLabel(s.riskScore()),
+                        s.riskScore(),
+                        s.status(),
+                        s.fetchedAt()
+                });
             }
+            repository.batchUpsertCrawlerSignals(batch);
             repository.deleteOldCrawlerSignals(Instant.now().minus(7, ChronoUnit.DAYS));
+            // Phase 2: 清除企业缓存，确保下次查询获取最新数据
+            enterpriseCacheEvict();
         } catch (Exception ex) {
-            log.error("Failed to persist crawler signals to MySQL", ex);
+            log.error("Failed to batch persist crawler signals to MySQL", ex);
         }
     }
 
@@ -261,15 +281,21 @@ public class SemiRiskStore {
     }
 
     private void persistPublicAlerts(List<CrawlerSignal> signals) {
+        if (signals.isEmpty()) return;
         try {
             Map<String, String> statuses = alertService.getPublicAlertStatusesMap();
+            List<Object[]> batch = new ArrayList<>(signals.size());
             for (CrawlerSignal s : signals) {
                 String status = statuses.getOrDefault(s.id(), "未处理");
-                repository.upsertPublicAlert(s.id(), s.fetchedAt(), riskLevel(s.riskScore()),
-                        truncate(s.title(), 250), truncate(s.source(), 120), status, "risk-detail.html");
+                batch.add(new Object[]{
+                        s.id(), s.fetchedAt(), riskLevel(s.riskScore()),
+                        truncate(s.title(), 250), truncate(s.source(), 120),
+                        status, "risk-detail.html"
+                });
             }
+            repository.batchUpsertPublicAlerts(batch);
         } catch (Exception ex) {
-            log.error("Failed to persist public alerts to MySQL", ex);
+            log.error("Failed to batch persist public alerts to MySQL", ex);
         }
     }
 
@@ -347,16 +373,21 @@ public class SemiRiskStore {
     }
 
     private void persistKnowledgeDocs(List<CrawlerSignal> signals) {
+        if (signals.isEmpty()) return;
         try {
+            List<Object[]> batch = new ArrayList<>(signals.size());
             for (CrawlerSignal s : signals) {
                 String content = s.title() + "\n来源：" + s.source() + "\n维度：" + s.dimension()
                         + "\n原文：" + s.sourceUrl() + "\n规则评分：" + s.riskScore();
-                repository.upsertKnowledgeDoc(s.id(), categoryForSignal(s), truncate(s.title(), 1000), content,
-                        truncate(s.source(), 250), truncate(s.sourceUrl(), 1000), truncate(s.dimension(), 60),
-                        s.riskScore(), null, s.fetchedAt());
+                batch.add(new Object[]{
+                        s.id(), categoryForSignal(s), truncate(s.title(), 1000), content,
+                        truncate(s.source(), 250), truncate(s.sourceUrl(), 1000),
+                        truncate(s.dimension(), 60), s.riskScore(), null, s.fetchedAt(), "SUCCESS"
+                });
             }
+            repository.batchUpsertKnowledgeDocs(batch);
         } catch (Exception ex) {
-            log.error("Failed to persist knowledge docs to MySQL", ex);
+            log.error("Failed to batch persist knowledge docs to MySQL", ex);
         }
     }
 
@@ -382,7 +413,6 @@ public class SemiRiskStore {
     }
 
     private void seedInternalKnowledgeDocs() {
-        // 内部知识库 SOP：管理维护的真实运营规程，统一存入 MySQL knowledge_doc（不再写死在代码逻辑里返回）。
         List<String[]> internalDocs = List.of(
                 new String[]{"KD-SOP-001", "高危供应链告警处置 SOP", "高危供应链告警先核验公开源原文，再确认影响物料、库存覆盖天数和替代供应商，最后绑定负责人和闭环截止时间。", "处置"},
                 new String[]{"KD-SOP-002", "半导体供应链风险关注要点", "半导体供应链风险重点关注先进制程产能、封测排期、关键设备出口管制、物流节点拥堵和汇率/关税变化。", "半导体"},
@@ -390,10 +420,13 @@ public class SemiRiskStore {
                 new String[]{"KD-SOP-004", "管理层风险报告写作规范", "管理层报告需要给出事实来源、影响范围、评分依据、可选方案、负责人和闭环时间。", "报告"}
         );
         try {
+            List<Object[]> batch = new ArrayList<>(internalDocs.size());
+            Instant now = Instant.now();
             for (String[] doc : internalDocs) {
-                repository.upsertKnowledgeDoc(doc[0], KNOWLEDGE_INTERNAL, doc[1], doc[2],
-                        "SemiRisk 内部知识库", "", doc[3], 0, null, Instant.now());
+                batch.add(new Object[]{doc[0], KNOWLEDGE_INTERNAL, doc[1], doc[2],
+                        "SemiRisk 内部知识库", "", doc[3], 0, null, now, "SUCCESS"});
             }
+            repository.batchUpsertKnowledgeDocs(batch);
         } catch (Exception ex) {
             log.error("Failed to seed internal knowledge docs to MySQL", ex);
         }
@@ -418,11 +451,15 @@ public class SemiRiskStore {
     private void seedEnterpriseWatchlist() {
         try {
             if (repository.findEnterpriseRecords(1).isEmpty()) {
+                List<Object[]> batch = new ArrayList<>(ENTERPRISE_WATCHLIST.length);
                 for (String[] entity : ENTERPRISE_WATCHLIST) {
                     String id = "ENT-" + UUID.nameUUIDFromBytes(entity[0].getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
-                    repository.upsertEnterpriseRecord(id, entity[0], "", entity[1], entity[2], 0, "待采集",
-                            "公开主体观察名单 + 公开源事件", "待接入权威源", "[]", "[]", Instant.now());
+                    batch.add(new Object[]{
+                            id, entity[0], "", entity[1], entity[2], 0, "待采集",
+                            "公开主体观察名单 + 公开源事件", "待接入权威源", "[]", "[]", Instant.now()
+                    });
                 }
+                repository.batchUpsertEnterpriseRecords(batch);
                 auditLogs.add("[INFO] enterprise watchlist seeded into MySQL count=" + ENTERPRISE_WATCHLIST.length);
             }
         } catch (Exception ex) {
@@ -431,8 +468,10 @@ public class SemiRiskStore {
     }
 
     private void refreshEnterpriseRecords(List<CrawlerSignal> signals) {
+        if (signals.isEmpty()) return;
         try {
             List<Map<String, Object>> records = repository.findEnterpriseRecords(100);
+            List<Object[]> batch = new ArrayList<>(records.size());
             for (Map<String, Object> record : records) {
                 String name = stringValue(record.get("name"));
                 String industry = stringValue(record.get("industry"));
@@ -443,60 +482,36 @@ public class SemiRiskStore {
                 int score = matched.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(0);
                 String eventsJson = writeJson(matched.stream().map(s -> s.fetchedAt() + " " + s.title()).toList());
                 String signalsJson = writeJson(matched.stream().map(this::enterpriseSignal).toList());
-                repository.upsertEnterpriseRecord(stringValue(record.get("id")), name, stringValue(record.get("creditCode")),
+                batch.add(new Object[]{
+                        stringValue(record.get("id")), name, stringValue(record.get("creditCode")),
                         industry, stringValue(record.get("location")), score, riskLevel(score),
-                        "公开主体观察名单 + 公开源事件", "待接入权威源", eventsJson, signalsJson, Instant.now());
+                        "公开主体观察名单 + 公开源事件", "待接入权威源", eventsJson, signalsJson, Instant.now()
+                });
             }
+            if (!batch.isEmpty()) {
+                repository.batchUpsertEnterpriseRecords(batch);
+            }
+            evictEnterpriseCache();
         } catch (Exception ex) {
-            log.error("Failed to refresh enterprise records in MySQL", ex);
+            log.error("Failed to batch refresh enterprise records in MySQL", ex);
         }
     }
 
     private String writeJson(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (Exception ignored) {
-            return "[]";
-        }
+        return com.semirisk.util.ReportUtils.writeJson(value, objectMapper);
     }
 
     @SuppressWarnings("unchecked")
     private <T> T readJson(Object value, TypeReference<T> type, T fallback) {
-        if (value == null) {
-            return fallback;
-        }
-        try {
-            return objectMapper.readValue(String.valueOf(value), type);
-        } catch (Exception ignored) {
-            return fallback;
-        }
+        return com.semirisk.util.ReportUtils.readJson(value, type, fallback, objectMapper);
     }
 
     private String truncate(String value, int max) {
-        if (value == null) {
-            return "";
-        }
-        return value.length() <= max ? value : value.substring(0, max);
+        return com.semirisk.util.ReportUtils.truncate(value, max);
     }
 
     private Instant toInstant(Object value) {
-        if (value == null) {
-            return Instant.now();
-        }
-        if (value instanceof Instant instant) {
-            return instant;
-        }
-        if (value instanceof java.sql.Timestamp timestamp) {
-            return timestamp.toInstant();
-        }
-        if (value instanceof java.time.LocalDateTime localDateTime) {
-            return localDateTime.atZone(java.time.ZoneId.systemDefault()).toInstant();
-        }
-        try {
-            return Instant.parse(String.valueOf(value));
-        } catch (Exception ignored) {
-            return Instant.now();
-        }
+        return com.semirisk.util.ReportUtils.toInstant(value);
     }
 
     public Optional<UserAccount> authenticate(String username, String password) {
@@ -581,141 +596,27 @@ public class SemiRiskStore {
         return reportService.aiReportLines(id, template, language);
     }
 
-    private String normalizeReportTemplate(String template) {
-        if ("supply-chain".equalsIgnoreCase(template)) {
-            return "supply-chain";
-        }
-        if ("enterprise-dd".equalsIgnoreCase(template)) {
-            return "enterprise-dd";
-        }
-        return "risk-assessment";
-    }
-
-    private String reportTitle(String type) {
-        return switch (type) {
-            case "supply-chain" -> "SemiRisk AI 供应链分析报告";
-            case "enterprise-dd" -> "SemiRisk AI 企业尽调报告";
-            default -> "SemiRisk AI 风险评估报告";
-        };
-    }
-
-    private String reportPrompt(String type, String language) {
-        String lang = language == null || language.isBlank() ? "中文" : language;
-        String base = """
-                你是一名资深半导体供应链风险顾问，为企业高管撰写决策级风险报告。
-                要求：
-                1. 直接给出结论，不要有"以下是""根据您提供的""以下为"等引导语。
-                2. 不使用任何 Markdown 符号（不用#、*、**、-、`、---）。纯文字段落，每段以中文编号开头（一、二、三...）。
-                3. 必须明确指出是哪些具体信号/事件/政策导致了当前分数升高或降低，给出具体来源和标题。
-                4. 每条建议必须可操作，给出负责部门（采购/供应链/法务/财务/高管）和处置时限（24h/3天/7天/下季度）。
-                5. 报告长度：8-12个自然段，每段3-5句话。
-                """;
-        return switch (type) {
-            case "supply-chain" -> base + "撰写语言：" + lang + "。\n报告类型：供应链韧性分析报告。聚焦：物流路径中断风险、关键供应商集中度、库存安全水位、替代采购方案和跨部门协同行动计划。";
-            case "enterprise-dd" -> base + "撰写语言：" + lang + "。\n报告类型：企业尽调风险报告。聚焦：企业主体资质、公开源负面事件、经营稳定性信号、合作风险评级（低/中/高）、具体合作条款建议和需人工补充核验的信息清单。";
-            default -> base + "撰写语言：" + lang + "。\n报告类型：综合风险评估报告。聚焦：当前综合评分的驱动因素（哪些信号拉高/拉低了分数）、各维度风险排名、未来7-30天走势研判、优先级排序的处置行动清单。";
-        };
-    }
-
-    private List<String> reportContext(String type, List<CrawlerSignal> signals) {
-        List<String> context = new ArrayList<>();
-        DailyRiskSnapshot snapshot = dailyRiskSnapshot;
-        context.add("当前综合评分：" + snapshot.score() + " | 等级：" + snapshot.level() + " | 摘要：" + snapshot.summary());
-        // 评分驱动因素：高于/低于中位数的信号
-        long high = signals.stream().filter(s -> s.riskScore() >= 70).count();
-        long mid = signals.stream().filter(s -> s.riskScore() >= 50 && s.riskScore() < 70).count();
-        long low = signals.stream().filter(s -> s.riskScore() < 50).count();
-        context.add("评分构成：高危信号 " + high + " 条（>=70分）拉高综合评分，中危 " + mid + " 条（50-69分），低危/监控 " + low + " 条（<50分）。");
-        context.add("信号总数：" + signals.size() + " 条，来源渠道：" + signals.stream().map(CrawlerSignal::source).distinct().count() + " 个。");
-        switch (type) {
-            case "supply-chain" -> {
-                gisService.gisRoutes(gisService.gisPoints(signals)).stream().limit(8).forEach(route ->
-                        context.add("物流路径：" + route.get("name") + " / 风险 " + route.get("riskIndex")));
-                dimensionScores(signals).forEach(item ->
-                        context.add("供应链维度评分：" + item.get("name") + " = " + item.get("value")));
-            }
-            case "enterprise-dd" ->
-                    enterpriseRecordsForReport(5).forEach(profile ->
-                            context.add("企业画像：" + profile.get("name") + " | " + profile.get("industry") + " | 风险 " + profile.get("riskScore") + " | " + profile.get("creditLevel")));
-            default -> {
-                // 评分的主要风险驱动因素
-                signals.stream().filter(s -> s.riskScore() >= 60).limit(5).forEach(s ->
-                        context.add("高风险驱动信号：[" + s.riskScore() + "分] " + s.source() + " | " + s.dimension() + " | " + s.title()));
-            }
-        }
-        // 所有信号的完整详细信息供 AI 推理
-        signals.stream().limit(20).forEach(signal ->
-                context.add("公开源信号 [" + signal.riskScore() + "分] 来源：" + signal.source()
-                        + " | 维度：" + signal.dimension()
-                        + " | 标题：" + signal.title()
-                        + " | 链接：" + signal.sourceUrl()));
-        context.addAll(aiChatService.localKnowledgeLines());
-        return context;
-    }
-
-    private List<String> fallbackReportLines(String type, List<CrawlerSignal> signals) {
-        int score = dailyRiskSnapshot.score();
-        long high = signals.stream().filter(signal -> signal.riskScore() >= 80).count();
-        long mid = signals.stream().filter(signal -> signal.riskScore() >= 60 && signal.riskScore() < 80).count();
-        List<String> lines = new ArrayList<>();
-        switch (type) {
-            case "supply-chain" -> {
-                lines.add("一、供应链结论：当前综合风险 " + score + "，高危路径/事件 " + high + " 条，中危 " + mid + " 条。");
-                lines.add("二、路径研判：重点关注跨境港口、封测排期、关键物料交付窗口和转运成本。");
-                gisService.gisRoutes(gisService.gisPoints(signals)).stream().limit(6).forEach(route -> lines.add("路径：" + route.get("name") + "，风险指数 " + route.get("riskIndex") + "。"));
-                lines.add("三、协同建议：采购确认替代供应商，物流确认改港/改线方案，销售同步客户交付风险。");
-            }
-            case "enterprise-dd" -> {
-                List<Map<String, Object>> records = enterpriseRecordsForReport(5);
-                lines.add("一、尽调结论：企业画像库（公开主体观察名单 + 公开源事件）已纳入 " + records.size() + " 家主体，工商权威字段待接入权威源，公开源事件用于风险交叉核验。");
-                records.forEach(profile -> lines.add("主体：" + profile.get("name") + "，行业 " + profile.get("industry") + "，风险 " + profile.get("riskScore") + "，等级 " + profile.get("creditLevel") + "，工商：待接入权威源。"));
-                lines.add("二、核验建议：补充工商、司法、失信、舆情和供应商准入材料，未核验前不建议扩大授信。");
-                lines.add("三、合作建议：高危主体走短周期订单和预警监控，中低危主体保留月度复盘。");
-            }
-            default -> {
-                lines.add("一、风险结论：当前综合评分 " + score + "，等级 " + dailyRiskSnapshot.level() + "。");
-                lines.add("二、评分依据：公开源有效信号 " + signals.size() + " 条，高危 " + high + " 条，中危 " + mid + " 条。");
-                signals.stream().limit(8).forEach(signal -> lines.add("事件：" + signal.source() + " / " + signal.dimension() + " / " + signal.riskScore() + " / " + signal.title()));
-                lines.add("三、处置建议：先核验高分公开源原文，再转入告警工单并绑定负责人和截止时间。");
-            }
-        }
-        lines.add("四、闭环指标：跟踪未处理告警数、高危信号变化、供应商风险分、物流节点等待时间和报告引用可信度。");
-        return lines;
-    }
+    // Note: normalizeReportTemplate, reportTitle, reportPrompt, reportContext, fallbackReportLines
+    // are maintained solely in ReportService to avoid duplication.
 
     public List<SystemUser> systemUsers() {
-        return systemUsers.values().stream().sorted(Comparator.comparing(SystemUser::username)).toList();
+        return authService.systemUsers();
     }
 
     public SystemUser addSystemUser(String username, String email, String role) {
-        return addSystemUser(username, email, role, "启用");
+        return authService.addSystemUser(username, email, role);
     }
 
     public SystemUser addSystemUser(String username, String email, String role, String status) {
-        String id = "U" + (1000 + systemUsers.size() + 1);
-        SystemUser user = new SystemUser(id, username, email, role, status);
-        systemUsers.put(id, user);
-        auditLogs.add("[INFO] user " + username + " created with role " + role);
-        return user;
+        return authService.addSystemUser(username, email, role, status);
     }
 
     public SystemUser updateSystemUserStatus(String id, String status) {
-        SystemUser current = systemUsers.get(id);
-        if (current == null) {
-            throw new IllegalArgumentException("用户不存在");
-        }
-        SystemUser updated = new SystemUser(current.id(), current.username(), current.email(), current.role(), status);
-        systemUsers.put(id, updated);
-        auditLogs.add("[WARN] user " + current.username() + " status changed to " + status + "; online sessions kicked");
-        return updated;
+        return authService.updateSystemUserStatus(id, status);
     }
 
     public void deleteSystemUser(String id) {
-        SystemUser removed = systemUsers.remove(id);
-        if (removed == null) {
-            throw new IllegalArgumentException("用户不存在");
-        }
-        auditLogs.add("[ERROR] user " + removed.username() + " physically removed");
+        authService.deleteSystemUser(id);
     }
 
     public List<String> auditLogs() {
@@ -729,9 +630,10 @@ public class SemiRiskStore {
         } catch (Exception ex) {
             log.error("Failed to fetch audit logs from MySQL", ex);
         }
+        // 内存中的审计日志由本地 auditLogs 列表维护
         String today = LocalDate.now().toString();
         return auditLogs.stream()
-                .map(log -> log.matches("^\\d{4}-\\d{2}-\\d{2}.*") ? log : today + " " + log)
+                .map(auditLog -> auditLog.matches("^\\d{4}-\\d{2}-\\d{2}.*") ? auditLog : today + " " + auditLog)
                 .toList();
     }
 
@@ -825,6 +727,7 @@ public class SemiRiskStore {
         );
     }
 
+    @org.springframework.cache.annotation.Cacheable(value = "enterprise", key = "#keyword", unless = "#result == null || #keyword == null || #keyword.trim().isEmpty()")
     public Map<String, Object> enterprise(String keyword) {
         String q = keyword == null ? "" : keyword.trim();
         List<CrawlerSignal> available = availableSignals();
@@ -877,28 +780,39 @@ public class SemiRiskStore {
     /** 主要半导体/供应链企业公开信息（来自各公司年报/官网/公开披露，无需网络请求）。 */
     private static final Map<String, Map<String, String>> PUBLIC_COMPANY_DB = new java.util.HashMap<>();
     static {
-        PUBLIC_COMPANY_DB.put("tsmc", Map.of("成立时间","1987年","总部所在地","台湾新竹科学园区","行业分类","半导体代工","企业类型","上市公司（NYSE: TSM / TWSE: 2330）","营收（公开披露）","约 NT$2.16兆元（2023年）","员工人数","约 73,000人（2023年）","公司简介","全球最大的纯晶圆代工厂，主要为苹果、英伟达、AMD等制造芯片，制程技术覆盖2nm至成熟节点。"));
-        PUBLIC_COMPANY_DB.put("台积电", PUBLIC_COMPANY_DB.get("tsmc"));
-        PUBLIC_COMPANY_DB.put("samsung", Map.of("成立时间","1969年（半导体业务）","总部所在地","韩国京畿道水原市","行业分类","半导体/消费电子","企业类型","上市公司（KRX: 005930）","营收（公开披露）","约 KRW 258兆韩元（2023年）","员工人数","约 270,000人","公司简介","全球最大DRAM/NAND Flash制造商，同时提供代工服务，IDM模式运营。"));
-        PUBLIC_COMPANY_DB.put("三星", PUBLIC_COMPANY_DB.get("samsung"));
-        PUBLIC_COMPANY_DB.put("asml", Map.of("成立时间","1984年","总部所在地","荷兰埃因霍温","行业分类","半导体设备","企业类型","上市公司（NASDAQ: ASML）","营收（公开披露）","约 €27.6亿（2023年）","员工人数","约 42,000人","公司简介","全球唯一EUV光刻机制造商，DUV/EUV设备是先进制程不可或缺的核心设备。"));
-        PUBLIC_COMPANY_DB.put("nvidia", Map.of("成立时间","1993年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/GPU/AI","企业类型","上市公司（NASDAQ: NVDA）","营收（公开披露）","约 $609亿美元（FY2024）","员工人数","约 36,000人","公司简介","全球领先的GPU和AI加速器制造商，H100/H200系列是当前AI训练的主流算力平台。"));
-        PUBLIC_COMPANY_DB.put("英伟达", PUBLIC_COMPANY_DB.get("nvidia"));
-        PUBLIC_COMPANY_DB.put("amd", Map.of("成立时间","1969年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/CPU/GPU","企业类型","上市公司（NASDAQ: AMD）","营收（公开披露）","约 $227亿美元（2023年）","员工人数","约 26,000人","公司简介","x86 CPU（EPYC服务器处理器）和Radeon GPU制造商，近年AI加速器MI系列快速增长。"));
-        PUBLIC_COMPANY_DB.put("intel", Map.of("成立时间","1968年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/CPU","企业类型","上市公司（NASDAQ: INTC）","营收（公开披露）","约 $542亿美元（2023年）","员工人数","约 124,800人","公司简介","全球最大的x86 CPU制造商之一，IDM模式运营，正在亚利桑那建设IFS代工厂。"));
-        PUBLIC_COMPANY_DB.put("英特尔", PUBLIC_COMPANY_DB.get("intel"));
-        PUBLIC_COMPANY_DB.put("qualcomm", Map.of("成立时间","1985年","总部所在地","美国加利福尼亚州圣地亚哥","行业分类","半导体/无线通信","企业类型","上市公司（NASDAQ: QCOM）","营收（公开披露）","约 $358亿美元（FY2023）","员工人数","约 51,000人","公司简介","全球领先的移动处理器和基带芯片设计公司，Snapdragon系列广泛用于智能手机。"));
-        PUBLIC_COMPANY_DB.put("高通", PUBLIC_COMPANY_DB.get("qualcomm"));
-        PUBLIC_COMPANY_DB.put("sk hynix", Map.of("成立时间","1983年","总部所在地","韩国京畿道利川市","行业分类","半导体/存储","企业类型","上市公司（KRX: 000660）","营收（公开披露）","约 KRW 32.8兆韩元（2023年）","员工人数","约 37,000人","公司简介","全球第二大DRAM制造商，HBM高带宽存储器是目前AI训练芯片的核心配套组件。"));
-        PUBLIC_COMPANY_DB.put("海力士", PUBLIC_COMPANY_DB.get("sk hynix"));
-        PUBLIC_COMPANY_DB.put("micron", Map.of("成立时间","1978年","总部所在地","美国爱达荷州博伊西","行业分类","半导体/存储","企业类型","上市公司（NASDAQ: MU）","营收（公开披露）","约 $154亿美元（FY2023）","员工人数","约 48,000人","公司简介","全球主要DRAM和NAND Flash制造商，是美国本土唯一的存储芯片大厂。"));
-        PUBLIC_COMPANY_DB.put("applied materials", Map.of("成立时间","1967年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体设备","企业类型","上市公司（NASDAQ: AMAT）","营收（公开披露）","约 $266亿美元（FY2023）","员工人数","约 34,000人","公司简介","全球最大的半导体设备公司，覆盖CVD、PVD、CMP、离子注入等核心制程设备。"));
-        PUBLIC_COMPANY_DB.put("broadcom", Map.of("成立时间","1991年（Avago前身）","总部所在地","美国加利福尼亚州圣何塞","行业分类","半导体/网络/AI","企业类型","上市公司（NASDAQ: AVGO）","营收（公开披露）","约 $359亿美元（FY2023）","员工人数","约 20,000人","公司简介","全球领先的网络芯片和定制AI ASIC设计公司，为谷歌等超大规模数据中心提供TPU等ASIC。"));
-        PUBLIC_COMPANY_DB.put("博通", PUBLIC_COMPANY_DB.get("broadcom"));
-        PUBLIC_COMPANY_DB.put("arm", Map.of("成立时间","1990年","总部所在地","英国剑桥","行业分类","半导体IP/指令集架构","企业类型","上市公司（NASDAQ: ARM）","营收（公开披露）","约 $27.3亿美元（FY2024）","员工人数","约 6,500人","公司简介","全球主导的CPU IP授权公司，超过99%的智能手机和大量服务器/AI芯片使用ARM架构。"));
-        PUBLIC_COMPANY_DB.put("安谋", PUBLIC_COMPANY_DB.get("arm"));
-        PUBLIC_COMPANY_DB.put("mediatek", Map.of("成立时间","1997年","总部所在地","台湾新竹","行业分类","半导体/SoC","企业类型","上市公司（TWSE: 2454）","营收（公开披露）","约 NT$4,414亿元（2023年）","员工人数","约 20,000人","公司简介","全球第三大无晶圆半导体公司，Dimensity系列SoC广泛应用于中高端安卓手机和IoT设备。"));
-        PUBLIC_COMPANY_DB.put("联发科", PUBLIC_COMPANY_DB.get("mediatek"));
+        Map<String, String> tsmcData = Map.of("成立时间","1987年","总部所在地","台湾新竹科学园区","行业分类","半导体代工","企业类型","上市公司（NYSE: TSM / TWSE: 2330）","营收（公开披露）","约 NT$2.16兆元（2023年）","员工人数","约 73,000人（2023年）","公司简介","全球最大的纯晶圆代工厂，主要为苹果、英伟达、AMD等制造芯片，制程技术覆盖2nm至成熟节点。");
+        PUBLIC_COMPANY_DB.put("tsmc", tsmcData);
+        PUBLIC_COMPANY_DB.put("台积电", new java.util.HashMap<>(tsmcData));
+        Map<String, String> samsungData = Map.of("成立时间","1969年（半导体业务）","总部所在地","韩国京畿道水原市","行业分类","半导体/消费电子","企业类型","上市公司（KRX: 005930）","营收（公开披露）","约 KRW 258兆韩元（2023年）","员工人数","约 270,000人","公司简介","全球最大DRAM/NAND Flash制造商，同时提供代工服务，IDM模式运营。");
+        PUBLIC_COMPANY_DB.put("samsung", samsungData);
+        PUBLIC_COMPANY_DB.put("三星", new java.util.HashMap<>(samsungData));
+        Map<String, String> asmlData = Map.of("成立时间","1984年","总部所在地","荷兰埃因霍温","行业分类","半导体设备","企业类型","上市公司（NASDAQ: ASML）","营收（公开披露）","约 €27.6亿（2023年）","员工人数","约 42,000人","公司简介","全球唯一EUV光刻机制造商，DUV/EUV设备是先进制程不可或缺的核心设备。");
+        PUBLIC_COMPANY_DB.put("asml", asmlData);
+        Map<String, String> nvidiaData = Map.of("成立时间","1993年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/GPU/AI","企业类型","上市公司（NASDAQ: NVDA）","营收（公开披露）","约 $609亿美元（FY2024）","员工人数","约 36,000人","公司简介","全球领先的GPU和AI加速器制造商，H100/H200系列是当前AI训练的主流算力平台。");
+        PUBLIC_COMPANY_DB.put("nvidia", nvidiaData);
+        PUBLIC_COMPANY_DB.put("英伟达", new java.util.HashMap<>(nvidiaData));
+        Map<String, String> amdData = Map.of("成立时间","1969年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/CPU/GPU","企业类型","上市公司（NASDAQ: AMD）","营收（公开披露）","约 $227亿美元（2023年）","员工人数","约 26,000人","公司简介","x86 CPU（EPYC服务器处理器）和Radeon GPU制造商，近年AI加速器MI系列快速增长。");
+        PUBLIC_COMPANY_DB.put("amd", amdData);
+        Map<String, String> intelData = Map.of("成立时间","1968年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体/CPU","企业类型","上市公司（NASDAQ: INTC）","营收（公开披露）","约 $542亿美元（2023年）","员工人数","约 124,800人","公司简介","全球最大的x86 CPU制造商之一，IDM模式运营，正在亚利桑那建设IFS代工厂。");
+        PUBLIC_COMPANY_DB.put("intel", intelData);
+        PUBLIC_COMPANY_DB.put("英特尔", new java.util.HashMap<>(intelData));
+        Map<String, String> qualcommData = Map.of("成立时间","1985年","总部所在地","美国加利福尼亚州圣地亚哥","行业分类","半导体/无线通信","企业类型","上市公司（NASDAQ: QCOM）","营收（公开披露）","约 $358亿美元（FY2023）","员工人数","约 51,000人","公司简介","全球领先的移动处理器和基带芯片设计公司，Snapdragon系列广泛用于智能手机。");
+        PUBLIC_COMPANY_DB.put("qualcomm", qualcommData);
+        PUBLIC_COMPANY_DB.put("高通", new java.util.HashMap<>(qualcommData));
+        Map<String, String> skHynixData = Map.of("成立时间","1983年","总部所在地","韩国京畿道利川市","行业分类","半导体/存储","企业类型","上市公司（KRX: 000660）","营收（公开披露）","约 KRW 32.8兆韩元（2023年）","员工人数","约 37,000人","公司简介","全球第二大DRAM制造商，HBM高带宽存储器是目前AI训练芯片的核心配套组件。");
+        PUBLIC_COMPANY_DB.put("sk hynix", skHynixData);
+        PUBLIC_COMPANY_DB.put("海力士", new java.util.HashMap<>(skHynixData));
+        Map<String, String> appliedMaterialsData = Map.of("成立时间","1967年","总部所在地","美国加利福尼亚州圣克拉拉","行业分类","半导体设备","企业类型","上市公司（NASDAQ: AMAT）","营收（公开披露）","约 $266亿美元（FY2023）","员工人数","约 34,000人","公司简介","全球最大的半导体设备公司，覆盖CVD、PVD、CMP、离子注入等核心制程设备。");
+        PUBLIC_COMPANY_DB.put("applied materials", appliedMaterialsData);
+        Map<String, String> broadcomData = Map.of("成立时间","1991年（Avago前身）","总部所在地","美国加利福尼亚州圣何塞","行业分类","半导体/网络/AI","企业类型","上市公司（NASDAQ: AVGO）","营收（公开披露）","约 $359亿美元（FY2023）","员工人数","约 20,000人","公司简介","全球领先的网络芯片和定制AI ASIC设计公司，为谷歌等超大规模数据中心提供TPU等ASIC。");
+        PUBLIC_COMPANY_DB.put("broadcom", broadcomData);
+        PUBLIC_COMPANY_DB.put("博通", new java.util.HashMap<>(broadcomData));
+        Map<String, String> armData = Map.of("成立时间","1990年","总部所在地","英国剑桥","行业分类","半导体IP/指令集架构","企业类型","上市公司（NASDAQ: ARM）","营收（公开披露）","约 $27.3亿美元（FY2024）","员工人数","约 6,500人","公司简介","全球主导的CPU IP授权公司，超过99%的智能手机和大量服务器/AI芯片使用ARM架构。");
+        PUBLIC_COMPANY_DB.put("arm", armData);
+        PUBLIC_COMPANY_DB.put("安谋", new java.util.HashMap<>(armData));
+        Map<String, String> mediatekData = Map.of("成立时间","1997年","总部所在地","台湾新竹","行业分类","半导体/SoC","企业类型","上市公司（TWSE: 2454）","营收（公开披露）","约 NT$4,414亿元（2023年）","员工人数","约 20,000人","公司简介","全球第三大无晶圆半导体公司，Dimensity系列SoC广泛应用于中高端安卓手机和IoT设备。");
+        PUBLIC_COMPANY_DB.put("mediatek", mediatekData);
+        PUBLIC_COMPANY_DB.put("联发科", new java.util.HashMap<>(mediatekData));
     }
 
     private Map<String, Object> buildBusinessWithWiki(String creditCode, boolean noSignal, String companyName) {
@@ -990,7 +904,8 @@ public class SemiRiskStore {
             if (paras.length > 0 && !paras[0].isBlank()) {
                 result.put("description", truncate(paras[0].replaceAll("\\s+", " ").trim(), 200));
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("JSON read failed, using fallback: {}", ex.getMessage());
             // 维基百科不可达或无数据：返回空值，UI 显示待接入权威源
         }
         return result;
@@ -1046,10 +961,15 @@ public class SemiRiskStore {
             String id = "ENT-" + UUID.nameUUIDFromBytes(name.getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
             String eventsJson = writeJson(related.stream().map(s -> s.fetchedAt() + " " + s.title()).toList());
             String signalsJson = writeJson(related.stream().map(this::enterpriseSignal).toList());
-            repository.upsertEnterpriseRecord(id, truncate(name, 250), "", truncate(industry, 120), "待核验",
-                    score, riskLevel(score), "公开源事件聚合（用户搜索）", "待接入权威源", eventsJson, signalsJson, Instant.now());
+            java.util.List<Object[]> batch = new java.util.ArrayList<>();
+            batch.add(new Object[]{
+                    id, truncate(name, 250), "", truncate(industry, 120), "待核验",
+                    score, riskLevel(score), "公开源事件聚合（用户搜索）", "待接入权威源",
+                    eventsJson, signalsJson, Instant.now()
+            });
+            repository.batchUpsertEnterpriseRecords(batch);
         } catch (Exception ex) {
-            log.error("Failed to persist searched enterprise to MySQL, name={}", name, ex);
+            log.error("Failed to batch persist searched enterprise to MySQL, name={}", name, ex);
         }
     }
 
@@ -1142,18 +1062,24 @@ public class SemiRiskStore {
                         "snippet", truncate(desc, 300),
                         "date", date
                 ));
-                // 自动存入知识库
-                try {
-                    String docId = "WEB-" + UUID.nameUUIDFromBytes((keyword + name).getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
-                    String content = "标题：" + name + "\n来源：" + item.getOrDefault("provider", Map.of("name", "Bing").toString()) + "\n摘要：" + desc + "\n链接：" + url + "\n发布时间：" + date;
-                    repository.upsertKnowledgeDoc(docId, KNOWLEDGE_PUBLIC, truncate(name, 1000), content,
-                            "Bing News 搜索", url, "企业信息", 0, null, now);
-                } catch (Exception ignored) {
-                }
+                // 自动存入知识库（批量收集后一次写入）
+                String docId = "WEB-" + UUID.nameUUIDFromBytes((keyword + name).getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
+                String content = "标题：" + name + "\n来源：" + item.getOrDefault("provider", Map.of("name", "Bing").toString()) + "\n摘要：" + desc + "\n链接：" + url + "\n发布时间：" + date;
+                internetSearchDocs.add(new Object[]{docId, KNOWLEDGE_PUBLIC, truncate(name, 1000), content,
+                        "Bing News 搜索", url, "企业信息", 0, null, now, "SUCCESS"});
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("JSON read failed, using fallback: {}", ex.getMessage());
             // 搜索失败时降级到 fallback
             return fallbackWebSearch(keyword);
+        }
+        // 批量写入知识库
+        if (!internetSearchDocs.isEmpty()) {
+            try {
+                repository.batchUpsertKnowledgeDocs(new ArrayList<>(internetSearchDocs));
+            } catch (Exception ex) {
+            log.debug("JSON read failed, using fallback: {}", ex.getMessage());}
+            internetSearchDocs.clear();
         }
         return results.isEmpty() ? fallbackWebSearch(keyword) : results;
     }
@@ -1195,19 +1121,27 @@ public class SemiRiskStore {
                 lastTitle = java.util.Map.entry(url, title);
                 if (results.size() >= 5) break;
             }
-            // 自动存入知识库
+            // 自动存入知识库（批量收集）
             Instant now = Instant.now();
             for (Map<String, Object> r : results) {
-                try {
-                    String docId = "WEB-" + UUID.nameUUIDFromBytes((keyword + r.get("title")).getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
-                    repository.upsertKnowledgeDoc(docId, KNOWLEDGE_PUBLIC,
-                            String.valueOf(r.get("title")),
-                            "搜索词：" + keyword + "\n来源：" + r.get("source") + "\n摘要：" + r.get("snippet") + "\n链接：" + r.get("url"),
-                            "网络搜索", String.valueOf(r.get("url")), "企业信息", 0, null, now);
-                } catch (Exception ignored) {
-                }
+                String docId = "WEB-" + UUID.nameUUIDFromBytes((keyword + r.get("title")).getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
+                internetSearchDocs.add(new Object[]{
+                        docId, KNOWLEDGE_PUBLIC,
+                        String.valueOf(r.get("title")),
+                        "搜索词：" + keyword + "\n来源：" + r.get("source") + "\n摘要：" + r.get("snippet") + "\n链接：" + r.get("url"),
+                        "网络搜索", String.valueOf(r.get("url")), "企业信息", 0, null, now, "SUCCESS"
+                });
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("JSON read failed, using fallback: {}", ex.getMessage());
+        }
+        // 批量写入知识库
+        if (!internetSearchDocs.isEmpty()) {
+            try {
+                repository.batchUpsertKnowledgeDocs(new ArrayList<>(internetSearchDocs));
+            } catch (Exception ex) {
+            log.debug("JSON read failed, using fallback: {}", ex.getMessage());}
+            internetSearchDocs.clear();
         }
         return results;
     }
@@ -1423,7 +1357,17 @@ public class SemiRiskStore {
     }
 
     private String stringValue(Object value) {
-        return value == null ? "" : String.valueOf(value);
+        return com.semirisk.util.ReportUtils.stringValue(value);
+    }
+
+    @org.springframework.cache.annotation.CacheEvict(value = "enterprise", allEntries = true)
+    public void enterpriseCacheEvict() {
+        // no-op, triggered by Spring Cache for cache eviction
+    }
+
+    @org.springframework.cache.annotation.CacheEvict(value = "enterprise", allEntries = true)
+    private void evictEnterpriseCache() {
+        // no-op
     }
 
     public Map<String, Object> systemOverview() {
@@ -1496,14 +1440,7 @@ public class SemiRiskStore {
     }
 
     private int asInt(Object value) {
-        if (value instanceof Number number) {
-            return number.intValue();
-        }
-        try {
-            return Integer.parseInt(String.valueOf(value));
-        } catch (Exception ignored) {
-            return 0;
-        }
+        return com.semirisk.util.ReportUtils.asInt(value);
     }
 
     private String riskLevel(int score) {
@@ -1537,7 +1474,7 @@ public class SemiRiskStore {
         } else {
             aiModelApiKeys.remove(model);
         }
-        auditLogs.add("[INFO] AI model config saved for " + model + " endpoint=" + endpoint);
+        log.info("AI model config saved for {} endpoint={}", model, endpoint);
         return config;
     }
 
@@ -1595,7 +1532,25 @@ public class SemiRiskStore {
     }
 
     private void maybeGenerateDailyReportAsync() {
-        reportService.maybeGenerateDailyReportAsync();
+        String today = LocalDate.now().toString();
+        // Phase 2: 使用分布式锁确保多实例不重复生成
+        lockManager.executeWithLock("daily-report-gen", 0, 0, () -> {
+            // 双重检查：获取锁后再次确认
+            if (today.equals(dailyAiReportDate)) {
+                return Boolean.FALSE;
+            }
+            // 立即标记，防止其他任务重复提交
+            dailyAiReportDate = today;
+            reportGenerating.set(true);
+            reportExecutor.submit(() -> {
+                try {
+                    reportService.generateDailyAiReport();
+                } finally {
+                    reportGenerating.set(false);
+                }
+            });
+            return Boolean.TRUE;
+        });
     }
 
     /** 同步生成本日 AI 报告（聚合真实数据 + 调 DeepSeek），并持久化。 */
@@ -1622,4 +1577,11 @@ public class SemiRiskStore {
         httpClient.close();
     }
 
+    // -----------------------------------------------------------------
+    // Accessors for split controllers
+    // -----------------------------------------------------------------
+
+    public PreparedRiskRepository getPreparedRiskRepository() { return repository; }
+    public HealthProbeService getHealthProbeService() { return healthProbeService; }
+    public PasswordHashService getPasswordHashService() { return systemManagementService.getPasswordHashService(); }
 }

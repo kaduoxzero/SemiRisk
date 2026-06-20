@@ -60,7 +60,8 @@ public class PasswordResetTokenService {
                 if (row.isPresent()) {
                     email = (String) row.get().get("email");
                 }
-            } catch (Exception ignored) {
+            } catch (Exception ex) {
+                log.debug("Failed to validate reset token from DB: {}", ex.getMessage());
             }
         }
         if (email == null) {

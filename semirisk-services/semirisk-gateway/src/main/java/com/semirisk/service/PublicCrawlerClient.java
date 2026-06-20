@@ -1,6 +1,8 @@
 package com.semirisk.service;
 
 import com.semirisk.model.CrawlerSignal;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,8 @@ import java.util.Map;
  */
 @Service
 public class PublicCrawlerClient {
+
+    private static final Logger log = LoggerFactory.getLogger(PublicCrawlerClient.class);
 
     private final RestClient restClient;
 
@@ -91,7 +95,8 @@ public class PublicCrawlerClient {
         }
         try {
             return Integer.parseInt(String.valueOf(value));
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("Failed to parse score from '{}': {}", value, ex.getMessage());
             return 0;
         }
     }
@@ -99,7 +104,8 @@ public class PublicCrawlerClient {
     private Instant instant(String value) {
         try {
             return Instant.parse(value);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("Failed to parse Instant from '{}': {}", value, ex.getMessage());
             return Instant.now();
         }
     }

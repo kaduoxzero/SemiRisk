@@ -1,5 +1,7 @@
 package com.semirisk.security;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.Mac;
@@ -12,6 +14,8 @@ import java.util.HexFormat;
 
 @Service
 public class CsrfTokenService {
+
+    private static final Logger log = LoggerFactory.getLogger(CsrfTokenService.class);
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private final byte[] secret = new byte[32];
@@ -45,7 +49,8 @@ public class CsrfTokenService {
             }
             String payload = parts[0] + ":" + parts[1];
             return MessageDigest.isEqual(sign(payload).getBytes(), parts[2].getBytes());
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            log.debug("CSRF token validation failed: {}", ex.getMessage());
             return false;
         }
     }

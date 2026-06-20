@@ -101,8 +101,13 @@ public class SchemaInitializer {
                 risk_score INT NOT NULL DEFAULT 0,
                 object_key VARCHAR(512) NULL,
                 fetched_at DATETIME NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'UPLOADED',
+                is_deleted TINYINT(1) NOT NULL DEFAULT 0,
+                create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 INDEX idx_knowledge_doc_category(category),
-                INDEX idx_knowledge_doc_fetched(fetched_at)
+                INDEX idx_knowledge_doc_fetched(fetched_at),
+                INDEX idx_knowledge_doc_deleted(is_deleted)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
             """
@@ -181,7 +186,11 @@ public class SchemaInitializer {
                 "ALTER TABLE system_user ADD COLUMN display_name VARCHAR(128) NOT NULL DEFAULT '' AFTER username",
                 "ALTER TABLE system_user ADD COLUMN password_hash VARCHAR(255) NULL AFTER email",
                 "ALTER TABLE system_user ADD COLUMN last_login_at DATETIME NULL AFTER status",
-                "ALTER TABLE system_user ADD COLUMN password_updated_at DATETIME NULL AFTER last_login_at"
+                "ALTER TABLE system_user ADD COLUMN password_updated_at DATETIME NULL AFTER last_login_at",
+                "ALTER TABLE knowledge_doc ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0 AFTER fetched_at",
+                "ALTER TABLE knowledge_doc ADD COLUMN create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER is_deleted",
+                "ALTER TABLE knowledge_doc ADD COLUMN update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER create_time",
+                "ALTER TABLE knowledge_doc ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'UPLOADED' AFTER fetched_at"
         );
         for (String alter : alters) {
             try {
