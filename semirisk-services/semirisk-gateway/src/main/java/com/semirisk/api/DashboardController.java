@@ -63,40 +63,6 @@ public class DashboardController {
         return ApiResponse.ok(store.riskDetail(id));
     }
 
-    @GetMapping("/reports/templates")
-    public ApiResponse<List<Map<String, String>>> reportTemplates() {
-        return ApiResponse.ok(List.of(
-                Map.of("id", "risk-assessment", "name", "风险评估报告", "scenario", "AI 研判风险评分、影响范围和闭环处置", "format", "PDF"),
-                Map.of("id", "supply-chain", "name", "供应链分析报告", "scenario", "AI 分析物流路径、供应商韧性和替代方案", "format", "PDF"),
-                Map.of("id", "enterprise-dd", "name", "企业尽调报告", "scenario", "AI 汇总企业主体、公开源事件和合作建议", "format", "PDF")
-        ));
-    }
-
-    @GetMapping("/reports/jobs/{id}")
-    public ApiResponse<?> reportJob(@PathVariable String id) {
-        if (store.reportJob(id).isPresent()) {
-            ReportJob advanced = store.advanceReport(id);
-            return ApiResponse.ok(advanced);
-        }
-        return ApiResponse.fail("报告任务不存在");
-    }
-
-    @GetMapping("/reports/{id}/download")
-    public ResponseEntity<byte[]> downloadReport(@PathVariable String id) {
-        syncPublicCrawlerRecords();
-        ReportJob job = store.reportJob(id).orElse(null);
-        String template = job == null ? "risk-assessment" : job.template();
-        String language = job == null ? "中文" : job.language();
-        String format = job == null ? "PDF" : job.format();
-        if (format == null || format.isBlank()) format = "PDF";
-        List<String> findings = store.aiReportLines(id, template, language);
-        com.semirisk.common.ReportFileFactory.ReportFile report = com.semirisk.common.ReportFileFactory.build(id, template, language, format, findings);
-        return ResponseEntity.ok()
-                .contentType(org.springframework.http.MediaType.parseMediaType(report.contentType()))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + report.filename() + "\"")
-                .body(report.body());
-    }
-
     @GetMapping("/alerts/counts")
     public ApiResponse<Map<String, Long>> alertCounts() {
         syncPublicCrawlerRecords();
@@ -124,12 +90,6 @@ public class DashboardController {
     public ApiResponse<Map<String, Object>> latestAiReport() {
         syncPublicCrawlerRecords();
         return ApiResponse.ok(store.latestAiReport());
-    }
-
-    @GetMapping("/risk-score/today")
-    public ApiResponse<DailyRiskSnapshot> todayRiskScore() {
-        syncPublicCrawlerRecords();
-        return ApiResponse.ok(store.dailyRiskSnapshot());
     }
 
     // ---- internal ----

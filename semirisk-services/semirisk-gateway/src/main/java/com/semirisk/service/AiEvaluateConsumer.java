@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -14,6 +15,7 @@ import java.util.Map;
  * 替代原有的本地线程池异步处理，防止应用重启导致任务丢失。
  */
 @Service
+@ConditionalOnProperty(name = "spring.rabbitmq.host", havingValue = "*", matchIfMissing = false)
 public class AiEvaluateConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(AiEvaluateConsumer.class);

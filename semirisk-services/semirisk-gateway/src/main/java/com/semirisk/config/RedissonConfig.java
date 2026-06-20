@@ -38,37 +38,63 @@ public class RedissonConfig {
 
     @Bean(destroyMethod = "shutdown")
     public RedissonClient redissonClient() {
-        Config config = new Config();
         // 解析集群节点
         String[] nodes = redisNodes.split(",");
-        StringBuilder clusterMode = new StringBuilder();
-        for (int i = 0; i < nodes.length; i++) {
-            String node = nodes[i].trim();
-            if (!node.startsWith("redis://")) {
-                node = "redis://" + node;
+
+        // 尝试集群模式
+        try {
+            Config config = new Config();
+            StringBuilder clusterMode = new StringBuilder();
+            for (int i = 0; i < nodes.length; i++) {
+                String node = nodes[i].trim();
+                if (!node.startsWith("redis://")) {
+                    node = "redis://" + node;
+                }
+                clusterMode.append(node);
+                if (i < nodes.length - 1) {
+                    clusterMode.append(",");
+                }
             }
-            clusterMode.append(node);
-            if (i < nodes.length - 1) {
-                clusterMode.append(",");
+
+            ClusterServersConfig clusterConfig = config.useClusterServers()
+                    .addNodeAddress(clusterMode.toString().split(","))
+                    .setConnectTimeout(5000)
+                    .setTimeout(3000)
+                    .setRetryAttempts(3)
+                    .setRetryInterval(1500)
+                    .setMasterConnectionPoolSize(32)
+                    .setMasterConnectionMinimumIdleSize(8)
+                    .setSlaveConnectionPoolSize(64)
+                    .setSlaveConnectionMinimumIdleSize(16);
+
+            if (redisPassword != null && !redisPassword.isBlank()) {
+                clusterConfig.setPassword(redisPassword);
             }
+
+            log.info("Redisson cluster client initialized with nodes: {}", clusterMode);
+            return Redisson.create(config);
+        } catch (Exception e) {
+            log.warn("Cluster mode failed (cluster-enabled=0?), falling back to single-node. Error: {}",
+                    e.getMessage());
+            // 单机模式回退 — 需要新建 Config 实例
+            Config config = new Config();
+            String singleNode = nodes[0].trim();
+            if (!singleNode.startsWith("redis://")) {
+                singleNode = "redis://" + singleNode;
+            }
+            SingleServerConfig singleConfig = config.useSingleServer()
+                    .setAddress(singleNode)
+                    .setConnectTimeout(5000)
+                    .setTimeout(3000)
+                    .setConnectionPoolSize(32)
+                    .setConnectionMinimumIdleSize(8);
+
+            if (redisPassword != null && !redisPassword.isBlank()) {
+                singleConfig.setPassword(redisPassword);
+            }
+
+            log.info("Redisson single-node client initialized: {}", singleNode);
+            return Redisson.create(config);
         }
-
-        ClusterServersConfig clusterConfig = config.useClusterServers()
-                .addNodeAddress(clusterMode.toString().split(","))
-                .setConnectTimeout(5000)
-                .setTimeout(3000)
-                .setRetryAttempts(3)
-                .setRetryInterval(1500)
-                .setMasterConnectionPoolSize(32)
-                .setMasterConnectionMinimumIdleSize(8)
-                .setSlaveConnectionPoolSize(64)
-                .setSlaveConnectionMinimumIdleSize(16);
-
-        if (redisPassword != null && !redisPassword.isBlank()) {
-            clusterConfig.setPassword(redisPassword);
-        }
-
-        log.info("Redisson cluster client initialized with nodes: {}", clusterMode);
-        return Redisson.create(config);
     }
 }
