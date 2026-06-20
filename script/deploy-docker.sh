@@ -128,7 +128,7 @@ deploy_local() {
   info "  MinIO:       http://localhost:9001"
   info "  RabbitMQ:    http://localhost:15672"
   info "  MySQL:       localhost:3306"
-  info "  Redis:       localhost:6379"
+  info "  Redis Cluster:  127.0.0.1:6379(master), 127.0.0.1:6380-6382(replicas)"
   info "  Elasticsearch: localhost:9200"
   info ""
   info "  Nacos login: nacos / nacos"

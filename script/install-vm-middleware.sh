@@ -97,12 +97,65 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
 
-  redis:
+  redis-master:
     image: redis:7.4
-    container_name: semirisk-redis
+    container_name: semirisk-redis-master
     restart: unless-stopped
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
     ports:
       - "6379:6379"
+    volumes:
+      - redis-master-data:/data
+
+  redis-replica-1:
+    image: redis:7.4
+    container_name: semirisk-redis-replica-1
+    restart: unless-stopped
+    command: redis-server --port 6380 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --slaveof semirisk-redis-master 6379
+    ports:
+      - "6380:6380"
+    volumes:
+      - redis-replica-1-data:/data
+
+  redis-replica-2:
+    image: redis:7.4
+    container_name: semirisk-redis-replica-2
+    restart: unless-stopped
+    command: redis-server --port 6381 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --slaveof semirisk-redis-master 6379
+    ports:
+      - "6381:6381"
+    volumes:
+      - redis-replica-2-data:/data
+
+  redis-replica-3:
+    image: redis:7.4
+    container_name: semirisk-redis-replica-3
+    restart: unless-stopped
+    command: redis-server --port 6382 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --slaveof semirisk-redis-master 6379
+    ports:
+      - "6382:6382"
+    volumes:
+      - redis-replica-3-data:/data
+
+  redis-cluster-init:
+    image: redis:7.4
+    container_name: semirisk-redis-cluster-init
+    restart: "no"
+    command: >
+      bash -c "
+        sleep 10 &&
+        redis-cli -h semirisk-redis-master -p 6379 --cluster create \
+          semirisk-redis-master:6379 \
+          semirisk-redis-replica-1:6380 \
+          semirisk-redis-replica-2:6381 \
+          semirisk-redis-replica-3:6382 \
+          --cluster-replicas 1 --cluster-yes
+      "
+    depends_on:
+      - redis-master
+      - redis-replica-1
+      - redis-replica-2
+      - redis-replica-3
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
@@ -164,6 +217,10 @@ volumes:
   mysql-data:
   es-data:
   minio-data:
+  redis-master-data:
+  redis-replica-1-data:
+  redis-replica-2-data:
+  redis-replica-3-data:
 EOF
 
 docker compose up -d

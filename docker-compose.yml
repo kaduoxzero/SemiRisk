@@ -11,13 +11,18 @@
 #   - Node.js 22 LTS (for building frontend)
 #   - At least 16 GB RAM recommended (6 Java services × 512MB + middleware)
 #
-# Environment variables (optional, set in .env.local or on command line):
+# Environment variables (optional, set in .env or on command line):
+#   MYSQL_ROOT_PASSWORD       - MySQL root password (REQUIRED)
+#   MYSQL_PASSWORD            - MySQL app user password (REQUIRED)
 #   SEMIRISK_AI_API_KEY       - DeepSeek API key (required for AI features)
-#   MYSQL_ROOT_PASSWORD       - MySQL root password (default: root)
-#   MYSQL_PASSWORD            - MySQL app user password (default: semirisk)
 #   SEMIRISK_AI_MODEL         - AI model name (default: deepseekv4-pro)
 #   SEMIRISK_AI_ENDPOINT      - AI API endpoint (default: https://api.deepseek.com/v1)
 #   SEMIRISK_FLYWAY_ENABLED   - Enable Flyway migrations (default: false)
+#   MINIO_ROOT_PASSWORD       - MinIO admin password (REQUIRED)
+#   MINIO_ROOT_USER           - MinIO admin username (REQUIRED)
+#   RABBITMQ_USER             - RabbitMQ username (REQUIRED)
+#   RABBITMQ_PASS             - RabbitMQ password (REQUIRED)
+#   REDIS_CLUSTER_PASSWORD    - Redis AUTH password (optional, set to enable)
 
 services:
   # ============================================================
@@ -29,33 +34,115 @@ services:
     container_name: semirisk-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
       MYSQL_DATABASE: semirisk
       MYSQL_USER: semirisk
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-semirisk}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
     ports:
       - "3306:3306"
     volumes:
       - semirisk-mysql:/var/lib/mysql
       - ./compose/init:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
 
-  redis:
+  # Redis Cluster: 1 master + 3 replicas (slot-based sharding, auto failover)
+  redis-master:
     image: redis:7.4
-    container_name: semirisk-redis
+    container_name: semirisk-redis-master
     restart: unless-stopped
+    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes${REDIS_CLUSTER_PASSWORD:+ --requirepass ${REDIS_CLUSTER_PASSWORD} --masterauth ${REDIS_CLUSTER_PASSWORD}}
     ports:
       - "6379:6379"
+    volumes:
+      - semirisk-redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  redis-replica-1:
+    image: redis:7.4
+    container_name: semirisk-redis-replica-1
+    restart: unless-stopped
+    command: redis-server --port 6380 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --slaveof semirisk-redis-master 6379${REDIS_CLUSTER_PASSWORD:+ --requirepass ${REDIS_CLUSTER_PASSWORD} --masterauth ${REDIS_CLUSTER_PASSWORD}}
+    ports:
+      - "6380:6380"
+    volumes:
+      - semirisk-redis-data-1:/data
+    depends_on:
+      redis-master:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-replica-2:
+    image: redis:7.4
+    container_name: semirisk-redis-replica-2
+    restart: unless-stopped
+    command: redis-server --port 6381 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --slaveof semirisk-redis-master 6379${REDIS_CLUSTER_PASSWORD:+ --requirepass ${REDIS_CLUSTER_PASSWORD} --masterauth ${REDIS_CLUSTER_PASSWORD}}
+    ports:
+      - "6381:6381"
+    volumes:
+      - semirisk-redis-data-2:/data
+    depends_on:
+      redis-master:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6381", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-replica-3:
+    image: redis:7.4
+    container_name: semirisk-redis-replica-3
+    restart: unless-stopped
+    command: redis-server --port 6382 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --slaveof semirisk-redis-master 6379${REDIS_CLUSTER_PASSWORD:+ --requirepass ${REDIS_CLUSTER_PASSWORD} --masterauth ${REDIS_CLUSTER_PASSWORD}}
+    ports:
+      - "6382:6382"
+    volumes:
+      - semirisk-redis-data-3:/data
+    depends_on:
+      redis-master:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6382", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-cluster-init:
+    image: redis:7.4
+    container_name: semirisk-redis-cluster-init
+    restart: "no"
+    command: >
+      bash -c "
+        sleep 10 &&
+        redis-cli -h semirisk-redis-master -p 6379 --cluster create \
+          semirisk-redis-master:6379 \
+          semirisk-redis-replica-1:6380 \
+          semirisk-redis-replica-2:6381 \
+          semirisk-redis-replica-3:6382 \
+          --cluster-replicas 1 --cluster-yes
+      "
+    depends_on:
+      redis-master:
+        condition: service_started
+      redis-replica-1:
+        condition: service_started
+      redis-replica-2:
+        condition: service_started
+      redis-replica-3:
+        condition: service_started
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
@@ -63,7 +150,7 @@ services:
     restart: unless-stopped
     environment:
       discovery.type: single-node
-      xpack.security.enabled: "false"
+      xpack.security.enabled: "${SEMIRISK_ES_SECURITY_ENABLED:false}"
       ES_JAVA_OPTS: -Xms512m -Xmx512m
     ports:
       - "9200:9200"
@@ -82,8 +169,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-semirisk}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-semirisk123}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -101,8 +188,8 @@ services:
     container_name: semirisk-rabbitmq
     restart: unless-stopped
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:?RABBITMQ_PASS is required}
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -118,7 +205,7 @@ services:
     restart: unless-stopped
     environment:
       MODE: standalone
-      NACOS_AUTH_ENABLE: "false"
+      NACOS_AUTH_ENABLE: "${SEMIRISK_NACOS_AUTH_ENABLED:true}"
       JVM_XMS: 256m
       JVM_XMX: 512m
     ports:
@@ -190,7 +277,7 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      redis:
+      redis-master:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
@@ -201,6 +288,13 @@ services:
       nacos:
         condition: service_healthy
 
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
 # ============================================================
 # Named Volumes
 # ============================================================
@@ -209,3 +303,7 @@ volumes:
   semirisk-mysql:
   semirisk-es:
   semirisk-minio:
+  semirisk-redis-data:
+  semirisk-redis-data-1:
+  semirisk-redis-data-2:
+  semirisk-redis-data-3:

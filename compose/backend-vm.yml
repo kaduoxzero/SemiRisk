@@ -13,7 +13,7 @@ services:
       SEMIRISK_PORT: 8080
       SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
       SEMIRISK_NACOS_HOST: 127.0.0.1
-      SEMIRISK_REDIS_HOST: 127.0.0.1
+      SEMIRISK_REDIS_NODES: 127.0.0.1:6379,127.0.0.1:6380,127.0.0.1:6381,127.0.0.1:6382
       SEMIRISK_ES_URL: http://127.0.0.1:9200
       SEMIRISK_ES_INDEX: semirisk_knowledge
       SEMIRISK_FLYWAY_ENABLED: "false"
@@ -84,7 +84,7 @@ services:
       SEMIRISK_NACOS_HOST: 127.0.0.1
       SEMIRISK_DB_URL: "jdbc:mysql://127.0.0.1:3306/semirisk?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai"
       SEMIRISK_DB_USERNAME: semirisk
-      SEMIRISK_DB_PASSWORD: semirisk
+      SEMIRISK_DB_PASSWORD: ${SEMIRISK_DB_PASSWORD:?set SEMIRISK_DB_PASSWORD in .env}
 
   semirisk-report-service:
     image: semirisk/report-service:latest

@@ -34,6 +34,8 @@
         <!-- Spring Cloud 2024.0.x is compatible with Spring Boot 3.5.x -->
         <spring-cloud.version>2024.0.1</spring-cloud.version>
         <spring-cloud-alibaba.version>2023.0.3.2</spring-cloud-alibaba.version>
+        <!-- Phase 2: Redisson 版本 -->
+        <redisson.version>3.27.2</redisson.version>
     </properties>
 
     <dependencyManagement>
@@ -51,6 +53,12 @@
                 <version>${spring-cloud-alibaba.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <!-- Phase 2: Redisson 分布式锁 -->
+            <dependency>
+                <groupId>org.redisson</groupId>
+                <artifactId>redisson-spring-boot-starter</artifactId>
+                <version>${redisson.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
