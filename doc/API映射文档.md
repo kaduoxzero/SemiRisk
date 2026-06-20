@@ -11,7 +11,7 @@
 }
 ```
 
-## 2. 认证
+## 2. 认证 (Controller: AuthController)
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -48,7 +48,7 @@ X-CSRF-Token: <GET /api/auth/csrf 返回的 token>
 Authorization: Bearer <login/register 返回的 token>
 ```
 
-## 3. 首页看板
+## 3. 首页看板 (Controller: DashboardController)
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -56,7 +56,7 @@ Authorization: Bearer <login/register 返回的 token>
 | dashboard.html | GET | `/api/ai/reports/latest` | 读取本日 AI 风险报告（MySQL `ai_report` 优先，无则后台异步生成并返回待生成态） |
 | dashboard.html | POST | `/api/ai/reports/refresh` | 立即真实生成本日 AI 报告（聚合公开源 + 风险快照调用 DeepSeek） |
 
-## 4. 数据上传
+## 4. 数据上传 (Controller: DataController)
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -66,7 +66,7 @@ Authorization: Bearer <login/register 返回的 token>
 | data-upload.html | POST | `/api/data/uploads/{id}/parse` | 从 MinIO 取回文件，用 Apache POI / CSV 真实解析行数与字段告警并入库 |
 | data-upload.html | GET | `/api/data/uploads/logs` | SSE 推送真实处理步骤（接收、MinIO 落库、解析结果） |
 
-## 5. 风险分析与详情
+## 5. 风险分析与详情 (Controller: DashboardController, ReportController)
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -77,7 +77,7 @@ Authorization: Bearer <login/register 返回的 token>
 | Vue 首页 | GET | `/api/risk-score/today` | 获取本日 AI 自动测算风险 |
 | Vue 首页 | POST | `/api/risk-score/recalculate` | 手动触发本日风险重算 |
 
-## 6. 报告生成
+## 6. 报告生成 (Controller: ReportController)
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -86,7 +86,7 @@ Authorization: Bearer <login/register 返回的 token>
 | report-generation.html | GET | `/api/reports/jobs/{id}` | 轮询报告生成进度 |
 | report-generation.html | GET | `/api/reports/{id}/download` | 下载生成报告，按任务格式返回 PDF、DOCX、PPTX；报告生成后该下载接口不再要求登录态 |
 
-## 7. 告警中心
+## 7. 告警中心 (Controller: AlertController)
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -103,7 +103,7 @@ Authorization: Bearer <login/register 返回的 token>
 - `originalTitle`、`translation.zh`、`translation.en`
 - `bilingualRows[]`：中英文对照行，包含 `zhLabel`、`zh`、`enLabel`、`en`
 
-## 8. GIS、企业画像、知识库
+## 8. GIS、企业画像、知识库 (Controller: EnterpriseController)
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -113,7 +113,7 @@ Authorization: Bearer <login/register 返回的 token>
 | knowledge-base.html | POST | `/api/knowledge/ask` | AI 知识库智能体问答，优先使用 Elasticsearch 检索结果生成回答、检索链路和引用 |
 | knowledge-base.html | GET | `/api/knowledge/preview/{id}` | 从 MinIO 拉取真实文档对象，或返回 `knowledge_doc` 真实正文 |
 
-## 9. 系统管理
+## 9. 系统管理 (Controller: SystemController)
 
 | 页面 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -128,7 +128,7 @@ Authorization: Bearer <login/register 返回的 token>
 | system-management.html | POST | `/api/system/agents/{name}/trigger` | 真实触发对应任务（公开源爬虫同步 / AI 报告生成），返回真实执行结果 |
 | system-management.html | POST | `/api/system/datasources/{name}/reconnect` | 对中间件做真实健康探测，返回真实可达状态与延迟 |
 
-## 10. 微服务直连 API
+## 10. 微服务直连 API (Controller: DashboardController, ReportController)
 
 | 服务 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -153,7 +153,7 @@ Authorization: Bearer <login/register 返回的 token>
 | `ANALYST` | dashboard、analysis、detail、report、alerts、gis、enterprise、knowledge |
 | `OPERATOR` | dashboard、upload、alerts、gis、enterprise、knowledge |
 
-## 12. 运维与文档 API
+## 12. 运维与文档 API (Controller: WebConfig)
 
 | 服务 | 方法 | API | 说明 |
 |---|---|---|---|
@@ -214,3 +214,12 @@ Gateway 在同步公开爬虫记录时会将 `status=OK` 的记录写入 ES：
 | `system_user` / `ai_model_config` / `report_job` / `system_audit_log` | 用户、模型配置、报告任务、审计日志 |
 
 MinIO 对象存储：默认 `http://192.168.101.130:9000`，桶 `semirisk`，上传文件键 `uploads/{taskId}/{filename}`。
+
+## 16. Sentinel 限流降级
+
+| 资源名 | 限流 QPS | 熔断策略 | 处理器 |
+|---|---|---|---|
+| `auth.login` | 20 | - | `SentinelBlockHandler.loginBlocked` |
+| `dashboard.overview` | 50 | 慢调用 3s/60% → 10s | `SentinelBlockHandler.dashboardFallback` |
+| `knowledge.ask` | 5 | 慢调用 3s/60% → 10s | `SentinelBlockHandler.knowledgeFallback` |
+| `reports.create` | 3 | 异常率 50% → 30s | `SentinelBlockHandler.reportBlocked` |
