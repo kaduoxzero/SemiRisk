@@ -219,6 +219,18 @@ docker exec semirisk-app supervisorctl status
 # alert-service        RUNNING   pid 11, uptime 0:05:23
 # report-service       RUNNING   pid 10, uptime 0:05:23
 # nginx                RUNNING   pid 9,  uptime 0:05:23
+
+# 查看 Redis 集群状态
+docker exec semirisk-redis-master redis-cli -p 6379 cluster info
+
+# 查看 Redis 集群节点
+docker exec semirisk-redis-master redis-cli -p 6379 cluster nodes
+
+# 检查所有节点连通性
+docker exec semirisk-redis-master redis-cli -p 6379 ping   # master
+docker exec semirisk-redis-replica-1 redis-cli -p 6380 ping # replica-1
+docker exec semirisk-redis-replica-2 redis-cli -p 6381 ping # replica-2
+docker exec semirisk-redis-replica-3 redis-cli -p 6382 ping # replica-3
 ```
 
 ---
@@ -235,7 +247,7 @@ docker exec semirisk-app supervisorctl status
 | **MinIO** | http://192.168.101.130:9001 | 对象存储控制台（semirisk/semirisk123） |
 | **RabbitMQ** | http://192.168.101.130:15672 | 消息队列控制台（guest/guest） |
 | **MySQL** | 192.168.101.130:3306 | 数据库（semirisk/semirisk） |
-| **Redis** | 192.168.101.130:6379 | 缓存 |
+| **Redis Cluster** | 192.168.101.130:6379(master), :6380-6382(replicas) | 缓存 / 限流 / 验证码 / 幂等 |
 | **Elasticsearch** | 192.168.101.130:9200 | 搜索引擎 |
 
 ---

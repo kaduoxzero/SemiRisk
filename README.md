@@ -45,7 +45,7 @@ SEMIRISK_ES_URL=http://127.0.0.1:9200
 所有中间件默认指向虚拟机 `192.168.101.130`：
 
 - MySQL：`192.168.101.130:3306`
-- Redis：`192.168.101.130:6379`
+- Redis Cluster：`192.168.101.130:6379`(master), `:6380-6382`(replicas)
 - Elasticsearch：`192.168.101.130:9200`
 - MinIO：`192.168.101.130:9000`
 - RabbitMQ：`192.168.101.130:5672`
@@ -124,7 +124,7 @@ SEMIRISK_ES_URL=http://127.0.0.1:9200
 所有中间件默认指向虚拟机 `192.168.101.130`：
 
 - MySQL：`192.168.101.130:3306`
-- Redis：`192.168.101.130:6379`
+- Redis Cluster：`192.168.101.130:6379`(master), `:6380-6382`(replicas)
 - Elasticsearch：`192.168.101.130:9200`
 - MinIO：`192.168.101.130:9000`
 - RabbitMQ：`192.168.101.130:5672`
@@ -145,7 +145,7 @@ Gateway 核心业务层按领域拆分为以下服务类：
 | `GisService` | GIS 地理编码、风险点位计算、供应链路径生成 |
 | `EnterpriseService` | 企业画像、公开公司数据库、Wikipedia 信息查询、互联网搜索 |
 | `AiChatService` | DeepSeek API 调用、RAG 上下文构建、知识库问答、答案结构化 |
-| `HealthProbeService` | 中间件（MySQL/Redis/ES/MinIO/RabbitMQ/Nacos）健康探测 |
+| `HealthProbeService` | 中间件（MySQL/Redis Cluster/ES/MinIO/RabbitMQ/Nacos）健康探测，支持集群多节点探测 |
 
 ## 验证
 
