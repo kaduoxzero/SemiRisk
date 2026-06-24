@@ -18,13 +18,6 @@ export function authToken() {
   }
 }
 
-export function authenticatedUrl(path) {
-  const token = authToken();
-  if (!token) return `${API_BASE}${path}`;
-  const separator = path.includes('?') ? '&' : '?';
-  return `${API_BASE}${path}${separator}access_token=${encodeURIComponent(token)}`;
-}
-
 export async function request(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(method);
@@ -55,6 +48,31 @@ export async function request(path, options = {}) {
   }
   refreshLocalExpiry();
   return body.data === undefined ? body : body.data;
+}
+
+export async function downloadFile(path, filename) {
+  const headers = {};
+  const token = authToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (response.status === 401) {
+    localStorage.removeItem('semiriskUser');
+    window.dispatchEvent(new CustomEvent('semirisk-auth-expired'));
+  }
+  if (!response.ok) {
+    const body = await readBody(response);
+    throw new Error(body?.message || body || `HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
 }
 
 async function readBody(response) {

@@ -12,7 +12,7 @@
         :class="{ active: alert.id === detail.id }"
         @click="actions.openRisk(alert.id)"
       >
-        <span class="badge" :class="badgeClass(alert.level)">{{ alert.level }}</span>
+        <span class="badge severity-badge" :class="badgeClass(alert.level)">{{ alert.level }}</span>
         <strong>{{ alert.title }}</strong>
         <em>{{ alert.source }} · {{ formatTime(alert.time) }}</em>
       </button>
@@ -30,7 +30,7 @@
           <p class="muted">点击左侧告警后生成解释 / Explain Selected Alert</p>
           <h3>{{ detail.title || detail.originalTitle || '未选择告警' }}</h3>
         </div>
-        <span class="badge" :class="badgeClass(detail.level)">{{ detail.level || '待采集' }}</span>
+        <span class="badge severity-badge" :class="badgeClass(detail.level)">{{ detail.level || '待采集' }}</span>
       </div>
 
       <div class="alert-detail-grid">

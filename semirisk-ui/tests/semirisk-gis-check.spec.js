@@ -1,11 +1,14 @@
 import { test, expect } from '@playwright/test';
 
+const TEST_USER = process.env.TEST_USERNAME || 'testuser';
+const TEST_PASS = process.env.TEST_PASSWORD || 'testpass123';
+
 test('GIS globe renders non-empty WebGL canvas', async ({ page }) => {
   const csrfResp = await page.request.get('http://localhost:8080/api/auth/csrf');
   const csrf = (await csrfResp.json()).data.token;
   const loginResp = await page.request.post('http://localhost:8080/api/auth/login', {
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-    data: { username: 'kaduoxli', password: '123qwe123', captchaToken: 'vue-slider-ok' }
+    data: { username: TEST_USER, password: TEST_PASS }
   });
   const login = await loginResp.json();
   const session = { ...login.data.user, token: login.data.token, expiresAt: login.data.expiresAt };

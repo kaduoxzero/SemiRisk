@@ -25,7 +25,7 @@ public class PublicCrawlerClient {
 
     private final RestClient restClient;
 
-    public PublicCrawlerClient(@Value("${semirisk.data-service.url}") String dataServiceUrl) {
+    public PublicCrawlerClient(@Value("${semirisk.data-service.url:http://localhost:8081}") String dataServiceUrl) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         // 增加超时：中转网络可能延迟较大
         requestFactory.setConnectTimeout(Duration.ofSeconds(5));

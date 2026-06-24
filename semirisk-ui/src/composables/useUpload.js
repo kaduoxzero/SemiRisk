@@ -1,9 +1,10 @@
 import { uploadApi } from '../api/modules';
-import { authenticatedUrl } from '../api/client';
+import { downloadFile } from '../api/client';
 
 export function useUpload(state, notify) {
   function downloadTemplate() {
-    window.open(authenticatedUrl(uploadApi.templateUrl), '_blank');
+    downloadFile(uploadApi.templateUrl, 'semirisk-supplier-template.csv')
+      .catch(error => notify(error.message || 'Download failed', 'error'));
   }
 
   async function loadUploads() {

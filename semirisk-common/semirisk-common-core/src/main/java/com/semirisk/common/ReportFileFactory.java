@@ -12,6 +12,9 @@ import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfPageEventHelper;
 import com.lowagie.text.pdf.PdfWriter;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.awt.Color;
 
 import java.io.ByteArrayOutputStream;
@@ -29,6 +32,8 @@ import java.util.zip.ZipOutputStream;
  * 企业级风险报告生成器（PDF 使用 OpenPDF 正确渲染中英文，DOCX/PPTX 使用 OpenXML）。
  */
 public final class ReportFileFactory {
+
+    private static final Logger log = LoggerFactory.getLogger(ReportFileFactory.class);
 
     private ReportFileFactory() {
     }
@@ -264,15 +269,65 @@ public final class ReportFileFactory {
         }
     }
 
+    /**
+     * 加载 CJK 字体，支持多层回退策略：
+     * 1. STSong-Light + UniGB-UCS2-H（需要 font-asian 依赖）
+     * 2. Linux 系统常见中文字体路径（WenQuanYi / Noto CJK）
+     * 3. classpath 内嵌字体 /fonts/simsun.ttf
+     * 4. 最终回退 Helvetica（仅英文，记录警告）
+     */
     private static BaseFont cjkFont() {
+        // 策略 1：OpenPDF 内置 CJK 字体（需 font-asian jar）
         try {
             return BaseFont.createFont("STSong-Light", "UniGB-UCS2-H", BaseFont.NOT_EMBEDDED);
         } catch (Exception e) {
+            log.debug("STSong-Light font not available, trying system fonts: {}", e.getMessage());
+        }
+
+        // 策略 2：Linux 系统字体路径（Docker 环境常见）
+        String[] systemPaths = {
+                "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
+                "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
+        };
+        for (String path : systemPaths) {
             try {
-                return BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.NOT_EMBEDDED);
-            } catch (Exception e2) {
-                throw new IllegalStateException("Cannot load PDF font", e2);
+                java.io.File f = new java.io.File(path);
+                if (f.exists()) {
+                    BaseFont bf = BaseFont.createFont(path, BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
+                    log.info("Loaded CJK font from system path: {}", path);
+                    return bf;
+                }
+            } catch (Exception e) {
+                log.debug("Failed to load system font {}: {}", path, e.getMessage());
             }
+        }
+
+        // 策略 3：classpath 内嵌字体
+        String[] cpPaths = {"/fonts/simsun.ttf", "/fonts/msyh.ttf", "/fonts/wqy-zenhei.ttc"};
+        for (String cp : cpPaths) {
+            try (java.io.InputStream is = ReportFileFactory.class.getResourceAsStream(cp)) {
+                if (is != null) {
+                    byte[] fontData = is.readAllBytes();
+                    BaseFont bf = BaseFont.createFont(cp, BaseFont.IDENTITY_H, BaseFont.EMBEDDED, true, fontData, null);
+                    log.info("Loaded CJK font from classpath: {}", cp);
+                    return bf;
+                }
+            } catch (Exception e) {
+                log.debug("Failed to load classpath font {}: {}", cp, e.getMessage());
+            }
+        }
+
+        // 策略 4：最终回退
+        log.warn("No CJK font found! Falling back to Helvetica – Chinese characters will NOT render correctly. "
+                + "Add font-asian dependency or install a CJK font in the container.");
+        try {
+            return BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.NOT_EMBEDDED);
+        } catch (Exception e2) {
+            throw new IllegalStateException("Cannot load any PDF font", e2);
         }
     }
 

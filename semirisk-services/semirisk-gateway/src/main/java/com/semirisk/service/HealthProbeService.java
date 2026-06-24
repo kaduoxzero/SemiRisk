@@ -36,15 +36,17 @@ public class HealthProbeService {
     private final int minioApiPort;
     private final int rabbitHttpPort;
     private final int nacosPort;
+    private final int zipkinPort;
 
     public HealthProbeService(
             JdbcTemplate jdbcTemplate,
-            @Value("${semirisk.middleware.host:}") String middlewareHost,
+            @Value("${semirisk.middleware.host:127.0.0.1}") String middlewareHost,
             @Value("${semirisk.elasticsearch.url:http://127.0.0.1:9200}") String esUrl,
             @Value("${semirisk.redis.cluster.nodes:127.0.0.1:6379}") String redisNodes,
             @Value("${semirisk.minio.api-port:9000}") int minioApiPort,
             @Value("${semirisk.rabbitmq.http-port:15672}") int rabbitHttpPort,
-            @Value("${semirisk.nacos.port:8848}") int nacosPort) {
+            @Value("${semirisk.nacos.port:8848}") int nacosPort,
+            @Value("${semirisk.zipkin.port:9411}") int zipkinPort) {
         this.jdbcTemplate = jdbcTemplate;
         // 如果配置为空，尝试检测两个候选主机
         this.middlewareHost = resolveMiddlewareHost(middlewareHost);
@@ -53,6 +55,7 @@ public class HealthProbeService {
         this.minioApiPort = minioApiPort;
         this.rabbitHttpPort = rabbitHttpPort;
         this.nacosPort = nacosPort;
+        this.zipkinPort = zipkinPort;
     }
 
     private String resolveMiddlewareHost(String configuredHost) {
@@ -72,6 +75,7 @@ public class HealthProbeService {
         sources.add(probe("MinIO", "对象存储", middlewareHost + ":" + minioApiPort, this::probeMinio));
         sources.add(probe("RabbitMQ", "消息队列", middlewareHost + ":" + rabbitHttpPort, () -> probeHttp("http://" + middlewareHost + ":" + rabbitHttpPort)));
         sources.add(probe("Nacos", "配置/注册中心", middlewareHost + ":" + nacosPort, () -> probeHttp("http://" + middlewareHost + ":" + nacosPort + "/nacos")));
+        sources.add(probe("Zipkin", "Distributed tracing", middlewareHost + ":" + zipkinPort, () -> probeHttp("http://" + middlewareHost + ":" + zipkinPort + "/health")));
         return sources;
     }
 

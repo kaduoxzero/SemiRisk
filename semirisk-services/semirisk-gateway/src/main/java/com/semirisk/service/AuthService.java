@@ -88,6 +88,15 @@ public class AuthService {
             for (Map<String, Object> row : allUsers) {
                 String status = stringValue(row.get("status"));
                 String username = stringValue(row.get("username"));
+                if (!username.isEmpty()) {
+                    String id = stringValue(row.get("id"));
+                    if (id.isBlank()) {
+                        id = "U-" + username;
+                    }
+                    String email = stringValue(row.get("email"));
+                    String role = stringValue(row.get("role"));
+                    systemUsers.put(id, new SystemUser(id, username, email, role, status));
+                }
                 if ("启用".equals(status) && !username.isEmpty()) {
                     String displayName = stringValue(row.get("displayName"));
                     if (displayName.isBlank()) displayName = username;
@@ -185,7 +194,10 @@ public class AuthService {
     // ---------------------------------------------------------------------
 
     public List<SystemUser> systemUsers() {
-        return systemUsers.values().stream().sorted(Comparator.comparing(SystemUser::username)).toList();
+        return systemUsers.values().stream()
+                .sorted(Comparator.comparingInt((SystemUser user) -> rolePriority(user.role()))
+                        .thenComparing(SystemUser::username))
+                .toList();
     }
 
     public SystemUser addSystemUser(String username, String email, String role) {
@@ -230,6 +242,15 @@ public class AuthService {
             log.warn("Failed to fetch system users from MySQL: {}", ex.getMessage());
             return List.of();
         }
+    }
+
+    private int rolePriority(String role) {
+        return switch (role) {
+            case SemiriskConstants.ROLE_ADMIN -> 1;
+            case SemiriskConstants.ROLE_ANALYST -> 2;
+            case SemiriskConstants.ROLE_OPERATOR -> 3;
+            default -> 99;
+        };
     }
 
     private String stringValue(Object value) {

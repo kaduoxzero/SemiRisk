@@ -85,6 +85,7 @@ public class SemiRiskStore {
     private final String defaultAiModel;
     private final String defaultAiEndpoint;
     private final String defaultAiApiKey;
+    private final String bingApiKey;
     private final ObjectMapper objectMapper;
     private final PreparedRiskRepository repository;
     private final HealthProbeService healthProbeService;
@@ -108,6 +109,7 @@ public class SemiRiskStore {
             @Value("${semirisk.ai.default.model:" + AiModelDefaults.DEFAULT_MODEL + "}") String defaultAiModel,
             @Value("${semirisk.ai.default.endpoint:" + AiModelDefaults.DEFAULT_ENDPOINT + "}") String defaultAiEndpoint,
             @Value("${semirisk.ai.default.api-key:}") String defaultAiApiKey,
+            @Value("${semirisk.bing.api-key:}") String bingApiKey,
             ObjectMapper objectMapper,
             PreparedRiskRepository repository,
             HealthProbeService healthProbeService,
@@ -126,6 +128,7 @@ public class SemiRiskStore {
         this.defaultAiModel = defaultAiModel;
         this.defaultAiEndpoint = defaultAiEndpoint;
         this.defaultAiApiKey = defaultAiApiKey;
+        this.bingApiKey = bingApiKey;
         this.objectMapper = objectMapper;
         this.repository = repository;
         this.healthProbeService = healthProbeService;
@@ -163,8 +166,18 @@ public class SemiRiskStore {
         List<CrawlerSignal> collected = signals == null ? List.of() : List.copyOf(signals);
         List<CrawlerSignal> availableSignals = collected.stream()
                 .filter(signal -> "OK".equalsIgnoreCase(signal.status()))
+                .filter(this::isRiskSignal)
                 .toList();
         if (availableSignals.isEmpty()) {
+            boolean crawlerSucceeded = collected.stream().anyMatch(signal -> "OK".equalsIgnoreCase(signal.status()));
+            if (crawlerSucceeded) {
+                dailyRiskSnapshot = new DailyRiskSnapshot(0, "暂无风险",
+                        "公开源已采集，但当前没有命中风险规则的信号。",
+                        List.of(), Instant.now());
+                persistRiskSnapshot(dailyRiskSnapshot);
+                auditLogs.add("[INFO] crawler returned public records but no risk-rule hits");
+                return;
+            }
             // 本轮采集失败：优先沿用数据库中近期的真实信号，避免用空数据覆盖已采集快照。
             List<CrawlerSignal> persisted = loadRecentSignalsFromDb();
             if (!persisted.isEmpty()) {
@@ -192,7 +205,7 @@ public class SemiRiskStore {
 
     private void rebuildSnapshot(List<CrawlerSignal> availableSignals) {
         int score = availableSignals.stream().mapToInt(CrawlerSignal::riskScore).max().orElse(0);
-        String level = score >= 80 ? "高危" : score >= 60 ? "中危" : "低危";
+        String level = score == 0 ? "暂无风险" : score >= 80 ? "高危" : score >= 60 ? "中危" : "低危";
         dailyRiskSnapshot = new DailyRiskSnapshot(score, level,
                 "AI 自动测算：" + level + "，本日风险分 " + score + "，由公开网站爬虫记录和风险规则共同计算。",
                 availableSignals, Instant.now());
@@ -562,6 +575,14 @@ public class SemiRiskStore {
 
     public RiskAlert updateAlertStatus(String id, String status) {
         return alertService.updateAlertStatus(id, status, this::availableSignals);
+    }
+
+    public String currentAlertStatus(String id) {
+        return alertService.currentStatus(id);
+    }
+
+    public boolean isAlertActionable(String id) {
+        return alertService.isActionable(id);
     }
 
     public UploadTask createUpload(MultipartFile file) throws IOException {
@@ -1033,11 +1054,12 @@ public class SemiRiskStore {
         List<Map<String, Object>> results = new ArrayList<>();
         try {
             String encoded = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
-            // Bing News Search API (public, no auth required for basic search)
+            // Bing News Search API — use dedicated BING_API_KEY, fallback to DuckDuckGo if empty
+            String bingKey = bingApiKey != null && !bingApiKey.isBlank() ? bingApiKey : defaultAiApiKey;
             HttpRequest req = HttpRequest.newBuilder(
                     URI.create("https://api.bing.microsoft.com/v7.0/news/search?q=" + encoded + "&count=5"))
                     .timeout(java.time.Duration.ofSeconds(8))
-                    .header("Ocp-Apim-Subscription-Key", defaultAiApiKey) // 复用 AI key 作为 Bing key（如无则降级）
+                    .header("Ocp-Apim-Subscription-Key", bingKey)
                     .GET().build();
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) {
@@ -1394,8 +1416,13 @@ public class SemiRiskStore {
         }
         return snapshot.signals().stream()
                 .filter(signal -> "OK".equalsIgnoreCase(signal.status()))
+                .filter(this::isRiskSignal)
                 .sorted(Comparator.comparing(CrawlerSignal::riskScore).reversed())
                 .toList();
+    }
+
+    private boolean isRiskSignal(CrawlerSignal signal) {
+        return signal != null && signal.riskScore() > 0 && signal.riskScore() != 35;
     }
 
     private List<RiskAlert> publicAlerts(List<CrawlerSignal> signals) {

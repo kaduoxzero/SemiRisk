@@ -1,22 +1,20 @@
 package com.semirisk.config;
 
-import com.semirisk.api.ApiResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.semirisk.api.ApiResponse;
 import com.semirisk.common.RolePermissionPolicy;
 import com.semirisk.security.CsrfTokenService;
 import com.semirisk.security.TokenAuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.validation.ConstraintViolationException;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+import java.io.IOException;
+import java.util.Locale;
 
 @org.springframework.context.annotation.Configuration
 public class WebConfig implements WebMvcConfigurer {
@@ -79,37 +77,33 @@ public class WebConfig implements WebMvcConfigurer {
                         if ("OPTIONS".equalsIgnoreCase(method)) {
                             return true;
                         }
-                        if (uri.startsWith("/api/") && requiresCsrf(method) && !csrfValid(request)) {
-                            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                            response.setContentType("application/json;charset=UTF-8");
-                            response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail("CSRF Token 无效或缺失")));
+                        if (uri.startsWith("/api/") && request.getParameter("access_token") != null) {
+                            writeJson(response, HttpServletResponse.SC_BAD_REQUEST, ApiResponse.fail("access_token must not be sent in URL"));
                             return false;
                         }
-                        if (uri.startsWith("/api/auth/")
-                                || uri.equals("/api/dashboard/overview")
-                                || uri.equals("/api/risk-score/today")
-                                || (("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method))
-                                && uri.startsWith("/api/reports/") && uri.endsWith("/download"))) {
+                        if (uri.startsWith("/api/") && hasSuspiciousParameters(request)) {
+                            writeJson(response, HttpServletResponse.SC_BAD_REQUEST, ApiResponse.fail("Invalid request parameters"));
+                            return false;
+                        }
+                        if (uri.startsWith("/api/") && requiresCsrf(method) && !csrfValid(request)) {
+                            writeJson(response, HttpServletResponse.SC_FORBIDDEN, ApiResponse.fail("CSRF Token invalid or missing"));
+                            return false;
+                        }
+                        if (uri.startsWith("/api/auth/")) {
                             return true;
                         }
-                        var principal = tokenAuthService.validate(request.getHeader("Authorization"), request.getParameter("access_token"));
+                        var principal = tokenAuthService.validate(request.getHeader("Authorization"));
                         if (uri.startsWith("/api/") && principal.isEmpty()) {
-                            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                            response.setContentType("application/json;charset=UTF-8");
-                            response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail("请先登录")));
+                            writeJson(response, HttpServletResponse.SC_UNAUTHORIZED, ApiResponse.fail("Please login first"));
                             return false;
                         }
-                        if (principal.isPresent()) {
-                            TokenAuthService.AuthPrincipal value = principal.get();
-                            String module = moduleFor(uri);
-                            if (module != null && !RolePermissionPolicy.canAccess(value.role(), module)) {
-                                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                                response.setContentType("application/json;charset=UTF-8");
-                                response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail("无权访问模块：" + module)));
-                                return false;
-                            }
-                            request.setAttribute("authPrincipal", value);
+                        TokenAuthService.AuthPrincipal value = principal.get();
+                        String module = moduleFor(uri);
+                        if (module != null && !RolePermissionPolicy.canAccess(value.role(), module)) {
+                            writeJson(response, HttpServletResponse.SC_FORBIDDEN, ApiResponse.fail("Access denied for module: " + module));
+                            return false;
                         }
+                        request.setAttribute("authPrincipal", value);
                         return true;
                     }
                 })
@@ -126,6 +120,39 @@ public class WebConfig implements WebMvcConfigurer {
         return csrfTokenService.validate(request.getHeader(CSRF_HEADER));
     }
 
+    private boolean hasSuspiciousParameters(HttpServletRequest request) {
+        for (var entry : request.getParameterMap().entrySet()) {
+            if (isSuspicious(entry.getKey())) {
+                return true;
+            }
+            for (String value : entry.getValue()) {
+                if (isSuspicious(value)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isSuspicious(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        return lower.contains("$ne")
+                || lower.contains("$gt")
+                || lower.contains("$where")
+                || lower.contains("{$")
+                || lower.contains("<script")
+                || lower.contains("javascript:");
+    }
+
+    private void writeJson(HttpServletResponse response, int status, ApiResponse<?> body) throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/json;charset=UTF-8");
+        response.getWriter().write(objectMapper.writeValueAsString(body));
+    }
+
     private String moduleFor(String uri) {
         if (uri.startsWith("/api/data/")) return "upload";
         if (uri.startsWith("/api/risk/analysis")) return "analysis";
@@ -140,17 +167,4 @@ public class WebConfig implements WebMvcConfigurer {
         return null;
     }
 
-    @RestControllerAdvice
-    public static class ApiExceptionHandler {
-
-        @ExceptionHandler({IllegalArgumentException.class, ConstraintViolationException.class, MethodArgumentNotValidException.class})
-        public ResponseEntity<ApiResponse<Object>> badRequest(Exception ex) {
-            return ResponseEntity.badRequest().body(ApiResponse.fail(ex.getMessage()));
-        }
-
-        @ExceptionHandler(Exception.class)
-        public ResponseEntity<ApiResponse<Object>> serverError(Exception ex) {
-            return ResponseEntity.internalServerError().body(ApiResponse.fail(ex.getMessage()));
-        }
-    }
 }

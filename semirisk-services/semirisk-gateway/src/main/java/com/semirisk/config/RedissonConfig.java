@@ -1,8 +1,6 @@
 package com.semirisk.config;
 
 import org.redisson.Redisson;
-import org.redisson.api.RBucket;
-import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.ClusterServersConfig;
 import org.redisson.config.Config;
@@ -10,40 +8,40 @@ import org.redisson.config.SingleServerConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.time.Duration;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Redisson 分布式锁配置（Phase 2）。
  *
  * <p>基于已有 Redis 集群，引入 Redisson 替代本地 JVM 锁 / AtomicBoolean，
  * 确保多实例部署时任务不重复执行。</p>
+ *
+ * <p>当 Redis 不可用时（本地开发无 Redis 实例），通过设置
+ * {@code semirisk.redis.disabled=true} 来跳过 Redisson Bean 创建，
+ * 分布式锁自动降级为本地 ReentrantLock。</p>
  */
 @Configuration
+@ConditionalOnProperty(name = "semirisk.redis.disabled", havingValue = "false", matchIfMissing = false)
 public class RedissonConfig {
 
     private static final Logger log = LoggerFactory.getLogger(RedissonConfig.class);
 
-    @Value("${semirisk.redis.cluster.nodes}")
+    @Value("${semirisk.redis.cluster.nodes:127.0.0.1:6379}")
     private String redisNodes;
-
-    @Value("${semirisk.redis.cluster.max-redirects:3}")
-    private int maxRedirects;
 
     @Value("${semirisk.redis.cluster.password:}")
     private String redisPassword;
 
-    @Bean(destroyMethod = "shutdown")
+    @Bean(destroyMethod = "")
     public RedissonClient redissonClient() {
-        // 解析集群节点
         String[] nodes = redisNodes.split(",");
+        Config config = new Config();
+        String nodeAddr = "";
 
         // 尝试集群模式
         try {
-            Config config = new Config();
             StringBuilder clusterMode = new StringBuilder();
             for (int i = 0; i < nodes.length; i++) {
                 String node = nodes[i].trim();
@@ -55,6 +53,7 @@ public class RedissonConfig {
                     clusterMode.append(",");
                 }
             }
+            nodeAddr = clusterMode.toString();
 
             ClusterServersConfig clusterConfig = config.useClusterServers()
                     .addNodeAddress(clusterMode.toString().split(","))
@@ -71,17 +70,20 @@ public class RedissonConfig {
                 clusterConfig.setPassword(redisPassword);
             }
 
-            log.info("Redisson cluster client initialized with nodes: {}", clusterMode);
+            log.info("Redisson cluster client initialized with nodes: {}", nodeAddr);
             return Redisson.create(config);
         } catch (Exception e) {
-            log.warn("Cluster mode failed (cluster-enabled=0?), falling back to single-node. Error: {}",
-                    e.getMessage());
-            // 单机模式回退 — 需要新建 Config 实例
-            Config config = new Config();
+            log.warn("Cluster mode failed, falling back to single-node. Error: {}", e.getMessage());
+        }
+
+        // 单机模式回退
+        try {
             String singleNode = nodes[0].trim();
             if (!singleNode.startsWith("redis://")) {
                 singleNode = "redis://" + singleNode;
             }
+            nodeAddr = singleNode;
+
             SingleServerConfig singleConfig = config.useSingleServer()
                     .setAddress(singleNode)
                     .setConnectTimeout(5000)
@@ -95,6 +97,10 @@ public class RedissonConfig {
 
             log.info("Redisson single-node client initialized: {}", singleNode);
             return Redisson.create(config);
+        } catch (Exception e) {
+            log.error("Failed to create Redisson client at {}. Distributed locks will fall back to local locks.", nodeAddr, e);
+            // 返回 null 让 DistributedLockManager 走降级路径
+            return null;
         }
     }
 }

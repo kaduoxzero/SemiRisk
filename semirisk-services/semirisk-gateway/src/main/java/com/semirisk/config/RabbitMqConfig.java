@@ -5,7 +5,6 @@ import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.context.annotation.Bean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 
 /**
@@ -20,7 +19,6 @@ import org.springframework.context.annotation.Configuration;
  * </p>
  */
 @Configuration
-@ConditionalOnProperty(name = "spring.rabbitmq.host", havingValue = "*", matchIfMissing = false)
 public class RabbitMqConfig {
 
     public static final String AI_EVAL_QUEUE = "ai.evaluate.queue";

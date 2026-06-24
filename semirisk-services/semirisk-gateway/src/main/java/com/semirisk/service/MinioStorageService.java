@@ -37,8 +37,8 @@ public class MinioStorageService {
 
     public MinioStorageService(
             @Value("${semirisk.minio.endpoint:http://${semirisk.middleware.host}:9000}") String endpoint,
-            @Value("${semirisk.minio.access-key}") String accessKey,
-            @Value("${semirisk.minio.secret-key}") String secretKey,
+            @Value("${semirisk.minio.access-key:semirisk}") String accessKey,
+            @Value("${semirisk.minio.secret-key:semirisk123}") String secretKey,
             @Value("${semirisk.minio.bucket:semirisk}") String bucket) {
         this.endpoint = endpoint;
         this.accessKey = accessKey;

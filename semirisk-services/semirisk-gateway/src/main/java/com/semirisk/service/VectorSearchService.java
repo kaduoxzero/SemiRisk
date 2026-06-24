@@ -43,8 +43,8 @@ public class VectorSearchService {
 
     public VectorSearchService(
             ElasticSearchBulkWriter bulkWriter,
-            @Value("${semirisk.elasticsearch.url}") String esUrl,
-            @Value("${semirisk.elasticsearch.index}") String indexName,
+            @Value("${semirisk.elasticsearch.url:http://127.0.0.1:9200}") String esUrl,
+            @Value("${semirisk.elasticsearch.index:semirisk_knowledge}") String indexName,
             @Value("${semirisk.embedding.endpoint:}") String embeddingEndpoint,
             @Value("${semirisk.embedding.api-key:}") String embeddingApiKey) {
         this.bulkWriter = bulkWriter;

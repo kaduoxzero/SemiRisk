@@ -176,10 +176,10 @@ export function useSemiRiskApp() {
     if (mode) state.authMode = String(mode);
   });
 
-  // Clear router-based auth redirects since we now handle auth inline
+  // Handle auth page navigation — set authMode but don't redirect away
   watch(() => route.path, path => {
-    if (path === '/login') { state.authMode = 'login'; router.replace('/dashboard'); }
-    else if (path === '/register') { state.authMode = 'register'; router.replace('/dashboard'); }
+    if (path === '/login') state.authMode = 'login';
+    else if (path === '/register') state.authMode = 'register';
   });
 
   // 实时刷新轮询：当前视图每 30 秒静默刷新一次，让 KPI / 告警 / GIS 反映最新爬虫数据

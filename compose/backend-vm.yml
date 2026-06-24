@@ -1,5 +1,62 @@
 # Backend services for SemiRisk - VM deployment (host networking)
-# Uses host network so 127.0.0.1 points to the VM directly
+# Uses Host network so 127.0.0.1 points to the VM directly
+#
+# 环境变量配置说明：
+#
+# 【必需配置】以下变量无默认值，必须在 .env 文件中配置：
+#   SEMIRISK_AI_API_KEY    - AI 服务 API 密钥（DeepSeek）
+#   SEMIRISK_DB_PASSWORD   - MySQL 数据库密码
+#
+# 【可选配置】以下变量已有默认值，如需覆盖可在 .env 中设置或在具体服务的 environment 下添加：
+#   SPRING_DATA_REDIS_HOST - Redis 主机地址，默认为 127.0.0.1
+#   SPRING_DATA_REDIS_PORT - Redis 端口，默认为 6379
+#   SPRING_DATA_REDIS_SENTINEL_MASTER - Redis Sentinel 主节点名称
+#   SPRING_DATA_REDIS_SENTINEL_NODES  - Redis Sentinel 节点列表（格式：host:port,host:port）
+#   SEMIRISK_ES_USERNAME - Elasticsearch 用户名
+#   SEMIRISK_ES_PASSWORD - Elasticsearch 密码
+#   SEMIRISK_ES_URL - Elasticsearch 服务端地址，默认为 http://127.0.0.1:9200
+#   SEMIRISK_ES_INDEX - Elasticsearch 索引名称，默认为 semirisk_knowledge
+#   SEMIRISK_RABBITMQ_USERNAME - RabbitMQ 用户名，默认为 semirisk
+#   SEMIRISK_RABBITMQ_PASSWORD - RabbitMQ 密码，默认为 semirisk
+#   SEMIRISK_RABBITMQ_HOST - RabbitMQ 主机地址，默认为 127.0.0.1
+#   SEMIRISK_RABBITMQ_PORT - RabbitMQ 端口，默认为 5672
+#   SEMIRISK_MINIO_ACCESS_KEY - MinIO 访问密钥，默认为 semirisk
+#   SEMIRISK_MINIO_SECRET_KEY - MinIO 密钥密码，默认为 semirisk123
+#   SEMIRISK_MINIO_ENDPOINT - MinIO 服务端地址，默认为 http://127.0.0.1:9000
+#   SEMIRISK_MINIO_BUCKET - MinIO 存储桶名称，默认为 semirisk
+#   SEMIRISK_DB_POOL_SIZE - MySQL 连接池大小，默认为 10
+#   SEMIRISK_DB_MAX_LIFETIME - MySQL 连接最大生命周期（毫秒），默认为 1800000
+#   SEMIRISK_DB_URL - MySQL 连接 URL，默认为 jdbc:mysql://127.0.0.1:3306/semirisk...
+#   SEMIRISK_DB_USERNAME - MySQL 用户名，默认为 semirisk
+#   JAVA_OPTS - JVM 参数，默认为 "-Xms512m -Xmx1024m"
+#   SEMIRISK_AI_MODEL - AI 模型名称，默认为 deepseekv4-pro
+#   SEMIRISK_AI_ENDPOINT - AI 服务端点，默认为 https://api.deepseek.com/v1
+#   SEMIRISK_AUTH_TOKEN_TTL_MINUTES - 认证 Token 有效期（分钟），默认为 30
+#   SEMIRISK_FLYWAY_ENABLED - 是否启用 Flyway 数据库迁移，默认为 false
+#   SEMIRISK_CRAWLER_SOURCES - 爬虫数据源配置（格式：名称|URL|分类，多个用分号分隔）
+#   SEMIRISK_DATA_SERVICE_URL - 数据服务地址，默认为 http://127.0.0.1:8081
+#   SEMIRISK_RISK_SERVICE_URL - 风险评估服务地址，默认为 http://127.0.0.1:8082
+#   SEMIRISK_ALERT_SERVICE_URL - 告警服务地址，默认为 http://127.0.0.1:8084
+#
+# 注意：服务特定的 environment 配置会覆盖 x-env-default 中的默认配置
+# 建议在项目根目录创建 .env 文件来配置上述环境变量
+# 配置修改后需要重启服务才能生效：docker compose -f compose/backend-vm.yml restart
+
+# ---------- 全局模板 ----------
+
+x-env-default: &env-default
+  SPRING_PROFILES_ACTIVE: vm
+  SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
+  SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+  SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
+  SEMIRISK_NACOS_HOST: 127.0.0.1
+  MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
+  MANAGEMENT_HEALTH_SENTINEL_ENABLED: "false"
+  LOGGING_LEVEL_ROOT: WARN
+  LOGGING_LEVEL_COM_SEMIRISK: INFO
+  JAVA_OPTS: "-Xms512m -Xmx1024m"
+
+# ---------- 服务定义 ----------
 
 services:
   semirisk-gateway:
@@ -8,21 +65,37 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
-      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      <<: *env-default
       SEMIRISK_PORT: 8080
-      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
-      SEMIRISK_NACOS_HOST: 127.0.0.1
       SEMIRISK_REDIS_NODES: 127.0.0.1:6379,127.0.0.1:6380,127.0.0.1:6381,127.0.0.1:6382
       SEMIRISK_ES_URL: http://127.0.0.1:9200
       SEMIRISK_ES_INDEX: semirisk_knowledge
+      SEMIRISK_ES_USERNAME: ""
+      SEMIRISK_ES_PASSWORD: ""
       SEMIRISK_FLYWAY_ENABLED: "false"
       SEMIRISK_AUTH_TOKEN_TTL_MINUTES: 15
+      SEMIRISK_MINIO_ENDPOINT: http://127.0.0.1:9000
+      SEMIRISK_MINIO_ACCESS_KEY: semirisk
+      SEMIRISK_MINIO_SECRET_KEY: semirisk123
+      SEMIRISK_RABBITMQ_HOST: 127.0.0.1
+      SEMIRISK_RABBITMQ_USERNAME: semirisk
+      SEMIRISK_RABBITMQ_PASSWORD: semirisk
+      SPRING_DATA_REDIS_HOST: 127.0.0.1
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_SENTINEL_MASTER: mymaster
+      SPRING_DATA_REDIS_SENTINEL_NODES: 127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381
       SEMIRISK_AI_MODEL: deepseekv4-pro
       SEMIRISK_AI_ENDPOINT: https://api.deepseek.com/v1
-      SEMIRISK_AI_API_KEY: ""
-      SEMIRISK_MINIO_ENDPOINT: http://127.0.0.1:9000
-      SEMIRISK_RABBITMQ_HOST: 127.0.0.1
+      SEMIRISK_AI_API_KEY: ${SEMIRISK_AI_API_KEY}
+      SPRING_AI_DASHSCOPE_API_KEY: ${SEMIRISK_AI_API_KEY}
+      SPRING_AI_OPENAI_BASE_URL: https://api.deepseek.com/v1
+      SPRING_AI_OPENAI_CHAT_OPTIONS_MODEL: deepseekv4-pro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health/liveness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
 
   semirisk-data-service:
     image: semirisk/data-service:latest
@@ -30,12 +103,15 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
-      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      <<: *env-default
       SEMIRISK_DATA_PORT: 8081
-      SEMIRISK_CRAWLER_SOURCES: "https://www.reuters.com/markets/commodities/,https://www.freightwaves.com/news"
-      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
-      SEMIRISK_NACOS_HOST: 127.0.0.1
+      SEMIRISK_CRAWLER_SOURCES: "ChinaNewsFinance|https://www.chinanews.com.cn/rss/finance.xml|market;ChinaNewsWorld|https://www.chinanews.com.cn/rss/world.xml|global;ChinaNewsScroll|https://www.chinanews.com.cn/rss/scroll-news.xml|public_source;SupplyChainDive|https://www.supplychaindive.com/feeds/news/|supply_chain;FreightWaves|https://www.freightwaves.com/feed|logistics;TruckingDive|https://www.truckingdive.com/feeds/news/|logistics;ManufacturingDive|https://www.manufacturingdive.com/feeds/news/|manufacturing;FederalRegisterExportControl|https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bterm%5D=export+control|policy;WTOUpdates|https://www.wto.org/library/rss/latest_news_e.xml|policy"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health/liveness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
 
   semirisk-risk-service:
     image: semirisk/risk-service:latest
@@ -43,14 +119,17 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
-      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      <<: *env-default
       SEMIRISK_RISK_PORT: 8082
       SEMIRISK_DATA_SERVICE_URL: http://127.0.0.1:8081
-      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
-      SEMIRISK_NACOS_HOST: 127.0.0.1
     depends_on:
       - semirisk-data-service
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8082/actuator/health/liveness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
 
   semirisk-ai-service:
     image: semirisk/ai-service:latest
@@ -58,18 +137,24 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
-      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      <<: *env-default
       SEMIRISK_AI_PORT: 8083
       SEMIRISK_RISK_SERVICE_URL: http://127.0.0.1:8082
       SEMIRISK_DATA_SERVICE_URL: http://127.0.0.1:8081
-      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
-      SEMIRISK_NACOS_HOST: 127.0.0.1
       SEMIRISK_AI_MODEL: deepseekv4-pro
       SEMIRISK_AI_ENDPOINT: https://api.deepseek.com/v1
-      SEMIRISK_AI_API_KEY: ""
+      SEMIRISK_AI_API_KEY: ${SEMIRISK_AI_API_KEY}
+      SPRING_AI_DASHSCOPE_API_KEY: ${SEMIRISK_AI_API_KEY}
+      SPRING_AI_OPENAI_BASE_URL: https://api.deepseek.com/v1
+      SPRING_AI_OPENAI_CHAT_OPTIONS_MODEL: deepseekv4-pro
     depends_on:
       - semirisk-risk-service
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/actuator/health/liveness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
 
   semirisk-alert-service:
     image: semirisk/alert-service:latest
@@ -77,14 +162,19 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
-      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      <<: *env-default
       SEMIRISK_ALERT_PORT: 8084
-      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
-      SEMIRISK_NACOS_HOST: 127.0.0.1
       SEMIRISK_DB_URL: "jdbc:mysql://127.0.0.1:3306/semirisk?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai"
       SEMIRISK_DB_USERNAME: semirisk
       SEMIRISK_DB_PASSWORD: ${SEMIRISK_DB_PASSWORD:?set SEMIRISK_DB_PASSWORD in .env}
+      SEMIRISK_DB_POOL_SIZE: "10"
+      SEMIRISK_DB_MAX_LIFETIME: "1800000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8084/actuator/health/liveness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
 
   semirisk-report-service:
     image: semirisk/report-service:latest
@@ -92,8 +182,11 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
-      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      <<: *env-default
       SEMIRISK_REPORT_PORT: 8085
-      SEMIRISK_MIDDLEWARE_HOST: 127.0.0.1
-      SEMIRISK_NACOS_HOST: 127.0.0.1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8085/actuator/health/liveness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5

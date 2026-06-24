@@ -59,6 +59,9 @@ public class InputSanitizer {
 
     public String role(String value) {
         String clean = plain(value, 32);
+        if ("普通用户".equals(clean)) {
+            return "OPERATOR";
+        }
         return switch (clean) {
             case "ADMIN", "管理员" -> "ADMIN";
             case "ANALYST", "分析师" -> "ANALYST";
@@ -69,7 +72,7 @@ public class InputSanitizer {
 
     public String status(String value) {
         String clean = plain(value, 16);
-        if (!"启用".equals(clean) && !"禁用".equals(clean) && !"已忽略".equals(clean) && !"处理中".equals(clean) && !"未处理".equals(clean)) {
+        if (!"启用".equals(clean) && !"禁用".equals(clean) && !"已忽略".equals(clean) && !"已处理".equals(clean) && !"处理中".equals(clean) && !"未处理".equals(clean)) {
             throw new IllegalArgumentException("状态不合法");
         }
         return clean;

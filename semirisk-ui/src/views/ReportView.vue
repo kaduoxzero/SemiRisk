@@ -33,23 +33,28 @@
           </select>
         </label>
         <button class="btn" :disabled="generating" @click="actions.startReport">
-          {{ generating ? '生成中…' : '立即生成' }}
+          {{ generating ? '生成中...' : '立即生成' }}
         </button>
-        <button v-if="canDownload" class="btn secondary" @click="handleDownload">
-          {{ downloading ? '正在下载…' : '下载 ' + (state.reportForm.format || 'PDF') }}
+        <button v-if="canDownload" class="btn secondary" :disabled="downloading" @click="handleDownload">
+          {{ downloading ? '正在下载...' : '下载 ' + (state.reportForm.format || 'PDF') }}
         </button>
       </div>
 
-      <!-- 进度条 -->
       <div v-if="state.reportJob" class="report-progress-wrap">
         <div class="report-progress-bar" :style="{ width: (state.reportJob.progress || 0) + '%' }" :class="progressClass" />
-        <span class="muted" style="font-size:12px">{{ state.reportJob.progress || 0 }}% · {{ state.reportJob.step || '等待任务' }}</span>
+        <span class="muted" style="font-size:12px">{{ state.reportJob.progress || 0 }}% | {{ state.reportJob.step || '等待任务' }}</span>
       </div>
 
       <p class="muted report-type-note">
-        <template v-if="state.reportForm.template === 'risk-assessment'">风险评估报告：聚焦评分、公开源事实、影响范围、处置优先级和闭环指标。</template>
-        <template v-else-if="state.reportForm.template === 'supply-chain'">供应链分析报告：聚焦物流路径、供应商韧性、库存影响、替代方案和协同动作。</template>
-        <template v-else>企业尽调报告：聚焦企业主体、信用风险、公开源事件、合作建议和需人工核验事项。</template>
+        <template v-if="state.reportForm.template === 'risk-assessment'">
+          风险评估报告：聚焦评分、公开源事实、影响范围、处置优先级和闭环指标。
+        </template>
+        <template v-else-if="state.reportForm.template === 'supply-chain'">
+          供应链分析报告：聚焦物流路径、供应商韧性、库存影响、替代方案和协同动作。
+        </template>
+        <template v-else>
+          企业尽调报告：聚焦企业主体、信用风险、公开源事件、合作建议和需人工核验事项。
+        </template>
       </p>
     </div>
   </section>
@@ -57,7 +62,7 @@
 
 <script setup>
 import { computed, ref } from 'vue';
-import { authenticatedUrl } from '../api/client';
+import { downloadFile } from '../api/client';
 
 const props = defineProps({
   actions: { type: Object, required: true },
@@ -80,27 +85,12 @@ const downloading = ref(false);
 
 function handleDownload() {
   const id = props.state.reportJob?.id;
-  if (!id) { return; }
+  if (!id) {
+    return;
+  }
   downloading.value = true;
-  const url = authenticatedUrl(`/api/reports/${id}/download`);
   const ext = (props.state.reportForm.format || 'PDF').toLowerCase().replace('word', 'docx').replace('ppt', 'pptx');
-  fetch(url, {
-    headers: { 'Authorization': window.__semiriskToken || '' }
-  })
-    .then(async res => {
-      const blob = await res.blob();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `${id}-report.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-    })
-    .catch(() => {
-      // 降级：直接打开链接
-      window.open(url, '_blank');
-    })
+  downloadFile(`/api/reports/${id}/download`, `${id}-report.${ext}`)
     .finally(() => {
       downloading.value = false;
     });

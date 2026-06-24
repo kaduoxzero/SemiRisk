@@ -147,23 +147,21 @@ public class ReportController {
     }
 
     // -----------------------------------------------------------------
-    // 爬虫同步（定时 + 手动）
+    // 爬虫同步（仅手动触发，定时同步由 DashboardController 负责）
     // -----------------------------------------------------------------
 
-    /** 定时任务：每分钟主动拉取 data-service 最新信号，写入网关风险快照。 */
-    @Scheduled(fixedDelayString = "${semirisk.crawler-sync.tick-ms:60000}", initialDelayString = "${semirisk.crawler-sync.initial-delay-ms:15000}")
-    public void scheduledCrawlerSync() {
-        try {
-            syncPublicCrawlerRecords();
-        } catch (Exception ex) {
-            log.warn("Scheduled crawler sync failed: {}", ex.getMessage());
-        }
+    /** 手动触发一次爬虫同步：拉取 data-service 最新信号，写入网关风险快照。 */
+    @PostMapping("/sync-crawler")
+    public Map<String, Object> syncCrawler() {
+        syncPublicCrawlerRecords();
+        return Map.of("status", "synced");
     }
 
     // -----------------------------------------------------------------
     // 私有方法
     // -----------------------------------------------------------------
 
+    /** 同步公开源爬虫记录到网关风险快照。 */
     private void syncPublicCrawlerRecords() {
         Instant now = Instant.now();
         if (lastCrawlerSync.isAfter(now.minusSeconds(crawlerSyncCooldownSeconds))) {

@@ -28,12 +28,15 @@ public class TraceIdFilter extends OncePerRequestFilter {
         response.setHeader("X-Frame-Options", "DENY");
         response.setHeader("Referrer-Policy", "no-referrer");
         response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+        response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
         response.setHeader("Content-Security-Policy",
                 "default-src 'self'; "
-                        + "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://code.iconify.design; "
-                        + "style-src 'self' 'unsafe-inline'; "
+                        + "script-src 'self' https://cdn.tailwindcss.com https://code.iconify.design; "
+                        + "style-src 'self' https://fonts.googleapis.com; "
+                        + "font-src 'self' https://fonts.gstatic.com data:; "
                         + "img-src 'self' data: https:; "
-                        + "connect-src 'self' http://localhost:* http://127.0.0.1:*; "
+                        + "connect-src 'self'; "
+                        + "object-src 'none'; "
                         + "frame-ancestors 'none'; "
                         + "base-uri 'self'; "
                         + "form-action 'self'");

@@ -214,7 +214,7 @@ public final class SqlTemplates {
             SELECT id, source, source_url AS sourceUrl, title, dimension, category, risk_signal AS riskSignal,
                    risk_score AS riskScore, status, fetched_at AS fetchedAt
             FROM crawler_signal
-            WHERE status = 'OK' AND fetched_at >= ?
+            WHERE status = 'OK' AND risk_score > 0 AND risk_score <> 35 AND fetched_at >= ?
             ORDER BY risk_score DESC, fetched_at DESC
             LIMIT ?
             """;
@@ -225,11 +225,11 @@ public final class SqlTemplates {
             """;
 
     public static final String COUNT_ALL_OK_CRAWLER_SIGNALS = """
-            SELECT COUNT(*) FROM crawler_signal WHERE status = 'OK'
+            SELECT COUNT(*) FROM crawler_signal WHERE status = 'OK' AND risk_score > 0 AND risk_score <> 35
             """;
 
     public static final String COUNT_TODAY_OK_CRAWLER_SIGNALS = """
-            SELECT COUNT(*) FROM crawler_signal WHERE status = 'OK' AND DATE(fetched_at) = CURDATE()
+            SELECT COUNT(*) FROM crawler_signal WHERE status = 'OK' AND risk_score > 0 AND risk_score <> 35 AND DATE(fetched_at) = CURDATE()
             """;
 
     public static final String INSERT_RISK_SNAPSHOT = """

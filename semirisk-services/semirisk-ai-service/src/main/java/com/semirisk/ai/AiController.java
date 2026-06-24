@@ -38,6 +38,12 @@ public class AiController {
         return ApiResponse.ok(aiReportService.latestReport());
     }
 
+    @PostMapping("/reports/refresh")
+    public ApiResponse<Map<String, Object>> refreshReport() {
+        aiReportService.generateReport();
+        return ApiResponse.ok("AI report refreshed", aiReportService.latestReport());
+    }
+
     public record AiModelRequest(@NotBlank String model, @NotBlank String endpoint, @NotBlank String apiKey) {
     }
 }

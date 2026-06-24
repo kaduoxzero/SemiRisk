@@ -242,6 +242,11 @@ public class ReportService {
         });
     }
 
+    @Scheduled(cron = "0 0 6,12,20 * * *", zone = "Asia/Shanghai")
+    public void scheduledDailyAiReport() {
+        generateDailyAiReport();
+    }
+
     /** 读取本日 AI 报告（DB 优先，不存在则返回待生成态，不阻塞调用线程触发模型）。 */
     public Map<String, Object> latestAiReport() {
         String today = LocalDate.now().toString();

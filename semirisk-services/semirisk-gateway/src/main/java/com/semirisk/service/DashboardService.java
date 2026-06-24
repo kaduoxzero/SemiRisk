@@ -95,10 +95,15 @@ public class DashboardService {
             List<RiskAlert> publicAlertsList = alertsFuture.join();
 
             long highCount = availableSignals.stream().filter(signal -> signal.riskScore() >= 80).count();
-            long handled = publicAlertsList.stream().filter(alert -> "处理中".equals(alert.status()) || "已处理".equals(alert.status())).count();
             // 公开源事件数：从数据库直接 COUNT 所有 OK 状态的信号（全量）
             long totalEvents = repository.countAllOkCrawlerSignals();
-            String closureRate = totalEvents == 0 ? "0%" : String.format(Locale.ROOT, "%.1f%%", handled * 100.0 / totalEvents);
+            long activeAlerts = publicAlertsList.stream()
+                    .filter(alert -> !AlertService.STATUS_IGNORED.equals(alert.status()))
+                    .count();
+            long closedAlerts = publicAlertsList.stream()
+                    .filter(alert -> AlertService.STATUS_HANDLED.equals(alert.status()))
+                    .count();
+            String closureRate = activeAlerts == 0 ? "0%" : String.format(Locale.ROOT, "%.1f%%", closedAlerts * 100.0 / activeAlerts);
 
             Map<String, Object> dashboard = new LinkedHashMap<>();
             dashboard.put("kpis", List.of(
@@ -264,6 +269,7 @@ public class DashboardService {
         }
         return snapshot.signals().stream()
                 .filter(signal -> "OK".equalsIgnoreCase(signal.status()))
+                .filter(signal -> signal.riskScore() > 0 && signal.riskScore() != 35)
                 .sorted(Comparator.comparing(CrawlerSignal::riskScore).reversed())
                 .toList();
     }

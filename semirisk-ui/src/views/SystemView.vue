@@ -66,7 +66,7 @@
         <h3>用户</h3>
         <div class="user-list">
           <div v-for="u in state.system.users || []" :key="u.id" class="user-row">
-            <span class="badge" :class="u.role === '管理员' ? 'high' : 'low'">{{ u.role }}</span>
+            <span class="badge role-badge" :class="roleClass(u.role)">{{ roleLabel(u.role) }}</span>
             <strong>{{ u.username }}</strong>
             <span class="badge" :class="loginStatusClass(u.loginStatus)" style="font-size:11px">{{ u.loginStatus }}</span>
             <span class="user-modules" v-if="u.modules && u.modules.length" :title="moduleLabels(u.modules).join(', ')">
@@ -110,12 +110,28 @@ const moduleLabelMap = {
   alerts: '告警', gis: '地图', enterprise: '企业', knowledge: '知识库', system: '系统'
 };
 
+const roleLabelMap = {
+  ADMIN: '管理员',
+  ANALYST: '分析师',
+  OPERATOR: '普通用户'
+};
+
 function moduleLabel(key) {
   return moduleLabelMap[key] || key;
 }
 
 function moduleLabels(modules) {
   return (modules || []).map(moduleLabel);
+}
+
+function roleLabel(role) {
+  return roleLabelMap[role] || role || '普通用户';
+}
+
+function roleClass(role) {
+  if (role === 'ADMIN') return 'high';
+  if (role === 'ANALYST') return 'mid';
+  return 'low';
 }
 
 function loginStatusClass(status) {

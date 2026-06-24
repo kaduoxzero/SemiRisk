@@ -1,22 +1,21 @@
 package com.semirisk;
 
-import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
-import org.springframework.cloud.openfeign.EnableFeignClients;
-
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.actuate.autoconfigure.amqp.RabbitHealthContributorAutoConfiguration;
+import org.springframework.boot.actuate.autoconfigure.elasticsearch.ElasticsearchRestHealthContributorAutoConfiguration;
+import org.springframework.boot.actuate.autoconfigure.mail.MailHealthContributorAutoConfiguration;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.cache.annotation.EnableCaching;
-import org.springframework.amqp.rabbit.annotation.EnableRabbit;
-import org.springframework.scheduling.annotation.EnableAsync;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
-@EnableDiscoveryClient
-@EnableFeignClients
-@EnableScheduling
-@EnableAsync
-@EnableCaching
-@EnableRabbit
-@SpringBootApplication
+@SpringBootApplication(exclude = {
+        // Disable mail health indicator (avoids dragging down status when mail is not configured)
+        MailHealthContributorAutoConfiguration.class,
+        // Disable Redisson auto-configuration (use custom RedissonConfig)
+        org.redisson.spring.starter.RedissonAutoConfigurationV2.class,
+        // Disable RabbitMQ health indicator
+        RabbitHealthContributorAutoConfiguration.class,
+        // Disable Elasticsearch health indicator
+        ElasticsearchRestHealthContributorAutoConfiguration.class,
+})
 public class SemiRiskApplication {
 
 	public static void main(String[] args) {

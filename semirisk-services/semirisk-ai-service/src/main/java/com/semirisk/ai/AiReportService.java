@@ -66,7 +66,7 @@ public class AiReportService {
         httpClient.close();
     }
 
-    @Scheduled(cron = "0 0 */12 * * *")
+    @Scheduled(cron = "0 0 6,12,20 * * *", zone = "Asia/Shanghai")
     public void generateReport() {
         List<Map<String, Object>> records = fetchPublicRecords();
         boolean configured = defaultApiKey != null && !defaultApiKey.isBlank();

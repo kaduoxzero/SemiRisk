@@ -73,6 +73,7 @@ public class TokenAuthService {
         }
         Instant now = Instant.now();
         Instant renewed = now.plus(ttlMinutes, ChronoUnit.MINUTES);
+        boolean repositoryUnavailable = false;
 
         // DB 优先：以 auth_token 表为事实源。
         try {
@@ -95,10 +96,20 @@ public class TokenAuthService {
                 return Optional.of(principal);
             }
         } catch (Exception ex) {
+            repositoryUnavailable = true;
             log.warn("Failed to validate token from MySQL (DB may be unavailable), token={}", token, ex);
         }
 
         // 数据库中未找到 Token（或数据库不可用）：未认证。
+        if (repositoryUnavailable) {
+            AuthPrincipal principal = tokens.get(token);
+            if (principal != null && principal.expiresAt().isAfter(now)) {
+                AuthPrincipal renewedPrincipal = new AuthPrincipal(principal.username(), principal.displayName(), principal.role(), renewed);
+                tokens.put(token, renewedPrincipal);
+                return Optional.of(renewedPrincipal);
+            }
+        }
+
         return Optional.empty();
     }
 
@@ -154,10 +165,14 @@ public class TokenAuthService {
     }
 
     private String bearerToken(String authorization) {
-        if (authorization == null || !authorization.startsWith("Bearer ")) {
+        if (authorization == null || !authorization.regionMatches(true, 0, "Bearer ", 0, "Bearer ".length())) {
             return "";
         }
-        return authorization.substring("Bearer ".length()).trim();
+        String token = authorization.substring("Bearer ".length()).trim();
+        if (!token.matches("[A-Za-z0-9_-]{32,128}")) {
+            return "";
+        }
+        return token;
     }
 
     public record IssuedToken(String token, Instant expiresAt) {

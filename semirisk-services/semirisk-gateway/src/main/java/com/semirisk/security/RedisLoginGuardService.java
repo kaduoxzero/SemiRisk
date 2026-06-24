@@ -3,6 +3,7 @@ package com.semirisk.security;
 import com.semirisk.model.LoginState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -18,12 +19,18 @@ public class RedisLoginGuardService {
     private static final int MAX_FAILURES = 5;
 
     private final StringRedisTemplate redisTemplate;
+    private final boolean redisDisabled;
 
-    public RedisLoginGuardService(StringRedisTemplate redisTemplate) {
+    public RedisLoginGuardService(StringRedisTemplate redisTemplate,
+                                  @Value("${semirisk.redis.disabled:false}") boolean redisDisabled) {
         this.redisTemplate = redisTemplate;
+        this.redisDisabled = redisDisabled;
     }
 
     public LoginState loginState(String username) {
+        if (redisDisabled) {
+            return new LoginState(false, 0, null);
+        }
         try {
             String lockValue = redisTemplate.opsForValue().get(lockKey(username));
             if (lockValue != null) {
@@ -39,6 +46,9 @@ public class RedisLoginGuardService {
     }
 
     public LoginState recordFailure(String username) {
+        if (redisDisabled) {
+            return new LoginState(false, 0, null);
+        }
         try {
             String lockValue = redisTemplate.opsForValue().get(lockKey(username));
             if (lockValue != null) {
@@ -62,6 +72,9 @@ public class RedisLoginGuardService {
     }
 
     public void clear(String username) {
+        if (redisDisabled) {
+            return;
+        }
         try {
             redisTemplate.delete(failureKey(username));
             redisTemplate.delete(lockKey(username));

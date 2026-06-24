@@ -135,8 +135,8 @@ public class SystemManagementService {
 
     public Map<String, Object> systemOverview() {
         Map<String, Object> overview = new LinkedHashMap<>();
-        overview.put("users", systemUsers());
-        overview.put("roles", List.of("管理员", "分析师", "运营人员"));
+        overview.put("users", store.systemUsers());
+        overview.put("roles", List.of("管理员", "分析师", "普通用户"));
         overview.put("models", List.of(
                 modelOverview(defaultAiModel, defaultAiEndpoint),
                 modelOverview("deepseek-chat", "https://api.deepseek.com/v1")
@@ -146,7 +146,7 @@ public class SystemManagementService {
                         "detail", "实时爬取公开 RSS / 政策法规源"),
                 Map.of("name", "风险测算 Agent", "status", "待采集", "cron", "0 0 */12 * * *", "lastPull", "待采集",
                         "detail", "基于公开源信号与规则自动测算每日风险分"),
-                Map.of("name", "AI 报告 Agent", "status", store.isAiConfigured() ? "运行中" : "待配置 API Key", "cron", "0 0 */12 * * *", "lastPull", "待采集",
+                Map.of("name", "AI 报告 Agent", "status", store.isAiConfigured() ? "运行中" : "待配置 API Key", "cron", "0 0 6,12,20 * * *", "lastPull", "待采集",
                         "detail", "聚合公开源 + 风险快照调用 DeepSeek 生成本日报告")
         ));
         overview.put("logs", auditLogs());

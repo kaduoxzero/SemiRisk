@@ -92,6 +92,12 @@ public class DashboardController {
         return ApiResponse.ok(store.latestAiReport());
     }
 
+    @PostMapping("/ai/reports/refresh")
+    public ApiResponse<Map<String, Object>> refreshAiReport() {
+        syncPublicCrawlerRecords();
+        return ApiResponse.ok(store.generateDailyAiReport());
+    }
+
     // ---- internal ----
 
     private void syncPublicCrawlerRecords() {

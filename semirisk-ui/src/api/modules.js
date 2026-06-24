@@ -46,8 +46,10 @@ export const reportApi = {
 };
 
 export const alertApi = {
-  list: params => request(`/api/alerts?${params}`),
+  list: params => request(`/api/alerts?${params.toString()}`),
   ignore: id => request(`/api/alerts/${id}/ignore`, { method: 'PUT' }),
+  restore: id => request(`/api/alerts/${id}/restore`, { method: 'PUT' }),
+  handle: id => request(`/api/alerts/${id}/handle`, { method: 'PUT' }),
   batchProcess: ids => request('/api/alerts/batch-process', {
     method: 'POST',
     body: JSON.stringify({ ids })

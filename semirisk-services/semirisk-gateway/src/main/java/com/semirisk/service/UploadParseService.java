@@ -1,5 +1,6 @@
 package com.semirisk.service;
 
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
@@ -15,17 +16,17 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * 上传文件真实解析服务。
- *
- * <p>对从 MinIO 取回的真实文件字节做结构化解析：CSV/TSV 按分隔符解析，Excel(.xlsx/.xls) 用 Apache POI 解析，
- * 统计真实数据行数、抽取表头、并对缺失关键字段（供应商/物料/交付周期）给出真实告警。
- * 不再使用随机行数或写死告警。</p>
- */
 @Service
 public class UploadParseService {
 
+    private static final int MAX_CELL_LENGTH = 512;
     private static final List<String> EXPECTED_FIELDS = List.of("supplier", "material", "lead_time_days");
+
+    static {
+        ZipSecureFile.setMinInflateRatio(0.01d);
+        ZipSecureFile.setMaxEntrySize(10L * 1024L * 1024L);
+        ZipSecureFile.setMaxTextSize(5L * 1024L * 1024L);
+    }
 
     public ParseResult parse(String filename, byte[] content) {
         String lower = filename == null ? "" : filename.toLowerCase(Locale.ROOT);
@@ -35,58 +36,66 @@ public class UploadParseService {
             }
             return parseDelimited(content, lower.endsWith(".tsv") ? "\t" : ",");
         } catch (Exception ex) {
-            return new ParseResult(0, List.of(), List.of("[ERROR] 文件解析失败：" + ex.getClass().getSimpleName()));
+            return new ParseResult(0, List.of(), List.of("[ERROR] File parse failed: " + ex.getClass().getSimpleName()));
         }
     }
 
     private ParseResult parseDelimited(byte[] content, String separator) {
-        String text = new String(content, StandardCharsets.UTF_8).replace("﻿", "");
+        String text = new String(content, StandardCharsets.UTF_8).replace("\uFEFF", "");
         String[] lines = text.split("\\r?\\n");
         List<String> headers = new ArrayList<>();
         int dataRows = 0;
         int incompleteRows = 0;
-        for (int i = 0; i < lines.length; i++) {
-            String line = lines[i].trim();
+        int sanitizedCells = 0;
+        for (String rawLine : lines) {
+            String line = rawLine.trim();
             if (line.isEmpty()) {
                 continue;
             }
-            String[] cells = line.split(java.util.regex.Pattern.quote(separator), -1);
+            String[] rawCells = line.split(java.util.regex.Pattern.quote(separator), -1);
+            List<SanitizedCell> cells = Arrays.stream(rawCells).map(this::sanitizeCell).toList();
+            sanitizedCells += (int) cells.stream().filter(SanitizedCell::changed).count();
             if (headers.isEmpty()) {
-                headers = Arrays.stream(cells).map(String::trim).toList();
+                headers = cells.stream().map(SanitizedCell::value).toList();
                 continue;
             }
             dataRows++;
-            boolean incomplete = Arrays.stream(cells).anyMatch(cell -> cell.trim().isEmpty());
-            if (incomplete || cells.length < headers.size()) {
+            boolean incomplete = cells.stream().anyMatch(cell -> cell.value().trim().isEmpty());
+            if (incomplete || cells.size() < headers.size()) {
                 incompleteRows++;
             }
         }
-        return new ParseResult(dataRows, headers, buildWarnings(headers, dataRows, incompleteRows));
+        return new ParseResult(dataRows, headers, buildWarnings(headers, dataRows, incompleteRows, sanitizedCells));
     }
 
     private ParseResult parseExcel(byte[] content) throws Exception {
         try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(content))) {
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : null;
             if (sheet == null) {
-                return new ParseResult(0, List.of(), List.of("[WARN] Excel 不含任何工作表"));
+                return new ParseResult(0, List.of(), List.of("[WARN] Excel workbook does not contain sheets"));
             }
             DataFormatter formatter = new DataFormatter();
             List<String> headers = new ArrayList<>();
             int dataRows = 0;
             int incompleteRows = 0;
+            int sanitizedCells = 0;
             for (Row row : sheet) {
                 if (row == null) {
                     continue;
                 }
                 List<String> values = new ArrayList<>();
                 boolean blankRow = true;
-                for (int c = 0; c < row.getLastCellNum(); c++) {
+                short lastCellNum = row.getLastCellNum();
+                for (int c = 0; c < Math.max(lastCellNum, 0); c++) {
                     Cell cell = row.getCell(c);
-                    String value = cell == null ? "" : formatter.formatCellValue(cell).trim();
-                    if (!value.isEmpty()) {
+                    SanitizedCell sanitized = sanitizeCell(cell == null ? "" : formatter.formatCellValue(cell));
+                    if (sanitized.changed()) {
+                        sanitizedCells++;
+                    }
+                    if (!sanitized.value().isEmpty()) {
                         blankRow = false;
                     }
-                    values.add(value);
+                    values.add(sanitized.value());
                 }
                 if (blankRow) {
                     continue;
@@ -100,28 +109,53 @@ public class UploadParseService {
                     incompleteRows++;
                 }
             }
-            return new ParseResult(dataRows, headers, buildWarnings(headers, dataRows, incompleteRows));
+            return new ParseResult(dataRows, headers, buildWarnings(headers, dataRows, incompleteRows, sanitizedCells));
         }
     }
 
-    private List<String> buildWarnings(List<String> headers, int dataRows, int incompleteRows) {
+    private SanitizedCell sanitizeCell(String value) {
+        String original = value == null ? "" : value;
+        String cleaned = original
+                .replace("\u0000", "")
+                .replaceAll("(?i)<\\s*/?\\s*script[^>]*>", "")
+                .replaceAll("(?i)javascript\\s*:", "")
+                .trim();
+        if (cleaned.length() > MAX_CELL_LENGTH) {
+            cleaned = cleaned.substring(0, MAX_CELL_LENGTH);
+        }
+        if (!cleaned.isEmpty() && isFormulaTrigger(cleaned.charAt(0))) {
+            cleaned = "'" + cleaned;
+        }
+        return new SanitizedCell(cleaned, !cleaned.equals(original.trim()));
+    }
+
+    private boolean isFormulaTrigger(char ch) {
+        return ch == '=' || ch == '+' || ch == '-' || ch == '@' || ch == '\t' || ch == '\r' || ch == '\n';
+    }
+
+    private List<String> buildWarnings(List<String> headers, int dataRows, int incompleteRows, int sanitizedCells) {
         List<String> warnings = new ArrayList<>();
         List<String> lowerHeaders = headers.stream().map(h -> h.toLowerCase(Locale.ROOT)).toList();
         for (String field : EXPECTED_FIELDS) {
             if (lowerHeaders.stream().noneMatch(h -> h.contains(field))) {
-                warnings.add("[WARN] 缺少建议字段 " + field + "，已按可解析列继续导入");
+                warnings.add("[WARN] Missing recommended field " + field + "; import continued with available columns");
             }
         }
+        if (sanitizedCells > 0) {
+            warnings.add("[WARN] Sanitized " + sanitizedCells + " potentially unsafe cells");
+        }
         if (incompleteRows > 0) {
-            warnings.add("[WARN] 检测到 " + incompleteRows + " 行存在空字段，已标记待人工复核");
+            warnings.add("[WARN] Detected " + incompleteRows + " rows with empty fields");
         }
         if (dataRows == 0) {
-            warnings.add("[WARN] 未解析到任何数据行，请检查文件内容与表头");
+            warnings.add("[WARN] No data rows parsed; check file content and headers");
         } else {
-            warnings.add("[INFO] 成功解析 " + dataRows + " 行数据，表头 " + headers.size() + " 列");
+            warnings.add("[INFO] Parsed " + dataRows + " rows with " + headers.size() + " headers");
         }
         return warnings;
     }
+
+    private record SanitizedCell(String value, boolean changed) {}
 
     public record ParseResult(int rows, List<String> headers, List<String> warnings) {
     }

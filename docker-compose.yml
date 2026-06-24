@@ -9,7 +9,7 @@
 #   - Docker 24+ / Docker Compose v2
 #   - Java 21 JDK + Maven (for building backend JARs)
 #   - Node.js 22 LTS (for building frontend)
-#   - At least 16 GB RAM recommended (6 Java services × 512MB + middleware)
+#   - At least 8 GB RAM recommended (6 Java services × 512MB + middleware)
 #
 # Environment variables (optional, set in .env or on command line):
 #   MYSQL_ROOT_PASSWORD       - MySQL root password (REQUIRED)
@@ -22,7 +22,9 @@
 #   MINIO_ROOT_USER           - MinIO admin username (REQUIRED)
 #   RABBITMQ_USER             - RabbitMQ username (REQUIRED)
 #   RABBITMQ_PASS             - RabbitMQ password (REQUIRED)
-#   REDIS_CLUSTER_PASSWORD    - Redis AUTH password (optional, set to enable)
+#   REDIS_PASSWORD      - Redis AUTH password (optional, set to enable)
+#   Note: Redis cluster mode removed. Use single instance for simplicity.
+#         For production clustering, deploy 6+ nodes (3 masters + 3 replicas) manually.
 
 services:
   # ============================================================
@@ -50,99 +52,23 @@ services:
       retries: 10
       start_period: 30s
 
-  # Redis Cluster: 1 master + 3 replicas (slot-based sharding, auto failover)
-  redis-master:
+  # Redis: single instance (stable, low resource usage)
+  # For production clustering, deploy 6+ nodes (3 masters + 3 replicas)
+  redis:
     image: redis:7.4
-    container_name: semirisk-redis-master
+    container_name: semirisk-redis
     restart: unless-stopped
-    command: redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes${REDIS_CLUSTER_PASSWORD:+ --requirepass ${REDIS_CLUSTER_PASSWORD} --masterauth ${REDIS_CLUSTER_PASSWORD}}
+    command: redis-server --port 6379 --appendonly yes${REDIS_CLUSTER_PASSWORD:+ --requirepass ${REDIS_CLUSTER_PASSWORD} --masterauth ${REDIS_CLUSTER_PASSWORD}}
     ports:
       - "6379:6379"
     volumes:
       - semirisk-redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      test: ["CMD-SHELL", "redis-cli -p 6379${REDIS_CLUSTER_PASSWORD:+ -a ${REDIS_CLUSTER_PASSWORD}} ping | grep -q PONG || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  redis-replica-1:
-    image: redis:7.4
-    container_name: semirisk-redis-replica-1
-    restart: unless-stopped
-    command: redis-server --port 6380 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --slaveof semirisk-redis-master 6379${REDIS_CLUSTER_PASSWORD:+ --requirepass ${REDIS_CLUSTER_PASSWORD} --masterauth ${REDIS_CLUSTER_PASSWORD}}
-    ports:
-      - "6380:6380"
-    volumes:
-      - semirisk-redis-data-1:/data
-    depends_on:
-      redis-master:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis-replica-2:
-    image: redis:7.4
-    container_name: semirisk-redis-replica-2
-    restart: unless-stopped
-    command: redis-server --port 6381 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --slaveof semirisk-redis-master 6379${REDIS_CLUSTER_PASSWORD:+ --requirepass ${REDIS_CLUSTER_PASSWORD} --masterauth ${REDIS_CLUSTER_PASSWORD}}
-    ports:
-      - "6381:6381"
-    volumes:
-      - semirisk-redis-data-2:/data
-    depends_on:
-      redis-master:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "redis-cli", "-p", "6381", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis-replica-3:
-    image: redis:7.4
-    container_name: semirisk-redis-replica-3
-    restart: unless-stopped
-    command: redis-server --port 6382 --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes --slaveof semirisk-redis-master 6379${REDIS_CLUSTER_PASSWORD:+ --requirepass ${REDIS_CLUSTER_PASSWORD} --masterauth ${REDIS_CLUSTER_PASSWORD}}
-    ports:
-      - "6382:6382"
-    volumes:
-      - semirisk-redis-data-3:/data
-    depends_on:
-      redis-master:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "redis-cli", "-p", "6382", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis-cluster-init:
-    image: redis:7.4
-    container_name: semirisk-redis-cluster-init
-    restart: "no"
-    command: >
-      bash -c "
-        sleep 10 &&
-        redis-cli -h semirisk-redis-master -p 6379 --cluster create \
-          semirisk-redis-master:6379 \
-          semirisk-redis-replica-1:6380 \
-          semirisk-redis-replica-2:6381 \
-          semirisk-redis-replica-3:6382 \
-          --cluster-replicas 1 --cluster-yes
-      "
-    depends_on:
-      redis-master:
-        condition: service_started
-      redis-replica-1:
-        condition: service_started
-      redis-replica-2:
-        condition: service_started
-      redis-replica-3:
-        condition: service_started
+      start_period: 10s
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
@@ -157,7 +83,7 @@ services:
     volumes:
       - semirisk-es:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "busybox wget --spider -q http://localhost:9200/_cluster/health || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -177,7 +103,7 @@ services:
     volumes:
       - semirisk-minio:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "busybox wget --spider -q http://localhost:9000/minio/health/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -205,7 +131,7 @@ services:
     restart: unless-stopped
     environment:
       MODE: standalone
-      NACOS_AUTH_ENABLE: "${SEMIRISK_NACOS_AUTH_ENABLED:true}"
+      NACOS_AUTH_ENABLE: "${SEMIRISK_NACOS_AUTH_ENABLED:false}"
       JVM_XMS: 256m
       JVM_XMX: 512m
     ports:
@@ -246,7 +172,7 @@ services:
       SEMIRISK_PORT: 8080
       SEMIRISK_MIDDLEWARE_HOST: semirisk-mysql
       SEMIRISK_NACOS_HOST: semirisk-nacos
-      SEMIRISK_REDIS_HOST: semirisk-redis
+      SEMIRISK_REDIS_NODES: semirisk-redis:6379
       SEMIRISK_ES_URL: http://semirisk-es:9200
       SEMIRISK_ES_INDEX: semirisk_knowledge
       SEMIRISK_FLYWAY_ENABLED: ${SEMIRISK_FLYWAY_ENABLED:-false}
@@ -254,14 +180,21 @@ services:
       SEMIRISK_AI_MODEL: ${SEMIRISK_AI_MODEL:-deepseekv4-pro}
       SEMIRISK_AI_ENDPOINT: ${SEMIRISK_AI_ENDPOINT:-https://api.deepseek.com/v1}
       SEMIRISK_AI_API_KEY: ${SEMIRISK_AI_API_KEY:-}
+      SEMIRISK_BING_API_KEY: ${SEMIRISK_BING_API_KEY:-}
       SEMIRISK_MINIO_ENDPOINT: http://semirisk-minio:9000
       SEMIRISK_RABBITMQ_HOST: semirisk-rabbitmq
+      SEMIRISK_RABBITMQ_USERNAME: ${RABBITMQ_USER:semirisk}
+      SEMIRISK_RABBITMQ_PASSWORD: ${RABBITMQ_PASS:semirisk}
+      SEMIRISK_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:semirisk}
+      SEMIRISK_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:semirisk}
+      SEMIRISK_DB_USERNAME: semirisk
+      SEMIRISK_DB_PASSWORD: ${MYSQL_PASSWORD:semirisk}
+      SEMIRISK_ZIPKIN_HOST: semirisk-zipkin
       # --- Data Service (port 8081) ---
       SEMIRISK_DATA_PORT: 8081
-      SEMIRISK_CRAWLER_SOURCES: ${SEMIRISK_CRAWLER_SOURCES:-https://www.reuters.com/markets/commodities/,https://www.freightwaves.com/news}
+      SEMIRISK_CRAWLER_SOURCES: ${SEMIRISK_CRAWLER_SOURCES:-ChinaNewsFinance|https://www.chinanews.com.cn/rss/finance.xml|market;ChinaNewsWorld|https://www.chinanews.com.cn/rss/world.xml|global;ChinaNewsScroll|https://www.chinanews.com.cn/rss/scroll-news.xml|public_source;SupplyChainDive|https://www.supplychaindive.com/feeds/news/|supply_chain;FreightWaves|https://www.freightwaves.com/feed|logistics;TruckingDive|https://www.truckingdive.com/feeds/news/|logistics;ManufacturingDive|https://www.manufacturingdive.com/feeds/news/|manufacturing;FederalRegisterExportControl|https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bterm%5D=export+control|policy;WTOUpdates|https://www.wto.org/library/rss/latest_news_e.xml|policy}
       # --- Risk Service (port 8082) ---
       SEMIRISK_RISK_PORT: 8082
-      SEMIRISK_DATA_SERVICE_URL: http://127.0.0.1:8081
       # --- AI Service (port 8083) ---
       SEMIRISK_AI_PORT: 8083
       SEMIRISK_RISK_SERVICE_URL: http://127.0.0.1:8082
@@ -277,7 +210,7 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      redis-master:
+      redis:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
@@ -304,6 +237,3 @@ volumes:
   semirisk-es:
   semirisk-minio:
   semirisk-redis-data:
-  semirisk-redis-data-1:
-  semirisk-redis-data-2:
-  semirisk-redis-data-3:

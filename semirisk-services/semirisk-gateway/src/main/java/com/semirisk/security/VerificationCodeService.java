@@ -2,19 +2,15 @@ package com.semirisk.security;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
-/**
- * Redis 验证码服务。
- *
- * <p>6 位数字验证码，5 分钟 TTL，每个邮箱最多尝试 2 次。</p>
- */
 @Service
 public class VerificationCodeService {
 
@@ -24,36 +20,45 @@ public class VerificationCodeService {
     private static final int MAX_ATTEMPTS = 2;
 
     private final StringRedisTemplate redisTemplate;
-    /** 每邮箱的失败计数（内存兜底，Redis 不可用时仍可工作）。 */
+    private final boolean redisDisabled;
+    private final ConcurrentHashMap<String, CodeEntry> localCodes = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Integer> attemptCounts = new ConcurrentHashMap<>();
 
-    public VerificationCodeService(StringRedisTemplate redisTemplate) {
+    public VerificationCodeService(StringRedisTemplate redisTemplate,
+                                   @Value("${semirisk.redis.disabled:false}") boolean redisDisabled) {
         this.redisTemplate = redisTemplate;
+        this.redisDisabled = redisDisabled;
     }
 
-    /** 生成并存储验证码，返回生成的代码。 */
     public String generate(String email) {
         String code = generateRandomCode();
+        if (redisDisabled) {
+            storeLocal(email, code);
+            return code;
+        }
         String key = key(email);
         try {
             redisTemplate.delete(key);
             redisTemplate.opsForValue().set(key, code, CODE_TTL);
+            attemptCounts.put(email, 0);
         } catch (Exception ex) {
             log.warn("Failed to store verification code in Redis for email={}", email, ex);
+            storeLocal(email, code);
         }
-        attemptCounts.put(email, 0);
         return code;
     }
 
-    /** 校验验证码。成功返回 true 并清除；失败递增计数，超限返回 false。 */
     public boolean verify(String email, String code) {
+        if (redisDisabled) {
+            return verifyLocal(email, code);
+        }
         String key = key(email);
         String stored;
         try {
             stored = redisTemplate.opsForValue().get(key);
         } catch (Exception ex) {
             log.warn("Failed to read verification code from Redis for email={}", email, ex);
-            return false;
+            return verifyLocal(email, code);
         }
         if (stored == null) {
             return false;
@@ -63,7 +68,6 @@ public class VerificationCodeService {
             if (attempts >= MAX_ATTEMPTS) {
                 redisTemplate.delete(key);
                 attemptCounts.remove(email);
-                return false;
             }
             return false;
         }
@@ -72,7 +76,6 @@ public class VerificationCodeService {
         return true;
     }
 
-    /** 检查验证码是否还有剩余尝试次数。 */
     public boolean hasRemainingAttempts(String email) {
         return attemptCounts.getOrDefault(email, 0) < MAX_ATTEMPTS;
     }
@@ -80,10 +83,38 @@ public class VerificationCodeService {
     private String generateRandomCode() {
         SecureRandom random = new SecureRandom();
         int code = 100000 + random.nextInt(900000);
-        return String.valueOf(code);
+        return String.valueOf(code).substring(0, CODE_LENGTH);
     }
 
     private String key(String email) {
         return "semirisk:verify:" + email.toLowerCase();
     }
+
+    private void storeLocal(String email, String code) {
+        localCodes.put(email.toLowerCase(), new CodeEntry(code, Instant.now().plus(CODE_TTL)));
+        attemptCounts.put(email, 0);
+    }
+
+    private boolean verifyLocal(String email, String code) {
+        String normalizedEmail = email.toLowerCase();
+        CodeEntry entry = localCodes.get(normalizedEmail);
+        if (entry == null || entry.expiresAt().isBefore(Instant.now())) {
+            localCodes.remove(normalizedEmail);
+            attemptCounts.remove(email);
+            return false;
+        }
+        if (!entry.code().equals(code)) {
+            int attempts = attemptCounts.merge(email, 1, Integer::sum);
+            if (attempts >= MAX_ATTEMPTS) {
+                localCodes.remove(normalizedEmail);
+                attemptCounts.remove(email);
+            }
+            return false;
+        }
+        localCodes.remove(normalizedEmail);
+        attemptCounts.remove(email);
+        return true;
+    }
+
+    private record CodeEntry(String code, Instant expiresAt) {}
 }

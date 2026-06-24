@@ -16,6 +16,8 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import org.xml.sax.ErrorHandler;
+import org.xml.sax.SAXParseException;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
@@ -24,6 +26,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
@@ -33,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -64,19 +68,30 @@ public class CrawlerService {
             .connectTimeout(Duration.ofSeconds(4))
             .build();
     private final CopyOnWriteArrayList<CrawlerRecord> dailyRecords = new CopyOnWriteArrayList<>();
+    private final Path persistFile;
     private final List<SourceSpec> sources;
     private final org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor crawlerExecutor;
 
     public CrawlerService(
             @Value("${semirisk.crawler.sources}") String sourceConfig,
+            @Value("${semirisk.crawler.persist-dir:./data}") String persistDir,
             @Qualifier("semiriskCrawlerPool") org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor crawlerExecutor) {
         this.sources = parseSources(sourceConfig);
         this.crawlerExecutor = crawlerExecutor;
+        Path pf = null;
+        try {
+            java.nio.file.Files.createDirectories(java.nio.file.Paths.get(persistDir));
+            pf = java.nio.file.Paths.get(persistDir, "crawler_records.json");
+        } catch (Exception e) {
+            log.warn("Cannot initialize persist file at {}: {}", persistDir, e.getMessage());
+        }
+        this.persistFile = pf;
         log.info("CrawlerService initialized with {} sources", sources.size());
     }
 
     @PostConstruct
     public void init() {
+        loadRecords();
         refreshDailyRecords();
     }
 
@@ -128,6 +143,10 @@ public class CrawlerService {
             }
         }
 
+        if (records.stream().anyMatch(record -> "OK".equals(record.status()))) {
+            records.removeIf(record -> "FAILED".equals(record.status()));
+        }
+
         if (records.isEmpty()) {
             records.add(failed(new SourceSpec("公开源", "about:blank", "供应链"),
                     "未获得任何公开源条目，请检查网络或源配置"));
@@ -135,6 +154,7 @@ public class CrawlerService {
 
         dailyRecords.clear();
         dailyRecords.addAll(records);
+        saveRecords();
 
         long elapsed = Duration.between(startTime, Instant.now()).toMillis();
         log.info("Parallel crawler refresh completed in {}ms, total records={}", elapsed, records.size());
@@ -203,6 +223,68 @@ public class CrawlerService {
         return List.copyOf(dailyRecords);
     }
 
+    // ---- 持久化：JSON 文件备份，防止重启丢失 ----
+
+    private static final java.time.format.DateTimeFormatter PERSIST_FMT =
+            java.time.format.DateTimeFormatter.ISO_INSTANT;
+
+    private Map<String, Object> toPersistable(CrawlerRecord r) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("id", r.id());
+        m.put("source", r.source());
+        m.put("sourceUrl", r.sourceUrl());
+        m.put("title", r.title());
+        m.put("dimension", r.dimension());
+        m.put("riskSignal", r.riskSignal());
+        m.put("riskScore", r.riskScore());
+        m.put("fetchedAt", r.fetchedAt().toString());
+        m.put("status", r.status());
+        return m;
+    }
+
+    private CrawlerRecord fromPersistable(Map<String, Object> m) {
+        return new CrawlerRecord(
+                (String) m.get("id"),
+                (String) m.get("source"),
+                (String) m.get("sourceUrl"),
+                (String) m.get("title"),
+                (String) m.get("dimension"),
+                (String) m.get("riskSignal"),
+                ((Number) m.get("riskScore")).intValue(),
+                Instant.parse((String) m.get("fetchedAt")),
+                (String) m.get("status")
+        );
+    }
+
+    private void saveRecords() {
+        if (persistFile == null || dailyRecords.isEmpty()) return;
+        try {
+            List<Map<String, Object>> list = dailyRecords.stream()
+                    .map(this::toPersistable)
+                    .toList();
+            java.nio.file.Files.writeString(persistFile,
+                    new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(list));
+        } catch (Exception e) {
+            log.warn("Failed to persist crawler records: {}", e.getMessage());
+        }
+    }
+
+    private void loadRecords() {
+        if (persistFile == null || !java.nio.file.Files.exists(persistFile)) return;
+        try {
+            String json = java.nio.file.Files.readString(persistFile);
+            if (json.isBlank()) return;
+            List<Map<String, Object>> list = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(json, List.class);
+            dailyRecords.addAll(list.stream()
+                    .map(m -> fromPersistable((Map<String, Object>) m))
+                    .toList());
+            log.info("Loaded {} persisted crawler records from {}", dailyRecords.size(), persistFile);
+        } catch (Exception e) {
+            log.warn("Failed to load persisted crawler records: {}", e.getMessage());
+        }
+    }
+
     // ---- 以下为保持不变的核心解析/评分逻辑 ----
 
     private List<SourceSpec> parseSources(String sourceConfig) {
@@ -229,8 +311,24 @@ public class CrawlerService {
             factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
             factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
             factory.setNamespaceAware(false);
-            Document document = factory.newDocumentBuilder()
-                    .parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
+            var builder = factory.newDocumentBuilder();
+            builder.setErrorHandler(new ErrorHandler() {
+                @Override
+                public void warning(SAXParseException exception) {
+                    // Ignore malformed public feeds quietly; callers fall back to a failed crawler record.
+                }
+
+                @Override
+                public void error(SAXParseException exception) throws SAXParseException {
+                    throw exception;
+                }
+
+                @Override
+                public void fatalError(SAXParseException exception) throws SAXParseException {
+                    throw exception;
+                }
+            });
+            Document document = builder.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
             NodeList nodes = document.getElementsByTagName("item");
             for (int i = 0; i < nodes.getLength(); i++) {
                 Node node = nodes.item(i);
@@ -310,27 +408,68 @@ public class CrawlerService {
 
     private CrawlerRecord record(SourceSpec source, FeedItem item) {
         String title = item.title();
-        String normalized = title.toLowerCase(Locale.ROOT);
-        int score = 35;
-        if (containsAny(normalized, "delay", "strike", "shortage", "disrupt", "congestion", "bankruptcy", "shutdown", "tariff")
-                || title.contains("中断") || title.contains("拥堵") || title.contains("短缺") || title.contains("关税")
-                || title.contains("制裁") || title.contains("停产") || title.contains("断供") || title.contains("延期")) {
-            score += 28;
-        }
-        if (containsAny(normalized, "price", "commodity", "freight", "export", "restriction", "regulation", "semiconductor", "chip")
-                || title.contains("价格") || title.contains("出口") || title.contains("半导体") || title.contains("芯片")
-                || title.contains("供应链") || title.contains("产业链") || title.contains("物流") || title.contains("港口")
-                || title.contains("海关") || title.contains("贸易") || title.contains("制造")) {
-            score += 18;
-        }
-        if (containsAny(normalized, "risk", "warning", "lawsuit", "recall", "sanction")
-                || title.contains("风险") || title.contains("预警") || title.contains("召回") || title.contains("调查")) {
-            score += 10;
-        }
-        String signal = score >= 75 ? "高危信号" : score >= 60 ? "中危信号" : "监控信号";
+        int score = ruleRiskScore(source.name(), source.dimension(), title);
+        String signal = signalLabel(score);
         String link = item.link().isBlank() ? source.url() : item.link();
         return new CrawlerRecord(stableId(link + title), source.name(), link, title, source.dimension(),
                 signal, Math.min(score, 95), item.publishedAt(), "OK");
+    }
+
+    static int ruleRiskScore(String sourceName, String dimension, String title) {
+        String text = title == null ? "" : title;
+        String normalized = text.toLowerCase(Locale.ROOT);
+        String source = sourceName == null ? "" : sourceName.toLowerCase(Locale.ROOT);
+        String dim = dimension == null ? "" : dimension.toLowerCase(Locale.ROOT);
+        int score = 0;
+
+        if (containsAny(normalized, "strike", "shortage", "disrupt", "congestion", "bankruptcy", "shutdown",
+                "sanction", "recall", "lawsuit", "investigation", "emergency", "port closure", "export control",
+                "customs enforcement", "tariff", "surcharge", "restriction", "ban", "license")
+                || containsAny(text, "中断", "拥堵", "短缺", "关税", "制裁", "停产", "断供", "延期", "召回", "调查")) {
+            score += 46;
+        }
+        if (containsAny(normalized, "supply chain", "freight", "logistics", "shipping", "port", "customs",
+                "import", "export", "semiconductor", "chip", "manufacturing", "production", "commodity",
+                "warehouse", "inventory", "procurement")
+                || containsAny(text, "价格", "出口", "进口", "半导体", "芯片", "供应链", "产业链", "物流", "港口", "海关", "贸易", "制造")) {
+            score += 24;
+        }
+        if (containsAny(normalized, "regulation", "rule", "notice", "trade policy", "federal register",
+                "anti-dumping", "dumping", "license", "controlled substances")
+                || containsAny(text, "监管", "法规", "许可", "管制", "反倾销", "禁令", "条例")) {
+            score += 18;
+        }
+        if (containsAny(normalized, "risk", "warning", "delay", "price", "capacity", "volatility", "pressure")
+                || containsAny(text, "风险", "预警", "延迟", "波动", "压力")) {
+            score += 14;
+        }
+
+        if (score == 0) {
+            return 0;
+        }
+        if (containsAny(dim, "supply", "logistics", "manufacturing", "policy", "market")) {
+            score += 5;
+        }
+        if (containsAny(source, "federalregister", "supplychaindive", "freightwaves", "manufacturingdive", "truckingdive")) {
+            score += 4;
+        }
+        if (containsAny(source, "wto")) {
+            score += 3;
+        }
+        return Math.max(20, Math.min(score, 95));
+    }
+
+    private String signalLabel(int score) {
+        if (score >= 75) {
+            return "高危信号";
+        }
+        if (score >= 55) {
+            return "中危信号";
+        }
+        if (score > 0) {
+            return "监控信号";
+        }
+        return "公开源记录";
     }
 
     private CrawlerRecord failed(SourceSpec source, String message) {
@@ -338,7 +477,7 @@ public class CrawlerService {
                 message, source.dimension(), "采集失败", 0, Instant.now(), "FAILED");
     }
 
-    private boolean containsAny(String value, String... keywords) {
+    private static boolean containsAny(String value, String... keywords) {
         for (String keyword : keywords) {
             if (value.contains(keyword)) {
                 return true;

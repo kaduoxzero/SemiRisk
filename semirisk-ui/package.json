@@ -10,12 +10,12 @@
     "test:e2e": "playwright test tests/semirisk-gis-check.spec.js --reporter=line"
   },
   "dependencies": {
-    "@vitejs/plugin-vue": "latest",
-    "pinia": "latest",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "pinia": "^3.0.4",
     "three": "^0.184.0",
-    "vite": "latest",
-    "vue": "latest",
-    "vue-router": "latest"
+    "vite": "^8.0.16",
+    "vue": "^3.5.35",
+    "vue-router": "^5.1.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0"
